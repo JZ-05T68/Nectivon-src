@@ -1,0 +1,1278 @@
+{
+  "eval_id": "EKB-ANSWER-EVIDENCE-RELIABILITY-v1",
+  "corpus_ref": "v0.8-frozen-corpus-v1",
+  "frozen_at": "2026-09-06T10:05:00+08:00",
+  "model_expectation": "qwen3.8-max",
+  "notes": "v0.8.2 Answer & Evidence Reliability 主冻结集（§16-§19）。Ground truth 于 2026-09-06 从冻结语料页面原图逐页核实：doc5 泵维护视觉手册原版 p1 饼图(密封失效45/轴承磨损30/叶轮腐蚀15/其它10)+p2 力矩表(M6 10/12,M8 25/30,M10 46/52)；doc7 模糊分级 p1清晰/p2中等模糊/p3严重模糊（同一饼图）；doc8 冷却水泵 p1 流量(P-201 35,P-202 38,P-203 42,P-204 29)+p2 轴承温度趋势(0h45C,1000h52,2000h58,3000h63,4000h68,5000h72)；doc9 回火工艺 45钢硬度(200C:50HRC,300C:42,400C:33,500C:26,600C:20)；doc2 传动轴 p1 对中0.35mm案例+地脚螺栓46Nm；doc6 空压机维护说明 500h与环境无关；doc10/11 泵v1.0(25/30)/v1.1(28/32)。记忆面：exp6 主轴增益confirmed、exp16 DIR_INV confirmed、exp11/12 M8速查25/最大30、exp14 对中0.35、raw_qa7 PLC三步、raw_qa9 OC已过时错误判断。维度标签见各 case family。",
+  "cases": [
+    {
+      "case_id": "AE01",
+      "family": "claim_entailment_unsupported",
+      "question": "伺服方向反了以后把 A/B 相对调就恢复了，这说明根因就是 A/B 相接反，对吧？",
+      "expect": {
+        "tool": "knowledge_search",
+        "answer_any_fragments": [
+          [
+            "不是",
+            "不一定",
+            "不能说明",
+            "不能推出",
+            "只是绕过",
+            "DIR_INV",
+            "配置",
+            "未经确认",
+            "没有确认"
+          ]
+        ]
+      },
+      "metrics": {
+        "claim_entailment": "answer",
+        "epistemic_boundary": "answer"
+      }
+    },
+    {
+      "case_id": "NF01",
+      "family": "numeric_fidelity_interference",
+      "question": "P-203 那台冷却水泵的额定流量是多少？",
+      "expect": {
+        "tool": "page_visual_search",
+        "answer_fragments": [
+          "42"
+        ],
+        "cite_must": [
+          {
+            "doc": "冷却水泵",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "numeric_fidelity": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "NF02",
+      "family": "numeric_fidelity_neighbor",
+      "question": "轴承温度趋势里 3000 小时那一点的温度是多少？",
+      "expect": {
+        "answer_fragments": [
+          "63"
+        ],
+        "answer_any_fragments": [
+          [
+            "3000h",
+            "3000"
+          ]
+        ]
+      },
+      "metrics": {
+        "numeric_fidelity": "answer",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "NF03",
+      "family": "numeric_fidelity_neighbor",
+      "question": "45 钢在 400°C 回火后的硬度是多少？",
+      "expect": {
+        "answer_fragments": [
+          "33"
+        ],
+        "answer_any_fragments": [
+          [
+            "400"
+          ]
+        ]
+      },
+      "metrics": {
+        "numeric_fidelity": "answer",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "NF04",
+      "family": "numeric_fidelity_interference",
+      "question": "泵故障原因里占比最大的是哪一项？是多少？",
+      "expect": {
+        "answer_fragments": [
+          "45"
+        ],
+        "answer_any_fragments": [
+          [
+            "密封失效",
+            "密封"
+          ]
+        ]
+      },
+      "metrics": {
+        "numeric_fidelity": "answer",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "NF05",
+      "family": "numeric_fidelity_adjacent_cell",
+      "question": "泵手册 1.0 的力矩表里，M8 的最大力矩是多少？",
+      "expect": {
+        "answer_fragments": [
+          "30"
+        ],
+        "answer_any_fragments": [
+          [
+            "最大"
+          ]
+        ],
+        "cite_must": [
+          {
+            "doc": "1.0",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "numeric_fidelity": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "UF01",
+      "family": "unit_fidelity_temperature",
+      "question": "冷却水泵轴承温度趋势里 2000 小时的读数是多少？",
+      "expect": {
+        "answer_fragments": [
+          "58"
+        ],
+        "answer_any_fragments": [
+          [
+            "°C",
+            "℃",
+            "摄氏"
+          ]
+        ]
+      },
+      "metrics": {
+        "unit_fidelity": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "UF02",
+      "family": "unit_fidelity_hardness",
+      "question": "45 钢 500°C 回火之后硬度是多少 HRC？",
+      "expect": {
+        "answer_fragments": [
+          "26"
+        ],
+        "answer_any_fragments": [
+          [
+            "HRC"
+          ]
+        ]
+      },
+      "metrics": {
+        "unit_fidelity": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "UF03",
+      "family": "unit_fidelity_torque",
+      "question": "泵手册 1.1 里 M8 的标准力矩是多少，单位是什么？",
+      "expect": {
+        "answer_fragments": [
+          "28"
+        ],
+        "answer_any_fragments": [
+          [
+            "Nm",
+            "牛·米",
+            "牛米"
+          ]
+        ]
+      },
+      "metrics": {
+        "unit_fidelity": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "UF04",
+      "family": "unit_fidelity_percent",
+      "question": "泵故障原因分布图里的数值单位是什么？",
+      "expect": {
+        "answer_any_fragments": [
+          [
+            "%",
+            "百分"
+          ]
+        ]
+      },
+      "metrics": {
+        "unit_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "CP01",
+      "family": "condition_preservation_text",
+      "question": "空压机维护周期是多少小时？这个值有什么前提条件吗？",
+      "expect": {
+        "answer_fragments": [
+          "500"
+        ],
+        "answer_any_fragments": [
+          [
+            "与环境无关",
+            "无关",
+            "环境"
+          ]
+        ]
+      },
+      "metrics": {
+        "condition_respect": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "CP02",
+      "family": "condition_preservation_memory",
+      "question": "我整理的 M8 地脚螺栓力矩速查，适用范围是什么？",
+      "expect": {
+        "tool": "knowledge_search",
+        "memory_must_any": [
+          11,
+          12
+        ],
+        "answer_any_fragments": [
+          [
+            "泵手册",
+            "泵维护",
+            "仅适用",
+            "场景",
+            "本次",
+            "条件"
+          ]
+        ]
+      },
+      "metrics": {
+        "condition_respect": "answer",
+        "experience_routing": "tool"
+      }
+    },
+    {
+      "case_id": "CP03",
+      "family": "condition_case_vs_standard",
+      "question": "传动轴联轴器对中的标准偏差值是多少？",
+      "expect": {
+        "answer_fragments": [
+          "0.35"
+        ],
+        "answer_any_fragments": [
+          [
+            "案例",
+            "该次",
+            "记录",
+            "不是标准",
+            "并非标准",
+            "仅供参考",
+            "那一次"
+          ]
+        ]
+      },
+      "metrics": {
+        "condition_respect": "answer",
+        "claim_entailment": "answer"
+      }
+    },
+    {
+      "case_id": "VP01",
+      "family": "version_preservation_dual",
+      "question": "泵手册的 M8 标准力矩，1.0 写的是多少、1.1 写的是多少？",
+      "expect": {
+        "answer_fragments": [
+          "25",
+          "28"
+        ],
+        "conflict_required": true
+      },
+      "metrics": {
+        "version_preservation": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "VP02",
+      "family": "version_preservation_draft",
+      "question": "泵手册 2.0 的力矩数值现在能直接用吗？",
+      "expect": {
+        "answer_any_fragments": [
+          [
+            "草案",
+            "未正式",
+            "还没有正式",
+            "不能直接",
+            "确认"
+          ]
+        ]
+      },
+      "metrics": {
+        "version_preservation": "answer",
+        "epistemic_boundary": "answer"
+      }
+    },
+    {
+      "case_id": "UC01",
+      "family": "uncertainty_medium_blur",
+      "question": "故障分布模糊分级第二页那张图的各部分占比是多少？",
+      "expect": {
+        "blur_lenient": {
+          "positives": [
+            [
+              "45"
+            ],
+            [
+              "30"
+            ]
+          ],
+          "uncertainty": [
+            "模糊",
+            "看不清",
+            "无法",
+            "不太清楚"
+          ]
+        }
+      },
+      "metrics": {
+        "uncertainty": "answer",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "UC02",
+      "family": "uncertainty_severe_blur",
+      "question": "故障分布模糊分级第三页那张严重模糊的图，各占比到底是多少？",
+      "expect": {
+        "blur_lenient": {
+          "positives": [
+            [
+              "45"
+            ],
+            [
+              "30"
+            ]
+          ],
+          "uncertainty": [
+            "模糊",
+            "看不清",
+            "无法",
+            "不能可靠",
+            "辨认"
+          ]
+        }
+      },
+      "metrics": {
+        "uncertainty": "answer",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "UC03",
+      "family": "uncertainty_nonexistent_entity",
+      "question": "冷却水泵 P-205 的额定流量是多少？",
+      "expect": {
+        "no_answer_ok": true,
+        "answer_any_fragments": [
+          [
+            "没有",
+            "未找到",
+            "不存在",
+            "只有",
+            "P-201",
+            "P-202",
+            "P-203",
+            "P-204",
+            "未提供"
+          ]
+        ]
+      },
+      "metrics": {
+        "missing_evidence": "answer",
+        "uncertainty": "answer"
+      }
+    },
+    {
+      "case_id": "ME02",
+      "family": "missing_evidence_extrapolation",
+      "question": "45 钢 700°C 回火之后硬度是多少 HRC？",
+      "expect": {
+        "no_answer_ok": true,
+        "answer_any_fragments": [
+          [
+            "没有",
+            "未",
+            "超出",
+            "无法",
+            "只到",
+            "仅到",
+            "600",
+            "不超过"
+          ]
+        ]
+      },
+      "metrics": {
+        "missing_evidence": "answer",
+        "claim_entailment": "answer"
+      }
+    },
+    {
+      "case_id": "ME03",
+      "family": "missing_evidence_wrong_doc",
+      "question": "泵维护手册里 P-203 的额定流量是多少？",
+      "expect": {
+        "blur_lenient": {
+          "positives": [
+            [
+              "42"
+            ],
+            [
+              "冷却水泵"
+            ]
+          ],
+          "uncertainty": [
+            "不在",
+            "没有",
+            "另一份",
+            "不是这份",
+            "未包含"
+          ]
+        }
+      },
+      "metrics": {
+        "missing_evidence": "answer",
+        "citation_scope": "answer"
+      }
+    },
+    {
+      "case_id": "CH01",
+      "family": "conflict_cross_doc_consistency",
+      "question": "空压机手册和泵手册里 M8 的力矩数值写的一致吗？",
+      "expect": {
+        "blur_lenient": {
+          "positives": [
+            [
+              "一致",
+              "相同",
+              "一样"
+            ],
+            [
+              "不同",
+              "不一致"
+            ]
+          ],
+          "uncertainty": [
+            "版本",
+            "哪一版",
+            "1.1",
+            "草案"
+          ]
+        }
+      },
+      "metrics": {
+        "conflict_handling": "answer",
+        "version_preservation": "answer"
+      }
+    },
+    {
+      "case_id": "CH02",
+      "family": "conflict_clear_vs_blur_same_data",
+      "question": "故障分布分级第一页和第二页两张图的占比数据一样吗？",
+      "expect": {
+        "answer_any_fragments": [
+          [
+            "一样",
+            "相同",
+            "一致",
+            "同一份数据"
+          ]
+        ]
+      },
+      "metrics": {
+        "conflict_handling": "answer",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "VT01",
+      "family": "visual_text_conflict_range",
+      "question": "地脚螺栓的力矩标准到底是多少？资料里写的 46 和 25 是怎么回事？",
+      "expect": {
+        "blur_lenient": {
+          "positives": [
+            [
+              "M8",
+              "M10",
+              "规格"
+            ],
+            [
+              "46",
+              "25"
+            ]
+          ],
+          "uncertainty": [
+            "规格",
+            "哪个",
+            "M8",
+            "M10",
+            "条件",
+            "设备"
+          ]
+        }
+      },
+      "metrics": {
+        "conflict_handling": "answer",
+        "condition_respect": "answer"
+      }
+    },
+    {
+      "case_id": "EB01",
+      "family": "epistemic_confirmed_root_cause",
+      "question": "主轴电机高负载振荡的根因，用户确认过吗？",
+      "expect": {
+        "tool": "knowledge_search",
+        "memory_must_any": [
+          6
+        ],
+        "answer_any_fragments": [
+          [
+            "确认",
+            "已确认"
+          ]
+        ]
+      },
+      "metrics": {
+        "epistemic_boundary": "answer",
+        "experience_routing": "tool"
+      }
+    },
+    {
+      "case_id": "EB02",
+      "family": "epistemic_raw_qa_boundary",
+      "question": "PLC 通讯中断那次的内容，是我保存过的问答还是我自己整理的经验？",
+      "expect": {
+        "tool": "knowledge_search",
+        "memory_must_any": [
+          7
+        ],
+        "answer_any_fragments": [
+          [
+            "保存过的问答",
+            "保存的问答",
+            "问答副本",
+            "保存的一问一答"
+          ]
+        ]
+      },
+      "metrics": {
+        "epistemic_boundary": "answer",
+        "experience_routing": "tool"
+      }
+    },
+    {
+      "case_id": "CA01",
+      "family": "calculation_difference",
+      "question": "P-203 和 P-202 的额定流量差多少？",
+      "expect": {
+        "answer_fragments": [
+          "4"
+        ],
+        "answer_any_fragments": [
+          [
+            "42",
+            "38"
+          ]
+        ]
+      },
+      "metrics": {
+        "calculation": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "CA02",
+      "family": "calculation_difference",
+      "question": "轴承温度从 0h 到 5000h 一共升了多少度？",
+      "expect": {
+        "answer_fragments": [
+          "27"
+        ],
+        "answer_any_fragments": [
+          [
+            "45",
+            "72"
+          ]
+        ]
+      },
+      "metrics": {
+        "calculation": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "CA03",
+      "family": "calculation_sum",
+      "question": "密封失效和轴承磨损两类原因合计占比多少？",
+      "expect": {
+        "answer_fragments": [
+          "75"
+        ],
+        "answer_any_fragments": [
+          [
+            "%"
+          ]
+        ]
+      },
+      "metrics": {
+        "calculation": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "CA04",
+      "family": "calculation_difference",
+      "question": "45 钢 200°C 和 600°C 回火的硬度差多少 HRC？",
+      "expect": {
+        "answer_fragments": [
+          "30"
+        ],
+        "answer_any_fragments": [
+          [
+            "HRC",
+            "50",
+            "20"
+          ]
+        ]
+      },
+      "metrics": {
+        "calculation": "answer",
+        "unit_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "CA05",
+      "family": "calculation_difference",
+      "question": "密封失效占比比轴承磨损多几个百分点？",
+      "expect": {
+        "answer_fragments": [
+          "15"
+        ],
+        "answer_any_fragments": [
+          [
+            "45",
+            "30"
+          ]
+        ]
+      },
+      "metrics": {
+        "calculation": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "CA06",
+      "family": "calculation_difference",
+      "question": "轴承温度 3000h 到 4000h 升了几度？",
+      "expect": {
+        "answer_fragments": [
+          "5"
+        ],
+        "answer_any_fragments": [
+          [
+            "63",
+            "68"
+          ]
+        ]
+      },
+      "metrics": {
+        "calculation": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "CS01",
+      "family": "citation_scope_page",
+      "question": "P-204 的额定流量是多少？",
+      "expect": {
+        "answer_fragments": [
+          "29"
+        ],
+        "cite_must": [
+          {
+            "doc": "冷却水泵",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "citation_scope": "citation",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "CS02",
+      "family": "citation_scope_page",
+      "question": "没有版本号的那份泵手册里，M6 的标准力矩是多少？",
+      "expect": {
+        "answer_fragments": [
+          "10"
+        ],
+        "cite_must": [
+          {
+            "doc": "泵维护视觉手册",
+            "page": 2
+          }
+        ]
+      },
+      "metrics": {
+        "citation_scope": "citation",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "CS03",
+      "family": "citation_scope_page",
+      "question": "轴承温度趋势里 4000h 的读数是多少？",
+      "expect": {
+        "answer_fragments": [
+          "68"
+        ],
+        "cite_must": [
+          {
+            "doc": "冷却水泵",
+            "page": 2
+          }
+        ]
+      },
+      "metrics": {
+        "citation_scope": "citation",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "CS04",
+      "family": "citation_scope_doc",
+      "question": "清晰版故障原因分布图在哪个文档第几页？",
+      "expect": {
+        "cite_must": [
+          {
+            "doc": "模糊分级",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "citation_scope": "citation"
+      }
+    },
+    {
+      "case_id": "CS05",
+      "family": "citation_scope_page",
+      "question": "原版泵手册力矩表里 M10 的标准力矩是多少？",
+      "expect": {
+        "answer_fragments": [
+          "46"
+        ],
+        "cite_must": [
+          {
+            "doc": "泵维护视觉手册",
+            "page": 2
+          }
+        ]
+      },
+      "metrics": {
+        "citation_scope": "citation",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "ED01",
+      "family": "experience_document_conflict",
+      "question": "我整理的 M8 最大力矩 30 跟现在手册里的写的一致吗？",
+      "expect": {
+        "blur_lenient": {
+          "positives": [
+            [
+              "30"
+            ],
+            [
+              "32"
+            ],
+            [
+              "一致"
+            ],
+            [
+              "不一致",
+              "不同"
+            ]
+          ],
+          "uncertainty": [
+            "版本",
+            "哪一版",
+            "1.1",
+            "草案"
+          ]
+        }
+      },
+      "metrics": {
+        "conflict_handling": "answer",
+        "version_preservation": "answer"
+      }
+    },
+    {
+      "case_id": "ED02",
+      "family": "experience_stale_record",
+      "question": "我保存过的那个 OC 报警原因的判断，现在还能用吗？",
+      "expect": {
+        "tool": "knowledge_search",
+        "answer_any_fragments": [
+          [
+            "过时",
+            "错误",
+            "不再",
+            "不能",
+            "不成立",
+            "不正确"
+          ]
+        ]
+      },
+      "metrics": {
+        "epistemic_boundary": "answer",
+        "experience_routing": "tool"
+      }
+    },
+    {
+      "case_id": "ED03",
+      "family": "experience_handling",
+      "question": "主轴电机一高负载就振荡，该怎么处理？",
+      "expect": {
+        "tool": "knowledge_search",
+        "answer_any_fragments": [
+          [
+            "速度环",
+            "增益"
+          ]
+        ]
+      },
+      "metrics": {
+        "experience_routing": "tool",
+        "claim_entailment": "answer"
+      }
+    },
+    {
+      "case_id": "ED04",
+      "family": "experience_resolution",
+      "question": "传动轴振动那个问题最后是怎么解决的？",
+      "expect": {
+        "tool": "knowledge_search",
+        "answer_any_fragments": [
+          [
+            "对中",
+            "0.35",
+            "重新"
+          ]
+        ]
+      },
+      "metrics": {
+        "experience_routing": "tool"
+      }
+    },
+    {
+      "case_id": "XT01",
+      "family": "cross_doc_same_chart",
+      "question": "泵故障原因里轴承磨损占多少？两份资料里的数据对得上吗？",
+      "expect": {
+        "answer_fragments": [
+          "30"
+        ],
+        "answer_any_fragments": [
+          [
+            "一致",
+            "一样",
+            "相同",
+            "对得上"
+          ]
+        ]
+      },
+      "metrics": {
+        "conflict_handling": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "XT02",
+      "family": "trend_relation",
+      "question": "轴承温度随运行小时数是上升还是下降的？",
+      "expect": {
+        "answer_any_fragments": [
+          [
+            "上升",
+            "升高",
+            "上涨",
+            "增加",
+            "越来越高"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_grounding": "answer",
+        "claim_entailment": "answer"
+      }
+    },
+    {
+      "case_id": "XT03",
+      "family": "extremum_comparison",
+      "question": "四台冷却水泵里哪台额定流量最小？是多少？",
+      "expect": {
+        "answer_fragments": [
+          "29"
+        ],
+        "answer_any_fragments": [
+          [
+            "P-204",
+            "204"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_grounding": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "XT04",
+      "family": "trend_relation",
+      "question": "45 钢回火温度越高，硬度是怎么变化的？",
+      "expect": {
+        "answer_any_fragments": [
+          [
+            "越低",
+            "下降",
+            "降低",
+            "变小"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_grounding": "answer",
+        "claim_entailment": "answer"
+      }
+    },
+    {
+      "case_id": "XT05",
+      "family": "extremum_comparison",
+      "question": "泵故障原因里占比最小的是哪一项？",
+      "expect": {
+        "answer_any_fragments": [
+          [
+            "其它",
+            "其他"
+          ],
+          [
+            "10"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_grounding": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "XT06",
+      "family": "numeric_fidelity_neighbor",
+      "question": "轴承温度趋势最后一个点的读数是多少？",
+      "expect": {
+        "answer_fragments": [
+          "72"
+        ],
+        "answer_any_fragments": [
+          [
+            "°C",
+            "℃",
+            "摄氏"
+          ]
+        ]
+      },
+      "metrics": {
+        "numeric_fidelity": "answer",
+        "unit_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "XT07",
+      "family": "numeric_fidelity_neighbor",
+      "question": "45 钢 300°C 回火后硬度是多少？",
+      "expect": {
+        "answer_fragments": [
+          "42"
+        ],
+        "answer_any_fragments": [
+          [
+            "HRC"
+          ]
+        ]
+      },
+      "metrics": {
+        "numeric_fidelity": "answer",
+        "unit_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "XT08",
+      "family": "numeric_fidelity_neighbor",
+      "question": "轴承温度 1000h 的时候是多少度？",
+      "expect": {
+        "answer_fragments": [
+          "52"
+        ]
+      },
+      "metrics": {
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "XT09",
+      "family": "numeric_fidelity_interference",
+      "question": "叶轮腐蚀在泵故障原因里占多少？",
+      "expect": {
+        "answer_fragments": [
+          "15"
+        ],
+        "answer_any_fragments": [
+          [
+            "%"
+          ]
+        ]
+      },
+      "metrics": {
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "XT10",
+      "family": "numeric_fidelity_adjacent_cell",
+      "question": "原版泵手册力矩表里 M10 的最大力矩是多少？",
+      "expect": {
+        "answer_fragments": [
+          "52"
+        ]
+      },
+      "metrics": {
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "XT11",
+      "family": "version_same_value",
+      "question": "泵手册 1.1 里 M6 的标准力矩是多少？",
+      "expect": {
+        "answer_fragments": [
+          "10"
+        ],
+        "cite_must": [
+          {
+            "doc": "1.1",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "numeric_fidelity": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "XT12",
+      "family": "document_structure",
+      "question": "故障分布模糊分级这份资料里三张图分别是什么清晰度？",
+      "expect": {
+        "answer_any_fragments": [
+          [
+            "清晰",
+            "中等模糊",
+            "严重模糊",
+            "模糊"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "VP03",
+      "family": "version_comparison_value",
+      "question": "泵手册 1.0 和 1.1 里 M8 的最大力矩哪个大？",
+      "expect": {
+        "answer_fragments": [
+          "32"
+        ],
+        "answer_any_fragments": [
+          [
+            "1.1"
+          ]
+        ]
+      },
+      "metrics": {
+        "version_preservation": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "PF01",
+      "family": "persona_novice_phrasing",
+      "question": "泵最容易坏的地方是哪里呀？占多少？",
+      "expect": {
+        "answer_any_fragments": [
+          [
+            "密封"
+          ],
+          [
+            "45"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "PF02",
+      "family": "persona_student_phrasing",
+      "question": "回火实验里温度升高硬度会怎么变？举个数据例子。",
+      "expect": {
+        "answer_any_fragments": [
+          [
+            "越低",
+            "下降",
+            "降低"
+          ],
+          [
+            "50",
+            "42",
+            "33",
+            "26",
+            "20"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_grounding": "answer",
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "PF03",
+      "family": "persona_careless_phrasing",
+      "question": "那个轴承温度最后到多少度来着？",
+      "expect": {
+        "answer_fragments": [
+          "72"
+        ]
+      },
+      "metrics": {
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "PF04",
+      "family": "persona_engineer_phrasing",
+      "question": "传动轴那份资料里 0.35mm 是允差标准还是案例记录？",
+      "expect": {
+        "answer_any_fragments": [
+          [
+            "案例",
+            "记录",
+            "该次",
+            "不是标准",
+            "并非",
+            "那一次"
+          ]
+        ]
+      },
+      "metrics": {
+        "condition_respect": "answer",
+        "claim_entailment": "answer"
+      }
+    },
+    {
+      "case_id": "PF05",
+      "family": "paraphrase_numeric",
+      "question": "三号泵 P-203 流量多大？",
+      "expect": {
+        "answer_fragments": [
+          "42"
+        ]
+      },
+      "metrics": {
+        "numeric_fidelity": "answer"
+      }
+    },
+    {
+      "case_id": "NG01",
+      "family": "negative_no_price",
+      "question": "这台冷却水泵的采购价格是多少？",
+      "expect": {
+        "no_answer_ok": true,
+        "answer_any_fragments": [
+          [
+            "没有",
+            "未",
+            "信息不足",
+            "找不到"
+          ]
+        ]
+      },
+      "metrics": {
+        "missing_evidence": "answer"
+      }
+    },
+    {
+      "case_id": "NG02",
+      "family": "negative_cross_corpus",
+      "question": "空压机的油品更换周期是多久？",
+      "expect": {
+        "no_answer_ok": true,
+        "answer_any_fragments": [
+          [
+            "没有",
+            "未",
+            "信息不足",
+            "找不到",
+            "未提供"
+          ]
+        ]
+      },
+      "metrics": {
+        "missing_evidence": "answer"
+      }
+    },
+    {
+      "case_id": "NG03",
+      "family": "negative_wrong_doc_scope",
+      "question": "泵维护手册里有没有空压机的维护内容？",
+      "expect": {
+        "answer_any_fragments": [
+          [
+            "没有",
+            "未",
+            "不包含",
+            "只"
+          ]
+        ]
+      },
+      "metrics": {
+        "missing_evidence": "answer"
+      }
+    }
+  ]
+}

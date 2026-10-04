@@ -1,0 +1,99 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.venv/
+venv/
+
+# Test and lint caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Local knowledge-base data (keep directory placeholders)
+data/raw/*
+!data/raw/.gitkeep
+data/pages/*
+!data/pages/.gitkeep
+data/markdown/*
+!data/markdown/.gitkeep
+data/agent-readings/*
+!data/agent-readings/.gitkeep
+data/database/*
+!data/database/.gitkeep
+# Profile/preferences are runtime data outside the document subdirectories.
+data/*.db
+data/*.db-*
+data/*.sqlite*
+data/*preferences*.json
+backups/*
+!backups/.gitkeep
+logs/*
+!logs/.gitkeep
+runtime/*
+!runtime/.gitkeep
+
+# Streamlit and editor artifacts
+.streamlit/secrets.toml
+.vscode/
+.idea/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# AI staging instance (Phase 10A, fully isolated local test data)
+staging-data/
+
+# Local scratch space (audit scripts, ad-hoc conversion output); never committed
+tmp/
+.tmp-docx-agreement/
+tests/_tmp_*/
+
+# Zero-Batch real-user pilot data (REAL_USER layer; templates in
+# templates/zero_batch/ are tracked, real records never enter Git)
+artifacts/real_user_zero_batch/
+.workbuddy/memory/
+
+# Windows packaging outputs and caches (never commit generated installers)
+packaging/windows/build/
+packaging/windows/cache/
+packaging/windows/dist/
+packaging/windows/wix/Files.generated.wxs
+
+# macOS packaging outputs and local signing material
+packaging/macos/build/
+packaging/macos/dist/
+packaging/macos/*.icns
+
+# v0.8.6 parallel staging test instances (8512+)
+staging-data-*/
+
+# Newly generated local audit evidence and old demonstration captures.
+# These rules do not untrack files already present in Git history/index.
+/artifacts/
+/docs/archive/
+/docs/v0.8-eval-results/
+/docs/assets/showcase-v0.3.0/
+/docs/assets/v0.5.0/
+/Nectivon_v0.8.6_Internal_Archive/
+/release-audit-output/
+
+# Internal v0.8.6 student-paper audit artifacts (never publish real materials)
+docs/Nectivon_v0.8.6_举一反三题目_2026-10-03.md
+docs/Nectivon_v0.8.6_人工审核待修改清单_2026-10-03.md
+docs/Nectivon_v0.8.6_初一学生真实模拟人工测试与优化报告_2026-10-03.md
+docs/Nectivon_v0.8.6_本地题源限定与变式训练回归记录_2026-10-03.md
+docs/Nectivon_v0.8.6_第一层首稿、数学排版与导入界面复核记录_2026-10-03.md
+docs/Nectivon_v0.8.6_第三层讲题恢复与并联评价回归_2026-10-03.md
+docs/Nectivon_v0.8.6_阶段2-3测试迁移修复报告_2026-10-02.md
+docs/阶段1_个人信息配置_详细测试报告_2026-10-02.md
+scripts/apply_stage4_review_fixes.py
+scripts/audit_stage4_review.py
+scripts/verify_stage4_first_pass.py

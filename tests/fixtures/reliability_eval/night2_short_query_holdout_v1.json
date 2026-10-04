@@ -1,0 +1,69 @@
+{
+ "eval_id": "night2_short_query_holdout_v1",
+ "corpus_ref": "hbv2-corpus-20260908-r4",
+ "frozen_at": "2026-09-08T13:45:00+08:00",
+ "product_code_head": "88db3ee (post-fix)",
+ "model_expectation": "短问法 blind holdout（冻结于任何 post-fix 运行之前，首跑即终判，禁止看结果后改 expected）。corpus-present 但从未问过的概念问法（线性回归优点/强化学习定义/过拟合缓解）应路由 page_search 用语料回答；corpus-absent（蒙特卡洛，0 页已核验）与元问题（写作业）保持诚实边界；锚点对照（过拟合是什么）不回归。",
+ "notes": "语料定义：p2 线性回归（可解释性强，适合线性关系）；p1 强化学习（智能体通过与环境交互的奖励学习策略）；p2 过拟合缓解手段包括正则化与早停。",
+ "cases": [
+  {
+   "case_id": "HQ1",
+   "family": "holdout_ml_bare",
+   "question": "线性回归有什么优点？",
+   "expect": {
+    "tool": "page_search",
+    "answer_any_fragments": [["可解释性", "线性关系"]]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "HQ2",
+   "family": "holdout_ml_bare",
+   "question": "什么是强化学习？",
+   "expect": {
+    "tool": "page_search",
+    "answer_any_fragments": [["奖励", "智能体"]]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "HQ3",
+   "family": "holdout_ml_bare",
+   "question": "过拟合怎么缓解？",
+   "expect": {
+    "tool": "page_search",
+    "answer_any_fragments": [["正则化", "早停"]]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "HQ4",
+   "family": "holdout_corpus_absent",
+   "question": "蒙特卡洛方法是什么？",
+   "expect": {
+    "no_answer_ok": true,
+    "answer_any_fragments": [["不需要调用知识库工具"]]
+   },
+   "metrics": {"boundary": "answer"}
+  },
+  {
+   "case_id": "HQ5",
+   "family": "holdout_anchored",
+   "question": "人工智能基础课程讲义里过拟合是什么？",
+   "expect": {
+    "answer_any_fragments": [["误差"]]
+   },
+   "metrics": {"answer": "answer"}
+  },
+  {
+   "case_id": "HQ6",
+   "family": "holdout_meta",
+   "question": "你能帮我写作业吗？",
+   "expect": {
+    "no_answer_ok": true,
+    "answer_any_fragments": [["不需要调用知识库工具"]]
+   },
+   "metrics": {"boundary": "answer"}
+  }
+ ]
+}

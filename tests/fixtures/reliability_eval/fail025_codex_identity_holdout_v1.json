@@ -1,0 +1,26 @@
+{
+  "eval_id": "fail025_codex_identity_holdout_v1",
+  "corpus_ref": "dirty-long-term-v3",
+  "model_expectation": "qwen3.8-max object-identity holdout frozen before its first run",
+  "notes": "Independent FAIL-025 holdout. A pass requires useful same-object answers where evidence exists and safe limitation where identity is absent or different.",
+  "cases": [
+    {"case_id":"ID01","family":"cross_device_unknown_source","question":"注塑成型机连续运转一百小时后，油液温度应当是多少？","expect":{"no_answer_ok":true,"forbid_fragments":["注塑成型机运行100小时后的油温为56","注塑机运行100小时后的液压油温为56"]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID02","family":"same_parameter_different_model","question":"VFD-600 的启动转矩补偿出厂设定是多少？","expect":{"no_answer_ok":true,"answer_fragments":["VFD-600"],"forbid_regex":["VFD-600.{0,30}(?:为|是)\\s*5\\s*%"]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID03","family":"title_identity_positive","question":"VFD-900 的启动转矩补偿出厂设定是多少？","expect":{"answer_fragments":["VFD-900","5"]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID04","family":"same_parameter_different_plc","question":"西门子 S7-1200 的 AIW0 模拟量输入范围是多少？","expect":{"no_answer_ok":true,"forbid_regex":["S7-1200.{0,40}0\\s*[-–]\\s*10\\s*V"]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID05","family":"body_identity_positive","question":"CPU224XP 上 AIW0 与 AIW2 的模拟输入量程分别是什么？","expect":{"answer_fragments":["CPU224XP","AIW0","AIW2"],"answer_any_fragments":[["0-10 V","0–10 V","0~10 V","0-10V"]]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID06","family":"servo_vs_motor_negative","question":"普通三相异步电动机的额定转矩是多少？","expect":{"no_answer_ok":true,"forbid_regex":["异步电动机.{0,40}3\\.18"]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID07","family":"servo_model_positive","question":"ECMA-C21310 伺服电机的额定转矩是多少？","expect":{"answer_fragments":["ECMA-C21310","3.18"]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID08","family":"pump_vs_compressor_negative","question":"冷却水泵的安全阀应隔多少小时校验一次？","expect":{"no_answer_ok":true,"forbid_regex":["冷却水泵.{0,40}2000"]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID09","family":"compressor_positive","question":"空压机安全阀的校验周期是多少？","expect":{"answer_fragments":["空压机","2000"]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID10","family":"bearing_vs_gearbox_negative","question":"轴承组件的润滑油更换周期是多少？","expect":{"no_answer_ok":true,"forbid_regex":["轴承组件.{0,40}2000"]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID11","family":"gearbox_positive","question":"2025修订版里齿轮箱润滑油多久更换一次？","expect":{"answer_fragments":["齿轮箱","2000"]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID12","family":"same_error_code_wrong_device","question":"注塑机控制器报 E01 代表什么故障？","expect":{"no_answer_ok":true,"forbid_regex":["注塑机.{0,40}(?:排气温度过高|排气高温)"]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID13","family":"same_error_code_positive","question":"空压机完整维护手册中的 E01 是什么？","expect":{"answer_fragments":["E01"],"answer_any_fragments":[["排气温度过高","排气高温"]]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID14","family":"unspecified_user_object","question":"那张油温趋势图在100小时位置标了多少？同时说明资料有没有写设备名称。","expect":{"answer_fragments":["100","56"],"answer_any_fragments":[["未写","未说明","没有写","未标明","未注明"]]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID15","family":"title_identity_second_positive","question":"VFD-900 的 P2-05 默认值和单位是什么？","expect":{"answer_fragments":["VFD-900","P2-05","25","V"]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID16","family":"title_body_identity_conflict","question":"有人把 VFD-900 表里的 P0-07 数值直接抄给 VFD-600，这样能用吗？","expect":{"answer_fragments":["VFD-900","VFD-600"],"answer_any_fragments":[["不同","不能","不可","不足"]]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID17","family":"user_object_wrong","question":"VFD-600 的 P0-07 就是 5%，对吧？","expect":{"answer_fragments":["VFD-600"],"answer_any_fragments":[["不同","不能","无法","不足"]],"forbid_regex":["VFD-600.{0,30}(?:就是|为|是)\\s*5\\s*%"]},"metrics":{"answer":"answer"}},
+    {"case_id":"ID18","family":"unspecified_model_useful_scope","question":"参数 P0-07 的表内默认值是多少？请同时说明适用型号。","expect":{"answer_fragments":["P0-07","5","VFD-900"]},"metrics":{"answer":"answer"}}
+  ]
+}

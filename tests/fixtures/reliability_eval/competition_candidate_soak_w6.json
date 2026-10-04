@@ -1,0 +1,17 @@
+{
+  "eval_id": "competition_candidate_soak_w6",
+  "corpus_ref": "dirty-long-term-v2",
+  "frozen_at": "2026-09-06T18:18:00+08:00",
+  "model_expectation": "真实单步 Agent + 硬模型；语义相近但措辞明显不同的经验应召回（Positive Recall），词像但语义不同的应拒绝（Negative Rejection）；不能 keyword-first",
+  "notes": "COMPETITION CANDIDATE STRESS W6：Low Lexical Similarity——口语化/换词问法（§14）。",
+  "cases": [
+    {"case_id": "LX01", "family": "low_lex_noise", "question": "咱们车间里嗡嗡声最响的那个岗位，响度到多少了？", "expect": {"answer_any_fragments": [["85"], ["D"]]}, "metrics": {"low_lexical": "answer"}},
+    {"case_id": "LX02", "family": "low_lex_camera_shake", "question": "监控画面老是一抖一抖的，最后查明是什么原因？", "expect": {"answer_any_fragments": [["曝光", "闪烁", "工频", "灯"]]}, "metrics": {"low_lexical": "answer", "experience_authority": "answer"}},
+    {"case_id": "LX03", "family": "low_lex_vision_calib", "question": "机械手引导抓取总差一点点，后来是怎么调准的？", "expect": {"answer_any_fragments": [["九点", "标定"]]}, "metrics": {"low_lexical": "answer"}},
+    {"case_id": "LX04", "family": "low_lex_vibration_std", "question": "设备转起来稳不稳，用什么标准衡量？A级限值是多少？", "expect": {"answer_fragments": ["0.71"]}, "metrics": {"low_lexical": "answer"}},
+    {"case_id": "LX05", "family": "low_lex_pressure_reading", "question": "液压站压力表读数怎么判断合格？早期那会儿的标准是多少？", "expect": {"answer_any_fragments": [["12"], ["v1", "早期", "当时"]]}, "metrics": {"low_lexical": "answer", "version_soak": "answer"}},
+    {"case_id": "LX06", "family": "low_lex_gear_hum", "question": "齿轮箱那边嗡嗡响的问题，最后定下来的原因是什么？", "expect": {"answer_any_fragments": [["地脚", "基础", "松动"]]}, "metrics": {"low_lexical": "answer"}},
+    {"case_id": "LX07", "family": "low_lex_belt_tension", "question": "装配线那条输送带松紧度多久检查一回？", "expect": {"answer_any_fragments": [["每周", "一周"]]}, "metrics": {"low_lexical": "answer"}},
+    {"case_id": "LX08", "family": "low_lex_backup", "question": "变频器那台机器的程序参数，多久存一次档？文件名上要注意什么？", "expect": {"answer_any_fragments": [["季度"], ["日期"]]}, "metrics": {"low_lexical": "answer"}}
+  ]
+}

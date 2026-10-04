@@ -1,0 +1,1195 @@
+{
+ "eval_id": "e1_generalization_v1",
+ "corpus_ref": "dirty-long-term-v2",
+ "frozen_at": "2026-09-06T15:35:17.168422+00:00",
+ "model_expectation": "E-1 泛化马拉松：图内实体检索泛化/趋势比较/多版本族/同名作废取代/长文档多页/同词跨设备精度攻击/伺服电气细节/低清诚实面/负控拒答。期望值全部来自视觉阅读产物真实数值；负控例（无 fragments）断言诚实拒答（no_answer_ok）。",
+ "notes": "冻结于运行前；期望值来源=staging 阅读产物 key_facts（2026-09-06 抽取）。 | 2026-09-07: CASE_DESIGN_ERROR-008 修正 EG011/036/047/054/064/081 期望语义（no_answer_ok→answer_any_fragments），探索性集修正并登记。",
+ "cases": [
+  {
+   "case_id": "EG001",
+   "family": "e1_generalization",
+   "question": "电机负载50%的时候电流是多少？",
+   "expect": {
+    "answer_fragments": [
+     "8"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG002",
+   "family": "e1_generalization",
+   "question": "电机负载75%对应多少电流？",
+   "expect": {
+    "answer_fragments": [
+     "11"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG003",
+   "family": "e1_generalization",
+   "question": "工位A的噪音是多少分贝？",
+   "expect": {
+    "answer_fragments": [
+     "78"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG004",
+   "family": "e1_generalization",
+   "question": "哪个工位噪音最大？多少分贝？",
+   "expect": {
+    "answer_fragments": [
+     "82"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG005",
+   "family": "e1_generalization",
+   "question": "液压油刚启动时（0小时）温度多少？",
+   "expect": {
+    "answer_fragments": [
+     "32"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG006",
+   "family": "e1_generalization",
+   "question": "液压油温运行20小时后是多少度？",
+   "expect": {
+    "answer_fragments": [
+     "41"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG007",
+   "family": "e1_generalization",
+   "question": "cam1的帧率是多少？",
+   "expect": {
+    "answer_fragments": [
+     "30"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG008",
+   "family": "e1_generalization",
+   "question": "cam2摄像头帧率多少fps？",
+   "expect": {
+    "answer_fragments": [
+     "25"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG009",
+   "family": "e1_generalization",
+   "question": "注塑周期里锁模占多少百分比？",
+   "expect": {
+    "answer_fragments": [
+     "20"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG010",
+   "family": "e1_generalization",
+   "question": "射胶阶段占注塑周期的百分之几？",
+   "expect": {
+    "answer_fragments": [
+     "15"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG011",
+   "family": "e1_generalization",
+   "question": "泵故障原因分布里哪一类占比最大？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "密封失效"
+     ],
+     [
+      "45"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   },
+   "design_note": "CASE_DESIGN_ERROR-008 修正：开放式问题原误设 no_answer_ok，产品回答正确"
+  },
+  {
+   "case_id": "EG012",
+   "family": "e1_generalization",
+   "question": "年度维护计划2026里全厂大修一年几次？",
+   "expect": {
+    "answer_fragments": [
+     "3"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG013",
+   "family": "e1_generalization",
+   "question": "2025年的年度维护计划大修频率是多少？",
+   "expect": {
+    "answer_fragments": [
+     "2"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG014",
+   "family": "e1_generalization",
+   "question": "冲压车间点检表里滑块行程是多少？",
+   "expect": {
+    "answer_fragments": [
+     "1.2"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG015",
+   "family": "e1_generalization",
+   "question": "齿轮箱2024版轴承温度报警阈值是多少？",
+   "expect": {
+    "answer_fragments": [
+     "75"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG016",
+   "family": "e1_generalization",
+   "question": "齿轮箱2025修订版轴承温度报警阈值？",
+   "expect": {
+    "answer_fragments": [
+     "78"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG017",
+   "family": "e1_generalization",
+   "question": "齿轮箱2026试行版阈值是多少度？",
+   "expect": {
+    "answer_fragments": [
+     "80"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG018",
+   "family": "e1_generalization",
+   "question": "液压站v1的额定油压是多少？",
+   "expect": {
+    "answer_fragments": [
+     "12"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG019",
+   "family": "e1_generalization",
+   "question": "液压站巡检要点v2额定油压？",
+   "expect": {
+    "answer_fragments": [
+     "12.5"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG020",
+   "family": "e1_generalization",
+   "question": "液压站v3草案油压拟调到多少？",
+   "expect": {
+    "answer_fragments": [
+     "13"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG021",
+   "family": "e1_generalization",
+   "question": "排气温度报警值是多少度？空压机二号机。",
+   "expect": {
+    "answer_fragments": [
+     "105"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG022",
+   "family": "e1_generalization",
+   "question": "空压机二号机储气罐多久排污一次？",
+   "expect": {
+    "answer_fragments": [
+     "500"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG023",
+   "family": "e1_generalization",
+   "question": "安全阀多久校验一次？（空压机二号机）",
+   "expect": {
+    "answer_fragments": [
+     "2000"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG024",
+   "family": "e1_generalization",
+   "question": "空压机二号机冷却水进口温度限值？",
+   "expect": {
+    "answer_fragments": [
+     "35"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG025",
+   "family": "e1_generalization",
+   "question": "输送线链速是多少？",
+   "expect": {
+    "answer_fragments": [
+     "0.8"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG026",
+   "family": "e1_generalization",
+   "question": "光电传感器对准公差是多少？",
+   "expect": {
+    "answer_fragments": [
+     "5"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG027",
+   "family": "e1_generalization",
+   "question": "伺服驱动器过载能力是多少？",
+   "expect": {
+    "answer_fragments": [
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG028",
+   "family": "e1_generalization",
+   "question": "伺服速度环增益出厂默认值？",
+   "expect": {
+    "answer_fragments": [
+     "25"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG029",
+   "family": "e1_generalization",
+   "question": "皮带张力速查里新皮带挠度多少？",
+   "expect": {
+    "answer_fragments": [
+     "4.5"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG030",
+   "family": "e1_generalization",
+   "question": "6205轴承内径多大？",
+   "expect": {
+    "answer_fragments": [
+     "25"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG031",
+   "family": "e1_generalization",
+   "question": "2.2kW四极电机额定电流大约多少？",
+   "expect": {
+    "answer_fragments": [
+     "4.7"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG032",
+   "family": "e1_generalization",
+   "question": "CQ2气缸常用行程有哪些？",
+   "expect": {
+    "answer_fragments": [
+     "50",
+     "100",
+     "200"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG033",
+   "family": "e1_generalization",
+   "question": "滤芯P-191116库存还有几件？",
+   "expect": {
+    "answer_fragments": [
+     "2"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG034",
+   "family": "e1_generalization",
+   "question": "泵维护视觉手册v1.1里M8力矩是多少？",
+   "expect": {
+    "answer_fragments": [
+     "28"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG035",
+   "family": "e1_generalization",
+   "question": "泵维护视觉手册v1.0里M8标准力矩？",
+   "expect": {
+    "answer_fragments": [
+     "25"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG036",
+   "family": "e1_generalization",
+   "question": "液压油温从0小时到20小时是升还是降？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "升"
+     ],
+     [
+      "上升"
+     ],
+     [
+      "41"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   },
+   "design_note": "CASE_DESIGN_ERROR-008 修正：开放式问题原误设 no_answer_ok，产品回答正确"
+  },
+  {
+   "case_id": "EG037",
+   "family": "e1_generalization",
+   "question": "工位A和工位B哪个噪音大？",
+   "expect": {
+    "answer_fragments": [
+     "82"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG038",
+   "family": "e1_generalization",
+   "question": "cam1和cam2哪个帧率高？",
+   "expect": {
+    "answer_fragments": [
+     "30"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG039",
+   "family": "e1_generalization",
+   "question": "ISO 10816 A级振动限值是多少？",
+   "expect": {
+    "answer_fragments": [
+     "0.71"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG040",
+   "family": "e1_generalization",
+   "question": "齿轮箱轴承温度报警阈值三个版本分别是多少？",
+   "expect": {
+    "answer_fragments": [
+     "75",
+     "78",
+     "80"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG041",
+   "family": "e1_generalization",
+   "question": "液压站额定油压v1和v2各是多少？",
+   "expect": {
+    "answer_fragments": [
+     "12",
+     "12.5"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG042",
+   "family": "e1_generalization",
+   "question": "年度维护计划2025和2026大修次数分别多少？",
+   "expect": {
+    "answer_fragments": [
+     "2",
+     "3"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG043",
+   "family": "e1_generalization",
+   "question": "空压机维护规程2019版还能用吗？",
+   "expect": {
+    "answer_fragments": [
+     "废止"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG044",
+   "family": "e1_generalization",
+   "question": "涂装线参数卡烘干温度多少？现在有效吗？",
+   "expect": {
+    "answer_fragments": [
+     "140"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG045",
+   "family": "e1_generalization",
+   "question": "电机轴承加脂周期到底是2000还是1500小时？",
+   "expect": {
+    "answer_fragments": [
+     "1500",
+     "2000"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG046",
+   "family": "e1_generalization",
+   "question": "润滑作业指导书和轴承润滑周期卡冲突时按哪个？",
+   "expect": {
+    "answer_fragments": [
+     "1500"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG047",
+   "family": "e1_generalization",
+   "question": "旧版点检作业指导书被什么取代了？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "2026"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   },
+   "design_note": "CASE_DESIGN_ERROR-008 修正：开放式问题原误设 no_answer_ok，产品回答正确"
+  },
+  {
+   "case_id": "EG048",
+   "family": "e1_generalization",
+   "question": "空压机完整维护手册里故障代码E01表示什么？",
+   "expect": {
+    "answer_fragments": [
+     "排气高温"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG049",
+   "family": "e1_generalization",
+   "question": "E02是什么故障？",
+   "expect": {
+    "answer_fragments": [
+     "油压低"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG050",
+   "family": "e1_generalization",
+   "question": "空压机完整维护手册里联轴器对中偏差允许多少？",
+   "expect": {
+    "answer_fragments": [
+     "0.05"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG051",
+   "family": "e1_generalization",
+   "question": "停机超过30天多久盘车一次？",
+   "expect": {
+    "answer_fragments": [
+     "两周"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG052",
+   "family": "e1_generalization",
+   "question": "空压机二号机手册适用哪台设备？",
+   "expect": {
+    "answer_fragments": [
+     "二号机"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG053",
+   "family": "e1_generalization",
+   "question": "高粉尘环境下空压机二号机维护周期缩短到多少？",
+   "expect": {
+    "answer_fragments": [
+     "300"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG054",
+   "family": "e1_generalization",
+   "question": "一号机用空压机二号机手册对吗？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "不对",
+      "不能",
+      "禁止",
+      "不适用",
+      "不可以"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   },
+   "design_note": "CASE_DESIGN_ERROR-008 修正：开放式问题原误设 no_answer_ok，产品回答正确"
+  },
+  {
+   "case_id": "EG055",
+   "family": "e1_generalization",
+   "question": "空压机二号机M6地脚螺栓扭矩是多少？",
+   "expect": {
+    "answer_fragments": [
+     "10",
+     "12"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG056",
+   "family": "e1_generalization",
+   "question": "变频器的E17是什么意思？",
+   "expect": {
+    "answer_fragments": [
+     "散热"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG057",
+   "family": "e1_generalization",
+   "question": "PLC的E17是什么意思？",
+   "expect": {
+    "answer_fragments": [
+     "通讯"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG058",
+   "family": "e1_generalization",
+   "question": "M8地脚螺栓力矩多少？（空压机二号机）",
+   "expect": {
+    "answer_fragments": [
+     "25",
+     "30"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG059",
+   "family": "e1_generalization",
+   "question": "设备接地电阻要求不超过多少欧？",
+   "expect": {
+    "answer_fragments": [
+     "4"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG060",
+   "family": "e1_generalization",
+   "question": "输送线体接地电阻要求？",
+   "expect": {
+    "answer_fragments": [
+     "4"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG061",
+   "family": "e1_generalization",
+   "question": "变频器风扇多久清洁一次？",
+   "expect": {
+    "answer_fragments": [
+     "每月"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG062",
+   "family": "e1_generalization",
+   "question": "PLC通讯超时的E17要检查什么？",
+   "expect": {
+    "answer_fragments": [
+     "终端电阻"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG063",
+   "family": "e1_generalization",
+   "question": "伺服DIR_INV=1是什么效果？",
+   "expect": {
+    "answer_fragments": [
+     "反向"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG064",
+   "family": "e1_generalization",
+   "question": "伺服U/V相序对调可以长期用吗？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "应急",
+      "不能长期",
+      "禁止",
+      "不可以"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   },
+   "design_note": "CASE_DESIGN_ERROR-008 修正：开放式问题原误设 no_answer_ok，产品回答正确"
+  },
+  {
+   "case_id": "EG065",
+   "family": "e1_generalization",
+   "question": "伺服编码器线缆布线注意什么？",
+   "expect": {
+    "answer_fragments": [
+     "动力线"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG066",
+   "family": "e1_generalization",
+   "question": "伺服增益调整的原则？",
+   "expect": {
+    "answer_fragments": [
+     "先降后升"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG067",
+   "family": "e1_generalization",
+   "question": "位置环增益起步是速度环的多少？",
+   "expect": {
+    "answer_fragments": [
+     "1/2"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG068",
+   "family": "e1_generalization",
+   "question": "伺服报警清除后要做什么？",
+   "expect": {
+    "answer_fragments": [
+     "复测"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG069",
+   "family": "e1_generalization",
+   "question": "输送线急停回路多久测试一次？",
+   "expect": {
+    "answer_fragments": [
+     "每月"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG070",
+   "family": "e1_generalization",
+   "question": "输送线端子紧固周期？",
+   "expect": {
+    "answer_fragments": [
+     "半年"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG071",
+   "family": "e1_generalization",
+   "question": "输送线变频器参数多久备份一次？",
+   "expect": {
+    "answer_fragments": [
+     "季度"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG072",
+   "family": "e1_generalization",
+   "question": "输送线急停后复位要几个人确认？",
+   "expect": {
+    "answer_fragments": [
+     "两人"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG073",
+   "family": "e1_generalization",
+   "question": "法兰M12螺栓力矩是多少？",
+   "expect": {
+    "answer_fragments": [
+     "65"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG074",
+   "family": "e1_generalization",
+   "question": "M16螺栓力矩多少？（法兰螺栓力矩卡）",
+   "expect": {
+    "answer_fragments": [
+     "100"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG075",
+   "family": "e1_generalization",
+   "question": "低压电机绝缘阻值多少算合格？（标准A）",
+   "expect": {
+    "answer_fragments": [
+     "1"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG076",
+   "family": "e1_generalization",
+   "question": "电机绝缘标准B的合格线是多少？",
+   "expect": {
+    "answer_fragments": [
+     "10"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG077",
+   "family": "e1_generalization",
+   "question": "新员工安全培训考核了多少人？",
+   "expect": {
+    "answer_fragments": [
+     "8"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG078",
+   "family": "e1_generalization",
+   "question": "变频器OC报警排查里电容检查结果如何？",
+   "expect": {
+    "answer_fragments": [
+     "正常"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG079",
+   "family": "e1_generalization",
+   "question": "冷却水泵轴承温度5000小时是多少度？",
+   "expect": {
+    "answer_fragments": [
+     "80"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG080",
+   "family": "e1_generalization",
+   "question": "传动轴振动手册的编号是什么？",
+   "expect": {
+    "answer_fragments": [
+     "8841"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG081",
+   "family": "e1_generalization",
+   "question": "45钢回火实验数据来自哪里？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "课程实验"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   },
+   "design_note": "CASE_DESIGN_ERROR-008 修正：开放式问题原误设 no_answer_ok，产品回答正确"
+  },
+  {
+   "case_id": "EG082",
+   "family": "e1_generalization",
+   "question": "手写点检记录里那行温度是多少度？",
+   "expect": {
+    "no_answer_ok": true
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG083",
+   "family": "e1_generalization",
+   "question": "传真采购单上买的轴承是什么型号？",
+   "expect": {
+    "no_answer_ok": true
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG084",
+   "family": "e1_generalization",
+   "question": "故障分布模糊分级里图2清晰吗？",
+   "expect": {
+    "answer_fragments": [
+     "中等模糊"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG085",
+   "family": "e1_generalization",
+   "question": "冲压车间B线的滑块行程是多少？",
+   "expect": {
+    "no_answer_ok": true
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG086",
+   "family": "e1_generalization",
+   "question": "变频器E99错误码是什么意思？",
+   "expect": {
+    "no_answer_ok": true
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG087",
+   "family": "e1_generalization",
+   "question": "6210轴承内径是多少毫米？",
+   "expect": {
+    "no_answer_ok": true
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG088",
+   "family": "e1_generalization",
+   "question": "cam5摄像头的帧率是多少？",
+   "expect": {
+    "no_answer_ok": true
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "EG089",
+   "family": "e1_generalization",
+   "question": "液压站v4正式版的油压是多少？",
+   "expect": {
+    "no_answer_ok": true
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  }
+ ]
+}

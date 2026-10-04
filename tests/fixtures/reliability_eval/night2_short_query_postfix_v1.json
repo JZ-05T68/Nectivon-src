@@ -1,0 +1,98 @@
+{
+ "eval_id": "night2_short_query_postfix_v1",
+ "corpus_ref": "hbv2-corpus-20260908-r4",
+ "frozen_at": "2026-09-08T13:45:00+08:00",
+ "product_code_head": "88db3ee (post-fix)",
+ "model_expectation": "短问法 post-fix 回归。corpus-present 探针（pre-fix 全部 honest_omission_recall_gap canned）必须路由 page_search 并用语料定义回答（omission 显著下降）；corpus-absent 与元问题保持诚实边界（canned/无资料拒答均可，判定经 group 短语）；零 commission、零 fabrication。锚点与非 ML 对照不得回归。",
+ "notes": "冻结于首次运行前。语料定义：讲义 p1 监督学习（带标签）/无监督学习（无标签）/RAG（先从资料库检索）/OCR（图片文字识别成文本）；p2 决策树（易过拟合）/KNN（无需训练但推理慢对维度敏感）/过拟合（训练误差小测试误差大）。贝叶斯网络 0 页（corpus-absent 已核验）。",
+ "cases": [
+  {
+   "case_id": "SQ01",
+   "family": "ml_bare_probe",
+   "question": "RAG 是什么？",
+   "expect": {
+    "tool": "page_search",
+    "answer_fragments": ["检索"]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "SQ02",
+   "family": "ml_bare_followup",
+   "question": "那 OCR 呢？",
+   "expect": {
+    "tool": "page_search",
+    "answer_any_fragments": [["识别", "文字"]]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "SQ03",
+   "family": "ml_bare_probe",
+   "question": "什么是过拟合？",
+   "expect": {
+    "tool": "page_search",
+    "answer_any_fragments": [["训练误差", "测试误差"]]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "SQ04",
+   "family": "ml_bare_probe",
+   "question": "KNN 有什么缺点？",
+   "expect": {
+    "tool": "page_search",
+    "answer_any_fragments": [["推理慢", "维度敏感"]]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "SQ05",
+   "family": "ml_bare_compare",
+   "question": "KNN 训练快还是推理快？",
+   "expect": {
+    "tool": "page_search",
+    "answer_fragments": ["推理慢"]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "SQ06",
+   "family": "ml_bare_compare",
+   "question": "监督学习和无监督学习差在哪？",
+   "expect": {
+    "tool": "page_search",
+    "answer_any_fragments": [["标签"]]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "SQ07",
+   "family": "ml_anchored_control",
+   "question": "人工智能基础课程讲义里 RAG 是什么？",
+   "expect": {
+    "answer_fragments": ["检索"]
+   },
+   "metrics": {"answer": "answer"}
+  },
+  {
+   "case_id": "SQ08",
+   "family": "non_ml_control",
+   "question": "决策树有什么缺点？",
+   "expect": {
+    "answer_any_fragments": [["过拟合"]]
+   },
+   "metrics": {"answer": "answer"}
+  },
+  {
+   "case_id": "SQ09",
+   "family": "corpus_absent_boundary",
+   "question": "贝叶斯网络是什么？",
+   "expect": {
+    "no_answer_ok": true,
+    "answer_any_fragments": [["不需要调用知识库工具"]]
+   },
+   "metrics": {"boundary": "answer"}
+  }
+ ]
+}

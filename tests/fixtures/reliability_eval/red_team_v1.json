@@ -1,0 +1,170 @@
+{
+ "eval_id": "red_team_v1",
+ "corpus_ref": "dirty-long-term-v3",
+ "frozen_at": "2026-09-06T18:00:52.084144+00:00",
+ "model_expectation": "Competition Red Team：新旧/草案/同名/同码/废止/近似数字/跨设备/删除源/视觉歧义/范围仲裁组合攻击。零编造+零静默旧值+零错误事实为底线；诚实拒答=PASS。",
+ "notes": "冻结于运行前。",
+ "cases": [
+  {
+   "case_id": "RT01",
+   "family": "red_team",
+   "question": "润滑标准哪个现行？主轴油现在多久换一次？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "1500"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "RT02",
+   "family": "red_team",
+   "question": "冷却水泵1000小时一车间旧图是多少度？还适用吗？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "52",
+      "取代"
+     ],
+     [
+      "52"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "RT03",
+   "family": "red_team",
+   "question": "贴片机报E05，我该检查真空泵还是相机？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "真空",
+      "相机",
+      "型号",
+      "哪"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "RT04",
+   "family": "red_team",
+   "question": "空压机维护周期按2019规程是多少？现在按多少？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "1000",
+      "500",
+      "300"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "RT05",
+   "family": "red_team",
+   "question": "管法兰M18和M20的石棉垫力矩各是多少？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "46",
+      "47"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "RT06",
+   "family": "red_team",
+   "question": "E17在变频器和PLC里分别什么含义？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "散热",
+      "通讯"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "RT07",
+   "family": "red_team",
+   "question": "炉温记录后来怎么样了？",
+   "expect": {
+    "no_answer_ok": true
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "RT08",
+   "family": "red_team",
+   "question": "手写点检记录里那行温度数字是多少？",
+   "expect": {
+    "no_answer_ok": true
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "RT09",
+   "family": "red_team",
+   "question": "D9资料里哪几周室温超过35度？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "W30",
+      "36",
+      "35"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "RT10",
+   "family": "red_team",
+   "question": "泵维护视觉手册v2.0和v1.1哪个新？M8按哪个算？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "v2.0",
+      "草案",
+      "28"
+     ],
+     [
+      "v2.0",
+      "草案"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  }
+ ]
+}

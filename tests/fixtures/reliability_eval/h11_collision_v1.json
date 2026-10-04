@@ -1,0 +1,142 @@
+{
+  "eval_id": "EKB-H11-VERSION-COLLISION-v1",
+  "corpus_ref": "dirty-long-term-v1",
+  "frozen_at": "2026-09-06T06:45:00+08:00",
+  "model_expectation": "qwen3.8-max",
+  "notes": "口语版本对撞集，仅在 dirty-long-term-v1 语料（含 v1.0/v1.1/v2.0草案 三代）上运行。§10：草案是语义——'最新正式版'草案不能自动赢；'最新看到的版本'应说明草案存在且状态不同。H09/H10 冻结集已覆盖点名/最新正式语义，本集聚焦口语冲突组合。",
+  "cases": [
+    {
+      "case_id": "K01",
+      "family": "h11_collision_values",
+      "question": "M8 到底是 25 还是 28？",
+      "expect": {
+        "answer_fragments": ["25", "28"],
+        "conflict_required": true
+      },
+      "metrics": {"version_discrimination": "answer"}
+    },
+    {
+      "case_id": "K02",
+      "family": "h11_collision_newest_colloquial",
+      "question": "新版那个手册里 M8 是多少？",
+      "expect": {
+        "blur_lenient": {
+          "positives": [["草案", "30", "35"], ["28"]],
+          "uncertainty": ["草案", "正式", "确认"]
+        }
+      },
+      "metrics": {"version_discrimination": "answer"}
+    },
+    {
+      "case_id": "K03",
+      "family": "h11_collision_stale",
+      "question": "旧手册是不是过时了？",
+      "expect": {
+        "answer_any_fragments": [["过时", "取代", "更新", "修订", "新版", "1.1", "2.0"]]
+      },
+      "metrics": {"version_discrimination": "answer"}
+    },
+    {
+      "case_id": "K04",
+      "family": "h11_collision_named_year",
+      "question": "2026 那版泵手册里 M8 标准力矩是多少？",
+      "expect": {
+        "tool": ["page_visual_search", "page_search"],
+        "answer_fragments": ["28"],
+        "cite_must": [{"doc": "v1.1", "page": 1}]
+      },
+      "metrics": {"version_discrimination": "answer", "visual_routing": "tool", "visual_grounding": "answer", "citation": "citation"}
+    },
+    {
+      "case_id": "K05",
+      "family": "h11_official_vs_draft",
+      "question": "最新正式版的 M8 标准力矩是多少？",
+      "expect": {
+        "tool": ["page_visual_search", "page_search"],
+        "answer_fragments": ["28"],
+        "forbid_fragments": ["35"]
+      },
+      "metrics": {"version_discrimination": "answer", "visual_grounding": "answer"}
+    },
+    {
+      "case_id": "K06",
+      "family": "h11_collision_delta",
+      "question": "泵手册的修订版和原版比，M8 差多少？",
+      "expect": {
+        "answer_fragments": ["25", "28"],
+        "answer_any_fragments": [["3", "差", "不同", "改为", "提高"]]
+      },
+      "metrics": {"version_discrimination": "answer", "visual_grounding": "answer"}
+    },
+    {
+      "case_id": "K07",
+      "family": "h11_collision_personal_stale",
+      "question": "我之前看的 25，现在还是 25 吗？",
+      "expect": {
+        "blur_lenient": {
+          "positives": [["25", "28"], ["不再是", "变了", "不同", "已改", "28"]],
+          "uncertainty": ["版本", "确认", "草案"]
+        }
+      },
+      "metrics": {"version_discrimination": "answer"}
+    },
+    {
+      "case_id": "K08",
+      "family": "h11_collision_newest_colloquial",
+      "question": "最新的 M8 应该打多少？",
+      "expect": {
+        "blur_lenient": {
+          "positives": [["草案", "30"], ["28"]],
+          "uncertainty": ["草案", "正式", "确认"]
+        }
+      },
+      "metrics": {"version_discrimination": "answer"}
+    },
+    {
+      "case_id": "K09",
+      "family": "h11_collision_which_version",
+      "question": "现在到底应该按哪个版本的力矩执行？",
+      "expect": {
+        "blur_lenient": {
+          "positives": [["草案"], ["28"], ["确认", "哪一版", "适用", "正式"]],
+          "uncertainty": ["确认", "草案", "正式"]
+        }
+      },
+      "metrics": {"version_discrimination": "answer"}
+    },
+    {
+      "case_id": "K10",
+      "family": "h11_collision_why",
+      "question": "泵手册两个版本的 M8 数值为什么不一样？",
+      "expect": {
+        "answer_fragments": ["25", "28"],
+        "conflict_required": true
+      },
+      "metrics": {"version_discrimination": "answer", "visual_grounding": "answer"}
+    },
+    {
+      "case_id": "K11",
+      "family": "h11_draft_status",
+      "question": "泵手册的 2.0 定稿了吗？",
+      "expect": {
+        "blur_lenient": {
+          "positives": [["草案"], ["没有", "未", "尚"]],
+          "uncertainty": ["草案", "没有", "未"]
+        }
+      },
+      "metrics": {"version_discrimination": "answer"}
+    },
+    {
+      "case_id": "K12",
+      "family": "h11_draft_status",
+      "question": "泵手册现在哪一版最新？是正式发布的吗？",
+      "expect": {
+        "blur_lenient": {
+          "positives": [["草案"], ["2.0"], ["1.1"]],
+          "uncertainty": ["草案", "正式", "确认"]
+        }
+      },
+      "metrics": {"version_discrimination": "answer"}
+    }
+  ]
+}

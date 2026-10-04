@@ -1,0 +1,68 @@
+{
+  "benchmark_id": "human_simulation_benchmark_v1",
+  "frozen_at": "2026-09-07T05:48:00+08:00",
+  "commit_sha": "aeba47b",
+  "application_version": "0.8.1",
+  "schema_version": 15,
+  "corpus_ref": "dirty-long-term-v3",
+  "corpus_state": "63 documents / 106 pages / 104 active memories / E-1 visual index 106/106",
+  "server": "127.0.0.1:8511 (staging, --no-browser) via ZCode In-app Browser",
+  "purpose": "PRE-v0.8.4 Human Reliability Evidence Baseline: simulated-user session evidence for future v0.8.4 Human Reliability gate, Zero-Batch Pilot and real-user testing comparison. SIMULATED only - never report as real-user error rates.",
+  "personas": {
+    "A": {
+      "name": "NOVICE_13",
+      "definition": "13-year-old student. Knows browser/files/normal apps. Does not know RAG/OCR/vectors/SQLite/EKB internals. Must understand the product alone. Trust-failure veto line: if evidence does not support certainty but the product makes A believe 'the AI has determined it', record TRUST_FAILURE (P1 candidate).",
+      "session_quota_min": 5,
+      "target_sessions": 6
+    },
+    "B": {
+      "name": "UNIVERSITY_STUDENT",
+      "definition": "Ordinary university student. Familiar with PDF/PPT/AI/course material/lab reports. No EKB internals. No internal technical jargon expected.",
+      "session_quota_min": 5,
+      "target_sessions": 6
+    },
+    "C": {
+      "name": "ENGINEER",
+      "definition": "Heavy engineering user: chip/manual data, versions, engineering parameters, historical faults, multi-version conflicts, long-term experience.",
+      "session_quota_min": 5,
+      "target_sessions": 8
+    },
+    "D": {
+      "name": "CARELESS_USER",
+      "definition": "Careless ordinary user: double-clicks, repeat clicks, refresh, back, repeat upload/save (simulated only when side-effect free), vague phrasing, forgotten conditions, half-finished edits, wrong deletions (SIMULATED as repeat-ask only - destructive actions on the frozen corpus are forbidden).",
+      "session_quota_min": 5,
+      "target_sessions": 6
+    }
+  },
+  "session_definition": "One session = one complete user task segment on one Streamlit session (same page-load lineage where technically possible; page reloads are themselves recorded as persona-D-style interactions). Each session contains >= 5 meaningful interactions. Sessions are the primary statistical unit; interactions within one session are never independent user samples.",
+  "interaction_definition": "One meaningful UI interaction = one user question/operation with an observed product response. Runner/curl/JS probing is supporting evidence only and is excluded from session denominators.",
+  "metrics": {
+    "TASK_SUCCESS_RATE": "sessions where the user's goal was achieved / total sessions",
+    "FIRST_ACTION_SUCCESS_RATE": "sessions whose first action reached the correct entry/result / total sessions",
+    "HARMFUL_ERROR_RATE": "commission-error interactions (fabricated fact / wrong number / wrong version / silent stale value / wrong condition / wrong citation / wrong experience authority / unsupported certainty) / total meaningful agent responses",
+    "FABRICATION_RATE": "interactions asserting facts absent from the corpus / total meaningful agent responses",
+    "SILENT_STALE_VALUE_RATE": "interactions answering from a superseded source without disclosure / total meaningful agent responses",
+    "VERSION_CONDITION_ERROR_RATE": "interactions with wrong version/condition attribution / total meaningful agent responses",
+    "EVIDENCE_ERROR_RATE": "interactions whose citations do not support the claim / total meaningful agent responses",
+    "EXPERIENCE_AUTHORITY_ERROR_RATE": "interactions presenting raw Q&A or AI inference as user-confirmed experience / total meaningful agent responses",
+    "HONEST_OMISSION_RATE": "interactions where the answer exists in the corpus but the agent honestly refused / total meaningful agent responses",
+    "RECOVERY_SUCCESS_RATE": "simulated-misoperation events recovered without data corruption or stuck state / total simulated misoperation events",
+    "SESSION_TRUST_FAILURE_RATE": "sessions containing >= 1 commission error that would mislead a reasonable user / total sessions",
+    "USER_BLOCKED_RATE": "sessions where the system never spoke wrongly but the user still could not complete the goal due to interaction/recovery problems / total sessions"
+  },
+  "scoring_rules": [
+    "Commission and omission are NEVER merged into one error rate.",
+    "Every percentage is reported as numerator/denominator.",
+    "Honest refusal with an existing answer = HONEST_OMISSION, not error.",
+    "Teach-back recorded for A and B: correct mental model required; 'this AI knows everything' or 'saved Q&A is confirmed experience' = mental-model failure.",
+    "Runner runs (paraphrase/probability/negative-control) are supporting evidence only.",
+    "P0/P1/systematic-P2 found during measurement: register + reproduce + minimal safe fix + focused retest; benchmark BEFORE/AFTER must stay separated."
+  ],
+  "fail019_sampling": "Row-binding questions (2mm/3mm/4mm style) appear as natural sub-questions inside B/C sessions; any wrong row/value binding = FAIL-019 REOPEN CANDIDATE with answer/tool/evidence preserved.",
+  "fail020_022_impact_rule": "FAIL-020/022 occurrences during sessions are classified: A=honest omission (stay P3) / B=frequent user blocking (P2 candidate) / C=wrong fact (immediate escalation).",
+  "known_limitations": [
+    "IAB file upload is unsupported: persona-A first-import tasks are simulated as first-navigation + ask-on-existing-corpus.",
+    "Destructive misoperations (real delete) are never executed on the frozen corpus; recovery is simulated via repeat-ask/refresh/half-input-reload.",
+    "Streamlit widget state may desync from DOM value on in-place question edits; when that happens the session restarts with reload and the desync is recorded as a UI candidate."
+  ]
+}

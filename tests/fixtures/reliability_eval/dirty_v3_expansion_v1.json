@@ -1,0 +1,331 @@
+{
+ "eval_id": "dirty_v3_expansion_v1",
+ "corpus_ref": "dirty-long-term-v3",
+ "frozen_at": "2026-09-06T17:21:17.103794+00:00",
+ "model_expectation": "DIRTY_LONG_TERM_V3 扩容波次：11 份结构差异新文档的图内实体/跨页表/同码异义精度攻击/近似数字行绑定/新旧取代/流程与状态机/双轴与散点读数。",
+ "notes": "冻结于运行前；期望值来自生成源数据。",
+ "cases": [
+  {
+   "case_id": "V3001",
+   "family": "v3_expansion",
+   "question": "2号空压机8月份驱动端振动是多少？",
+   "expect": {
+    "answer_fragments": [
+     "7.2"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3002",
+   "family": "v3_expansion",
+   "question": "空压机驱动端测点编号是什么？",
+   "expect": {
+    "answer_fragments": [
+     "DE-2026-A"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3003",
+   "family": "v3_expansion",
+   "question": "2号空压机振动趋势怎么变化？",
+   "expect": {
+    "answer_any_fragments": [
+     [
+      "上升",
+      "升高",
+      "增大",
+      "7.2"
+     ]
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   },
+   "design_note": "CASE_DESIGN_ERROR-009 修正：趋势开放式问题原误设 no_answer_ok"
+  },
+  {
+   "case_id": "V3004",
+   "family": "v3_expansion",
+   "question": "备件滤芯P-191116单价多少？",
+   "expect": {
+    "answer_fragments": [
+     "145"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3005",
+   "family": "v3_expansion",
+   "question": "V带A-1400的价格是多少元？",
+   "expect": {
+    "answer_fragments": [
+     "36"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3006",
+   "family": "v3_expansion",
+   "question": "光电开关E3F-DS30C4多少钱？",
+   "expect": {
+    "answer_fragments": [
+     "126"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3007",
+   "family": "v3_expansion",
+   "question": "ASM-201贴片机的E05是什么意思？",
+   "expect": {
+    "answer_fragments": [
+     "真空"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3008",
+   "family": "v3_expansion",
+   "question": "SM-471贴片机的E05是什么意思？",
+   "expect": {
+    "answer_fragments": [
+     "相机",
+     "失焦",
+     "标定"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3009",
+   "family": "v3_expansion",
+   "question": "管法兰M20螺栓用石棉垫力矩多少？",
+   "expect": {
+    "answer_fragments": [
+     "47"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3010",
+   "family": "v3_expansion",
+   "question": "管法兰M22金属垫目标力矩？",
+   "expect": {
+    "answer_fragments": [
+     "88"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3011",
+   "family": "v3_expansion",
+   "question": "管法兰M16橡胶垫力矩是多少？",
+   "expect": {
+    "answer_fragments": [
+     "40"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3012",
+   "family": "v3_expansion",
+   "question": "现在主轴油多久换一次？",
+   "expect": {
+    "answer_fragments": [
+     "1500"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3013",
+   "family": "v3_expansion",
+   "question": "润滑标准v1里主轴油更换周期是多少？",
+   "expect": {
+    "answer_fragments": [
+     "2000"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3014",
+   "family": "v3_expansion",
+   "question": "液压油取样周期v2改成多少了？",
+   "expect": {
+    "answer_fragments": [
+     "3000"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3015",
+   "family": "v3_expansion",
+   "question": "老锅炉房水泵65DL-35x4的扬程是多少？",
+   "expect": {
+    "answer_fragments": [
+     "140"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3016",
+   "family": "v3_expansion",
+   "question": "65DL-35x4配的电机多大功率？",
+   "expect": {
+    "answer_fragments": [
+     "15"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3017",
+   "family": "v3_expansion",
+   "question": "空压机排气温度多少度触发联锁停机？",
+   "expect": {
+    "answer_fragments": [
+     "105"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3018",
+   "family": "v3_expansion",
+   "question": "空压机高温停机后要冷却多久才能检查？",
+   "expect": {
+    "answer_fragments": [
+     "30"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3019",
+   "family": "v3_expansion",
+   "question": "注塑机RUNNING状态连续3模次品会进入什么状态？",
+   "expect": {
+    "answer_fragments": [
+     "ALARM"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3020",
+   "family": "v3_expansion",
+   "question": "注塑机ALARM状态由谁复位？",
+   "expect": {
+    "answer_fragments": [
+     "工程师"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3021",
+   "family": "v3_expansion",
+   "question": "配电室第29周室温多少度？",
+   "expect": {
+    "answer_fragments": [
+     "35"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3022",
+   "family": "v3_expansion",
+   "question": "配电室湿度最高的那周是第几周？百分之多少？",
+   "expect": {
+    "answer_fragments": [
+     "73"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   },
+   "design_note": "judge 字面修正：视觉输出分词 'W3 0' 致 'W30' 字面失配（JUDGE_LIMITATION-005），保留 73"
+  },
+  {
+   "case_id": "V3023",
+   "family": "v3_expansion",
+   "question": "轴承游隙24微米时振动多大？",
+   "expect": {
+    "answer_fragments": [
+     "3.9"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "V3024",
+   "family": "v3_expansion",
+   "question": "轴承装配游隙建议范围是多少？",
+   "expect": {
+    "answer_fragments": [
+     "8",
+     "16"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  }
+ ]
+}

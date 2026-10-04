@@ -1,0 +1,6 @@
+# Windows launcher scripts must keep CRLF endings and must never gain a BOM
+# (cmd.exe parses the file with the OEM code page until `chcp 65001` runs).
+*.bat text eol=crlf
+*.cmd text eol=crlf
+# VBS files are UTF-16LE with a BOM; treat them as binary, no normalization.
+*.vbs -text

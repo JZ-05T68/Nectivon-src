@@ -1,0 +1,217 @@
+{
+  "manifest_id": "dirty-long-term-v2",
+  "frozen_at": "2026-09-06T05:41:27.742069+00:00",
+  "database_path_expected": "<STAGING_DATABASE_PATH>",
+  "documents": [
+    {
+      "title": "传动轴振动排查手册",
+      "sha256": "c343f8e717c955315b249ba29cce48d774e3f78d67a63e58f823f284a142df97"
+    },
+    {
+      "title": "泵维护视觉手册",
+      "sha256": "c1045ea08cf28afcc275598da539b2279a3abca840a97d85526cfc4bb796745c"
+    },
+    {
+      "title": "空压机维护说明",
+      "sha256": "30f24ffbc24229c86608626c5273e8f67c360c94232fcbe9f4fe04f2bf46bff8"
+    },
+    {
+      "title": "故障分布模糊分级",
+      "sha256": "581773ee84eccc3df01dca367a2d1a4e679ee6e3818dc92a9fa4004c0a31c903"
+    },
+    {
+      "title": "冷却水泵性能图表",
+      "sha256": "b8f41b05f2ee9d07bf8fdbc8a6f57b4ac24df1b098d0fea7324481f187712212"
+    },
+    {
+      "title": "材料科学_回火工艺",
+      "sha256": "0d2b6d31c2f113d0f8baf081731e8f1616add538757d2cfdf774a5cd74bc19ff"
+    },
+    {
+      "title": "泵维护视觉手册_v1.0",
+      "sha256": "28fbdce6db9f6ee632a8a8e351f21b3a2ac326123cc221c39671b42327f27f97"
+    },
+    {
+      "title": "泵维护视觉手册_v1.1",
+      "sha256": "6d7c60170c2cfc98c71d86243d9156d524fa2dee06023ff6b3d4dca195ffc7c9"
+    },
+    {
+      "title": "齿轮箱检修手册_2024版",
+      "sha256": "82da9717eacae241491f883c4ce9d98869ec7f7d0a39003a91c198b5fb54dae2"
+    },
+    {
+      "title": "齿轮箱检修手册_2025修订版",
+      "sha256": "eb776e15ee651f24d116c4b10d17ab91a24a23915f6ff1744a42baa60fce2ecd"
+    },
+    {
+      "title": "齿轮箱检修手册_2026试行版",
+      "sha256": "d64b721476b863715c4311fc2ae0abdd10b28c0b9aea9b8eb8eee0b165b501c4"
+    },
+    {
+      "title": "液压站巡检要点_v1",
+      "sha256": "6e3ab125dc1d9d3a8a8b1c30c2fa14c892fbdcf0295074584219890971a27acc"
+    },
+    {
+      "title": "液压站巡检要点_v2",
+      "sha256": "dcba2782f2905a9d1632e519dbe797df903ed661f70a8a80c21bb82b031698d2"
+    },
+    {
+      "title": "液压站巡检要点_v3草案",
+      "sha256": "6a2519ecbe673b985db888264a91895c3cf359d9d6ed122b75f5d148b4837e2c"
+    },
+    {
+      "title": "设备点检表_冲压车间",
+      "sha256": "245c71f17b339a395b2ba3fc26cf13c1960036a20506d9829177eea0f1fbc03e"
+    },
+    {
+      "title": "设备点检表_装配车间",
+      "sha256": "544a3205522d3780421fec8a38ddc756bca2bd98cd59a5425bb2fc0c140597ad"
+    },
+    {
+      "title": "年度维护计划_2025",
+      "sha256": "c20999aa3065e344f421c33c3854b67e052c5a45b79a663be5c3355889890a92"
+    },
+    {
+      "title": "年度维护计划_2026",
+      "sha256": "6f02200f12422e05fd2a6c8c4551bdde1166c00000f3925ab7ad7b30a7befd8d"
+    },
+    {
+      "title": "变频器维护指南",
+      "sha256": "d4d828c58ae6afde4255e91cb250dbdad9d68d7c145675f104f8bf6d9845df21"
+    },
+    {
+      "title": "PLC 维护手册",
+      "sha256": "4adaeb6f87e0cbaeec73f4080365d9fe7ac84a78be7e15fce17fb8c0192f77b5"
+    },
+    {
+      "title": "电机负载电流曲线",
+      "sha256": "fced4eb8d61e0ed28d84c6d49cdc167810f78424cd933d842478e2e7b79598cd"
+    },
+    {
+      "title": "车间噪音分布",
+      "sha256": "470dc99b8a5db3bd33a73bb276df50e07b09a444a849306909f4f580cfa46063"
+    },
+    {
+      "title": "液压油温趋势",
+      "sha256": "d6596a51641c19803fc7b0692a83bf7494f841b070f497a0e283c20728a7eb01"
+    },
+    {
+      "title": "摄像头帧率对比",
+      "sha256": "facf3af6ec57b208388a3ee06a210eac5ed1c3cfc0cb1411a5c581ef8c0c463e"
+    },
+    {
+      "title": "焊接电流对照",
+      "sha256": "e1ba05bea6261effa434def697363d9e1b10771bfbcbee1618b40c4ee98e6cd0"
+    },
+    {
+      "title": "注塑周期饼图",
+      "sha256": "0f2ebfa0c78c3fba6eecb673db87b812cc3e4c3cfdf0c7937753afec0bae37dc"
+    },
+    {
+      "title": "空压机二号机完整手册",
+      "sha256": "828ad61b51f6dcd46b08ecad222524d714225a840a2640339ebb9ecbd1fd31ae"
+    },
+    {
+      "title": "伺服驱动器调试手册",
+      "sha256": "c542cb1dd03c6fa5bff87b7e64cd6d7ec41afe231258e3e8c02ed7347ac3e64a"
+    },
+    {
+      "title": "输送线电气维护手册",
+      "sha256": "dfa79d03ff7a47cdb77bb175a12ed7c2b0b9e6a64bdfa4ca084b1b363f6823c9"
+    },
+    {
+      "title": "空压机维护规程_2019废止版",
+      "sha256": "0b5d84570aa6a6b3e54c196458e8c7d62b07e6acda5d387bbe7c1db0a178972f"
+    },
+    {
+      "title": "旧版点检作业指导书",
+      "sha256": "97de5bdcfbddd89224b23347b39c83f20a3fdedf446d99d8832000eb6d9895bb"
+    },
+    {
+      "title": "涂装线参数卡_作废",
+      "sha256": "9f64dadfd5933c6a923062f338e768249af8dba498f6fe8a743ddcdea65dc611"
+    },
+    {
+      "title": "轴承润滑周期卡",
+      "sha256": "992e74138784087b9ce0b3fbcd9040532cc952800a480b8a4fd3c6c084fb1c90"
+    },
+    {
+      "title": "润滑作业指导书",
+      "sha256": "168d8244c138a74248debaae775e85b7daf495a146ab9cb9a90766e1ea814b88"
+    },
+    {
+      "title": "电机绝缘阻值标准A",
+      "sha256": "dc60a4960f3e58831eb0f5a9de668316963bea5446f3c880990be8aa7482373d"
+    },
+    {
+      "title": "电机绝缘阻值标准B",
+      "sha256": "5157a4ac6c907d295e80c9879eb34b08e890212d346ae5bbfda0c49271510022"
+    },
+    {
+      "title": "皮带张力速查",
+      "sha256": "39e5d1b99540eaa76e612421b852b501d28472afe6b4eea728016b1f2cda4637"
+    },
+    {
+      "title": "法兰螺栓力矩卡",
+      "sha256": "6c5596b0cb88b92824acb184250a9c72720fd1ebfd6f0389d3f6a24ef20e64f4"
+    },
+    {
+      "title": "接地电阻要求",
+      "sha256": "6e1c962be79ba78377ee4f951eb9f71647d1511e576571bcf3a351c3b6af2dde"
+    },
+    {
+      "title": "振动标准速查",
+      "sha256": "b84171d4419a89778f9c8051ab8c98381a9b5ec3aea8556b39e598104b27ab24"
+    },
+    {
+      "title": "轴承型号对照",
+      "sha256": "48037b7616eea83b327c127eaf428a8b66f2d4a1d03851146c7c2ede2dde9c29"
+    },
+    {
+      "title": "电机功率速查",
+      "sha256": "26359c2ca2001d6422a545d7cba446ffd24ce0b7965bd3b0b5c88afe9f038fbf"
+    },
+    {
+      "title": "变频器参数备份说明",
+      "sha256": "8d9136a20d937184ef13fa3d912dbb00a70e8af508da180b71a1f34364350004"
+    },
+    {
+      "title": "气缸行程规格",
+      "sha256": "43c4d08e0306c821e5b0944faf784b3a1205c20ad0b0cc235220fccd1d6bf7a3"
+    },
+    {
+      "title": "备件清单_2026",
+      "sha256": "24a707a1d822f25339e442b8ba565d46924ae81525626e1ffe0749b60947f4a2"
+    },
+    {
+      "title": "培训记录_2026Q1",
+      "sha256": "483a966c8a0a70d9cc127a7acf458cb8958cd921c4235c0ce84504567589d877"
+    },
+    {
+      "title": "泵维护视觉手册_v2.0",
+      "sha256": "f93f8f923efeb0f1faea5a78c45bf78c975346dae3c559f889ca56d605759e94"
+    },
+    {
+      "title": "冷却水泵性能图表",
+      "sha256": "7edd63fcff11394ef601ce579a5f9c8dd6553ca2c40b666cc0eb79b7a234795b"
+    },
+    {
+      "title": "变频器OC报警排查记录",
+      "sha256": "77b6720f48f431e722348f6d4d45e68776734398374e780bc6dc2d6a09976244"
+    },
+    {
+      "title": "空压机完整维护手册",
+      "sha256": "5e8a2c06416822f345d8be29057ac64d57e4cddb9299b3c5b3b6e2a7fe0c8a94"
+    },
+    {
+      "title": "传真采购单",
+      "sha256": "40e189ee3e87815d0c555b35f131a3d70ba6fb99cd4b8d8a47654fb3f75a3677"
+    },
+    {
+      "title": "手写点检记录_低清",
+      "sha256": "a3abd7b1116a9bd87cf76cae1d64992330abd7c2bd56c38805600aaaccf4c1e8"
+    }
+  ],
+  "knowledge_memory_entry_count": 104,
+  "notes": "v0.8.3 DIRTY_LONG_TERM V2：v1 基础上扩容（40 新文档 / 76 新记忆），含 4 条长期经验链、过期经验、错误问答、相似干扰对、删除来源文档（热处理炉温记录_2026Q2，manifest 冻结时已删除）。"
+}

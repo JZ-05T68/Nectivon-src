@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="Nectivon"
+      Manufacturer="Nectivon"
+      Version="0.8.5"
+      Scope="perUser"
+      ProductCode="*"
+      UpgradeCode="{76EF2892-AB92-4BC3-8F22-D4EA00C55B5B}">
+    <SummaryInformation Description="Nectivon 0.8.5 UNSIGNED ENGINEERING BUILD" />
+    <MajorUpgrade
+        DowngradeErrorMessage="A newer version of Nectivon is already installed."
+        Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Nectivon" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="NectivonProgramMenuFolder" Name="Nectivon" />
+    </StandardDirectory>
+
+    <Component Id="StartMenuShortcutComponent"
+               Directory="NectivonProgramMenuFolder"
+               Guid="{9EE4C755-55DA-43F1-BE81-861870503AAE}">
+      <Shortcut Id="NectivonStartMenuShortcut"
+                Name="Nectivon"
+                Description="Start Nectivon"
+                Target="[SystemFolder]wscript.exe"
+                Arguments="&quot;[INSTALLFOLDER]scripts\launch.vbs&quot;"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveNectivonProgramMenuFolder" On="uninstall" />
+      <RegistryValue Root="HKCU"
+                     Key="Software\Nectivon"
+                     Name="InstalledVersion"
+                     Value="0.8.5"
+                     Type="string"
+                     KeyPath="yes" />
+    </Component>
+
+    <Feature Id="MainFeature" Title="Nectivon" Level="1">
+      <ComponentGroupRef Id="ApplicationFiles" />
+      <ComponentRef Id="StartMenuShortcutComponent" />
+    </Feature>
+
+    <!-- Windows Installer has no declarative single-value uninstall removal.
+         This constrained per-user action removes only Nectivon's optional Run value. -->
+    <CustomAction Id="RemoveNectivonAutostart"
+                  Directory="SystemFolder"
+                  ExeCommand="reg.exe delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Run&quot; /v Nectivon /f"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="ignore" />
+    <!-- v0.8.5 lifecycle fix: the Restart Manager cannot close a console
+         Python process, so uninstall used to delete the bundled runtime out
+         from under a live Streamlit server (port 8501 stayed bound and the
+         UI 500ed on deleted static files).  This constrained per-user action
+         runs BEFORE RemoveFiles and terminates only processes whose
+         ownership of THIS install folder is strictly proven by the stop
+         helper (pid record or image path inside INSTALLFOLDER).  User data
+         under %LOCALAPPDATA%\Nectivon is never touched. -->
+    <CustomAction Id="StopNectivonRuntimeBeforeRemoval"
+                  Directory="SystemFolder"
+                  ExeCommand="&quot;[INSTALLFOLDER]runtime\python\python.exe&quot; &quot;[INSTALLFOLDER]scripts\uninstall_stop.py&quot; &quot;[INSTALLFOLDER]&quot;"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="RemoveNectivonAutostart"
+              Before="RemoveFiles"
+              Condition="REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="StopNectivonRuntimeBeforeRemoval"
+              Before="RemoveFiles"
+              Condition="REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

@@ -1,0 +1,593 @@
+"""Continuous, guarded workflow for reviewing local document pages."""
+
+from __future__ import annotations
+
+import logging
+
+import streamlit as st
+import streamlit.components.v1 as components
+
+from src import __version__
+from src.batch_selection import BatchSelectionSource, build_visible_page_scope
+from src.batch_ui import (
+    clear_inactive_visible_batch_state,
+    render_visible_batch_feedback,
+    render_visible_page_batch_ui,
+)
+from src.learning_entry_ui import render_join_learning_section
+from src.models import Page, PageStatus
+from src.ocr_engine import OcrUnavailable
+from src.ocr_policy import has_reusable_ocr_text
+from src.ocr_ui import (
+    OCR_RUNNING_HINT,
+    page_ocr_feedback,
+    page_ocr_unavailable_feedback,
+)
+from src.page_jump_ui import render_page_jump
+from src.review_shortcuts import review_shortcuts_html
+from src.runtime import (
+    application_classification_metadata_service,
+    application_database,
+    application_document_service,
+    application_page_batch_service,
+)
+from src.visual_reading_ui import render_visual_reading_section
+from src.workspace_ui import render_workspace
+
+LOGGER = logging.getLogger(__name__)
+_ACTIVE_PAGE_KEY = "review_active_page_id"
+_SELECTOR_KEY = "review_page_selector"
+_DOCUMENT_FILTER_KEY = "review_document_filter"
+_PENDING_TARGET_KEY = "review_pending_target_id"
+_FLASH_KEY = "review_flash"
+_BATCH_NUMBER_KEY = "review_visible_batch_number"
+_VISIBLE_BATCH_SIZE = 20
+
+st.set_page_config(
+    page_title=f"查看识别结果 · Nectivon v{__version__}", page_icon="📝", layout="wide"
+)
+render_workspace("pages/5_待整理页面.py")
+st.title("查看识别结果")
+st.info("AI 已完成初步识别。请重点核对题目文字和图表关联；确认无误后即可加入学习整理。")
+st.caption("这里可以对照原始页面查看识别文字；不修改也不会影响正常提问。")
+
+
+def _editor_key(page_id: int) -> str:
+    return f"review_markdown_{page_id}"
+
+
+def _saved_key(page_id: int) -> str:
+    return f"review_saved_markdown_{page_id}"
+
+
+def _is_dirty(page_id: int) -> bool:
+    return st.session_state.get(_editor_key(page_id), "") != st.session_state.get(
+        _saved_key(page_id), ""
+    )
+
+
+def _activate_page(page_id: int) -> None:
+    st.session_state[_ACTIVE_PAGE_KEY] = page_id
+    st.session_state.pop(_PENDING_TARGET_KEY, None)
+
+
+def _go_to_page(page_id: int) -> None:
+    """Send every review-page navigation control through one guarded path."""
+
+    current = st.session_state.get(_ACTIVE_PAGE_KEY)
+    if current is not None and page_id != int(current) and _is_dirty(int(current)):
+        st.session_state[_PENDING_TARGET_KEY] = page_id
+        return
+    _activate_page(page_id)
+    target = database.get_page(page_id)
+    if target is not None:
+        st.query_params["document"] = str(target.document_id)
+        st.query_params["page"] = str(target.page_number)
+        st.query_params["page_id"] = str(target.id)
+
+
+def _on_page_selector_change() -> None:
+    requested = int(st.session_state[_SELECTOR_KEY])
+    current = int(st.session_state[_ACTIVE_PAGE_KEY])
+    if requested == current:
+        return
+    _go_to_page(requested)
+
+
+def _on_document_filter_change() -> None:
+    """Move to the first review page of the newly selected document."""
+
+    selected = st.session_state.get(_DOCUMENT_FILTER_KEY)
+    st.session_state[_BATCH_NUMBER_KEY] = 1
+    target = database.get_first_review_page(selected)
+    if target is not None:
+        _go_to_page(target.id)
+
+
+def _page_label(page: Page, document_titles: dict[int, str]) -> str:
+    return (
+        f"{document_titles.get(page.document_id, f'文档 {page.document_id}')} · "
+        f"第 {page.page_number} 页 · {page.status.label}"
+    )
+
+
+try:
+    database = application_database()
+    document_service = application_document_service()
+    page_batch_service = application_page_batch_service()
+    classification_metadata = application_classification_metadata_service().load()
+    documents = classification_metadata.documents
+    all_tags = classification_metadata.tags
+    all_projects = classification_metadata.projects
+except Exception as exc:
+    LOGGER.exception("读取待复核页面失败")
+    st.error(f"打开识别结果失败：{exc}")
+    st.stop()
+
+document_options = {document.id: document for document in documents}
+document_titles = {document.id: document.title for document in documents}
+if _DOCUMENT_FILTER_KEY not in st.session_state:
+    query_document = st.query_params.get("document")
+    try:
+        query_document_id = int(query_document) if query_document else None
+    except ValueError:
+        query_document_id = None
+    if query_document_id in document_options:
+        st.session_state[_DOCUMENT_FILTER_KEY] = query_document_id
+selected_document = st.selectbox(
+    "选择一份资料",
+    options=[None, *document_options],
+    format_func=lambda value: "全部文档" if value is None else document_options[value].title,
+    key=_DOCUMENT_FILTER_KEY,
+    on_change=_on_document_filter_change,
+)
+current_batch_value = st.session_state.get(_BATCH_NUMBER_KEY, 1)
+try:
+    requested_batch_number = int(current_batch_value)
+except (TypeError, ValueError):
+    requested_batch_number = 1
+queue_batch = database.paginate_review_pages(
+    selected_document,
+    batch_number=requested_batch_number,
+    batch_size=_VISIBLE_BATCH_SIZE,
+)
+if queue_batch.corrected:
+    st.session_state[_BATCH_NUMBER_KEY] = queue_batch.batch_number
+if not queue_batch.pages and clear_inactive_visible_batch_state():
+    st.info("页面范围已变化，原批量选择已清除。")
+
+query_page_id = st.query_params.get("page_id")
+try:
+    requested_page_id = int(query_page_id) if query_page_id else None
+except ValueError:
+    requested_page_id = None
+
+active_page = None
+active_page_id = st.session_state.get(_ACTIVE_PAGE_KEY)
+if active_page_id is not None:
+    active_page = database.get_page(int(active_page_id))
+if active_page is None and requested_page_id is not None:
+    active_page = database.get_page(requested_page_id)
+if active_page is None and queue_batch.pages:
+    active_page = queue_batch.pages[0]
+if active_page is None:
+    if documents:
+        st.success("这份资料目前没有需要提醒的识别结果。")
+        if st.button("📖 查看全部页面", use_container_width=True):
+            st.switch_page("pages/17_我的资料.py")
+    else:
+        st.info("还没有资料。请先添加一份 PDF、Word 或 PowerPoint 文件。")
+        if st.button("📥 添加资料", use_container_width=True):
+            st.switch_page("pages/1_导入资料.py")
+    st.stop()
+
+if _ACTIVE_PAGE_KEY not in st.session_state or (
+    int(st.session_state[_ACTIVE_PAGE_KEY]) != active_page.id
+):
+    _activate_page(active_page.id)
+
+selectable_pages = {page.id: page for page in queue_batch.pages}
+selectable_pages.setdefault(active_page.id, active_page)
+selector_options = sorted(
+    selectable_pages,
+    key=lambda page_id: (
+        selectable_pages[page_id].document_id,
+        selectable_pages[page_id].page_number,
+    ),
+)
+st.session_state[_SELECTOR_KEY] = int(st.session_state[_ACTIVE_PAGE_KEY])
+st.selectbox(
+    "选择一页查看",
+    options=selector_options,
+    format_func=lambda value: _page_label(selectable_pages[value], document_titles),
+    key=_SELECTOR_KEY,
+    on_change=_on_page_selector_change,
+)
+
+page = active_page
+document = document_options.get(page.document_id)
+if document is None:
+    st.error("当前页面所属文档不存在。")
+    st.stop()
+st.query_params["page_id"] = str(page.id)
+st.query_params["document"] = str(document.id)
+st.query_params["page"] = str(page.page_number)
+
+jump_target = render_page_jump(
+    total_pages=document.page_count,
+    key_prefix=f"review_page_jump_{document.id}",
+)
+if jump_target is not None:
+    target_page = database.get_page_by_number(document.id, jump_target)
+    if target_page is None:
+        st.warning(
+            f"第 {jump_target} 页暂时无法查看。请输入 1 到 {document.page_count} 之间的页码。"
+        )
+    else:
+        _go_to_page(target_page.id)
+        st.rerun()
+
+flash = st.session_state.pop(_FLASH_KEY, None)
+if flash is not None:
+    # Selector callbacks may run while the post-save rerun is being hydrated.
+    # A completed action is authoritative and resolves any older navigation guard.
+    st.session_state[_PENDING_TARGET_KEY] = None
+    level, message = flash
+    getattr(st, level)(message)
+render_visible_batch_feedback()
+
+pending_target_id = st.session_state.get(_PENDING_TARGET_KEY)
+if pending_target_id is not None and not _is_dirty(page.id):
+    st.session_state.pop(_PENDING_TARGET_KEY, None)
+    pending_target_id = None
+if pending_target_id is not None:
+    target = database.get_page(int(pending_target_id))
+    target_label = _page_label(target, document_titles) if target else "目标页面"
+    st.warning(f"当前页有未保存修改。是否放弃修改并切换到：{target_label}？")
+    save_column, stay_column, discard_column = st.columns(3)
+    if save_column.button("保存草稿并留在当前页", type="primary", use_container_width=True):
+        editor_key = _editor_key(page.id)
+        saved_key = _saved_key(page.id)
+        markdown_content = str(
+            st.session_state.get(editor_key, page.markdown_content)
+        )
+        try:
+            with st.spinner("正在保存到本机……"):
+                updated_page = document_service.save_page_markdown(
+                    document.id,
+                    page.page_number,
+                    markdown_content,
+                    mark_reviewed=False,
+                )
+        except Exception as exc:
+            LOGGER.exception("保存待复核页面失败：page_id=%s", page.id)
+            st.error(f"保存失败：{exc}。编辑框内容已保留，请重试。")
+        else:
+            st.session_state[saved_key] = updated_page.markdown_content
+            st.session_state.pop(_PENDING_TARGET_KEY, None)
+            st.session_state[_FLASH_KEY] = ("success", "Markdown 草稿已保存。")
+            st.rerun()
+    if stay_column.button("留在当前页", use_container_width=True):
+        st.session_state.pop(_PENDING_TARGET_KEY, None)
+        st.rerun()
+    if discard_column.button("放弃未保存修改并切换", use_container_width=True):
+        st.session_state[_editor_key(page.id)] = st.session_state.get(
+            _saved_key(page.id), page.markdown_content
+        )
+        if target is not None:
+            _activate_page(target.id)
+        else:
+            st.session_state.pop(_PENDING_TARGET_KEY, None)
+        st.rerun()
+
+current_batch_number = queue_batch.batch_number
+if queue_batch.total_batches:
+    st.session_state[_BATCH_NUMBER_KEY] = current_batch_number
+    current_batch_number = int(
+        st.selectbox(
+            "待核对当前可见批次",
+            options=list(range(1, queue_batch.total_batches + 1)),
+            format_func=lambda value: f"第 {value} / {queue_batch.total_batches} 批",
+            key=_BATCH_NUMBER_KEY,
+        )
+    )
+else:
+    st.session_state[_BATCH_NUMBER_KEY] = 1
+    st.selectbox(
+        "待核对当前可见批次",
+        options=[1],
+        format_func=lambda _value: "当前没有待核对批次",
+        key=_BATCH_NUMBER_KEY,
+        disabled=True,
+    )
+visible_review_pages = queue_batch.pages
+batch_rerun_requested = False
+if queue_batch.total_pages:
+    if queue_batch.corrected:
+        st.info(
+            f"原请求的第 {queue_batch.requested_batch_number} 批已越界，"
+            f"已安全回到第 {queue_batch.batch_number} 批。"
+        )
+    st.caption(
+        f"当前批次显示 {len(visible_review_pages)} 页；"
+        f"队列共 {queue_batch.total_pages} 页。批量选择不会跨批次。"
+    )
+    review_batch_scope = build_visible_page_scope(
+        source=BatchSelectionSource.REVIEW_QUEUE,
+        document_id=selected_document,
+        filters={
+            "review_statuses": tuple(
+                status.value for status in queue_batch.query.statuses
+            )
+        },
+        sort=queue_batch.query.sort.value,
+        query="",
+        batch_number=current_batch_number,
+        visible_page_ids=[item.id for item in visible_review_pages],
+    )
+    batch_rerun_requested = render_visible_page_batch_ui(
+        scope=review_batch_scope,
+        page_labels={
+            item.id: _page_label(item, document_titles) for item in visible_review_pages
+        },
+        service=page_batch_service,
+        tags=all_tags,
+        projects=all_projects,
+        dirty_page_ids=tuple(
+            item.id for item in visible_review_pages if _is_dirty(item.id)
+        ),
+    )
+
+if st.session_state.get("review_last_viewed_page_id") != page.id:
+    try:
+        page = database.mark_page_viewed(page.id)
+        st.session_state["review_last_viewed_page_id"] = page.id
+    except Exception as exc:
+        LOGGER.exception("记录页面访问时间失败：page_id=%s", page.id)
+        st.warning(f"页面可以继续编辑，但访问时间记录失败：{exc}")
+
+progress = database.review_progress(document.id)
+heading_columns = st.columns([5, 1])
+heading_columns[0].markdown(f"### {document.title}")
+heading_columns[1].metric("当前页", f"第 {page.page_number} 页")
+progress_columns = st.columns(4)
+progress_columns[0].markdown(
+    "<div style='margin-top:0.45rem'>"
+    f"<span style='display:inline-block;padding:0.35rem 0.7rem;border-radius:999px;"
+    "background:#e8f0fe;color:#174ea6;font-weight:700;white-space:nowrap'>"
+    f"当前状态：{page.status.label}</span></div>",
+    unsafe_allow_html=True,
+)
+progress_columns[1].metric("已处理数", progress.processed)
+progress_columns[2].metric("总页数", progress.total)
+progress_columns[3].metric("剩余待处理数", progress.remaining)
+
+previous_page = database.get_adjacent_review_page(page.id, "previous", selected_document)
+next_page = database.get_adjacent_review_page(page.id, "next", selected_document)
+continuation_page = next_page
+if page.status not in {PageStatus.PENDING, PageStatus.DRAFT, PageStatus.FAILED}:
+    continuation_page = database.get_first_review_page(selected_document)
+if st.button(
+    "继续处理下一待复核页",
+    disabled=continuation_page is None,
+    use_container_width=True,
+):
+    if continuation_page is not None:
+        _go_to_page(continuation_page.id)
+    st.rerun()
+
+image_column, editor_column = st.columns([1, 1], gap="large")
+with image_column:
+    st.subheader("原始页面")
+    with st.container(height=720, border=True):
+        if page.image_path.exists():
+            st.image(str(page.image_path), width="stretch")
+        else:
+            st.error(f"页面图片缺失：{page.image_path}")
+    render_visual_reading_section(page)
+
+    def _run_page_ocr_button(button_label: str) -> None:
+        if st.button(button_label, key=f"review_run_ocr_{page.id}"):
+            try:
+                with st.spinner(OCR_RUNNING_HINT):
+                    ocr_result = document_service.run_page_ocr(page.id)
+            except OcrUnavailable:
+                level, message = page_ocr_unavailable_feedback()
+            else:
+                level, message = page_ocr_feedback(
+                    ocr_result.outcome, ocr_result.page.ocr_text
+                )
+            st.session_state[_FLASH_KEY] = (level, message)
+            st.rerun()
+
+    # Geography G1 WORKFLOW CHANGE 2: the raw OCR draft textarea is no
+    # longer rendered on the user-facing review surface.  The text itself
+    # is still stored and used by search / splitting / AI / provenance
+    # (backend contract unchanged); re-recognition stays available.
+    with st.expander("查看已提取文本"):
+        st.text(page.extracted_text or "（没有提取到文本）")
+    if has_reusable_ocr_text(page.ocr_text):
+        with st.expander("重新识别这一页的文字"):
+            st.caption(
+                "系统已保存本页识别文字（检索和拆题仍在使用它，这里不再整页展示）。"
+                "如果识别结果有误，可以重新识别覆盖。"
+            )
+            _run_page_ocr_button("重新识别")
+    else:
+        _run_page_ocr_button("识别这一页的文字")
+    if page.processing_error:
+        st.error(f"失败原因：{page.processing_error}")
+        if st.button("重新处理此页"):
+            try:
+                with st.spinner("正在使用本地 PDF 处理流程重试……"):
+                    document_service.reprocess_page(page.id)
+            except Exception as exc:
+                LOGGER.exception("重新处理页面失败：page_id=%s", page.id)
+                st.error(f"重新处理失败：{exc}")
+            else:
+                st.session_state[_FLASH_KEY] = ("success", "重新处理完成。")
+                st.rerun()
+
+with editor_column:
+    st.subheader("本页识别出的内容")
+    # Geography G1 WORKFLOW CHANGE 1: the per-question candidate flow is the
+    # primary page workflow.  The whole-page Markdown editor is demoted to
+    # an advanced expander below (kept for corrections and provenance).
+    render_join_learning_section(page)
+
+    st.divider()
+
+    editor_key = _editor_key(page.id)
+    saved_key = _saved_key(page.id)
+    if editor_key not in st.session_state:
+        st.session_state[editor_key] = page.markdown_content
+    if saved_key not in st.session_state:
+        st.session_state[saved_key] = page.markdown_content
+    elif (
+        st.session_state[editor_key] == st.session_state[saved_key]
+        and st.session_state[saved_key] != page.markdown_content
+    ):
+        st.session_state[editor_key] = page.markdown_content
+        st.session_state[saved_key] = page.markdown_content
+
+    with st.expander("高级：编辑整页文字（一般不需要）"):
+        st.caption(
+            "一页通常有多道题，建议用上方逐题候选来整理；"
+            "这里只用于修正或补充整页文字。"
+        )
+        st.text_area(
+            "请根据左侧原图录入或校对本页内容",
+            height=300,
+            key=editor_key,
+        )
+        markdown_content = str(st.session_state[editor_key])
+        dirty = markdown_content != page.markdown_content
+        if dirty:
+            st.warning("● 有未保存修改；切换页面前会要求确认。")
+        else:
+            st.success("● 内容已保存")
+
+        primary_actions = st.columns(3)
+        save_draft = primary_actions[0].button(
+            "保存草稿", type="primary", use_container_width=True
+        )
+        save_reviewed = primary_actions[1].button(
+            "保存并标记已复核", use_container_width=True
+        )
+        save_reviewed_next = primary_actions[2].button(
+            "保存、复核并进入下一页", use_container_width=True
+        )
+        if dirty:
+            st.caption("为保护未保存内容，下方「暂时跳过」已停用；请先保存草稿或复核。")
+
+    navigation_actions = st.columns(3)
+    skip_page = navigation_actions[0].button(
+        "暂时跳过",
+        disabled=dirty,
+        use_container_width=True,
+        help="有未保存修改时请先保存草稿，避免丢失内容。",
+    )
+    go_previous = navigation_actions[1].button(
+        "上一待处理页",
+        disabled=previous_page is None,
+        use_container_width=True,
+    )
+    go_next = navigation_actions[2].button(
+        "下一待处理页",
+        disabled=next_page is None,
+        use_container_width=True,
+    )
+
+    if save_draft or save_reviewed or save_reviewed_next:
+        try:
+            with st.spinner("正在保存到本机……"):
+                destination = None
+                if save_reviewed_next:
+                    updated_page, destination = document_service.save_page_markdown_and_next(
+                        document.id,
+                        page.page_number,
+                        markdown_content,
+                        queue_document_id=selected_document,
+                    )
+                else:
+                    updated_page = document_service.save_page_markdown(
+                        document.id,
+                        page.page_number,
+                        markdown_content,
+                        mark_reviewed=save_reviewed,
+                    )
+        except Exception as exc:
+            LOGGER.exception("保存待复核页面失败：page_id=%s", page.id)
+            st.error(f"保存失败：{exc}。编辑框内容已保留，请重试。")
+        else:
+            st.session_state[saved_key] = updated_page.markdown_content
+            # A successful save resolves any earlier guarded navigation request.
+            # Keeping that request would show a false "未保存" warning after the
+            # database and Markdown file are already current.
+            st.session_state.pop(_PENDING_TARGET_KEY, None)
+            if save_reviewed_next and destination is not None:
+                _activate_page(destination.id)
+                st.session_state[_FLASH_KEY] = (
+                    "success",
+                    "本页已保存并完成人工复核，已进入下一待处理页。",
+                )
+            elif save_reviewed_next:
+                st.session_state[_FLASH_KEY] = (
+                    "info",
+                    "本页已保存并完成人工复核；当前队列没有下一待处理页。",
+                )
+            elif save_reviewed:
+                st.session_state[_FLASH_KEY] = (
+                    "success",
+                    "页面已保存并标记为人工复核完成。",
+                )
+            else:
+                st.session_state[_FLASH_KEY] = ("success", "Markdown 草稿已保存。")
+            st.rerun()
+
+    if skip_page:
+        try:
+            _, destination = document_service.skip_page_and_next(
+                page.id,
+                queue_document_id=selected_document,
+            )
+        except Exception as exc:
+            LOGGER.exception("跳过页面失败：page_id=%s", page.id)
+            st.error(f"暂时跳过失败：{exc}")
+        else:
+            if destination is not None:
+                _activate_page(destination.id)
+                st.session_state[_FLASH_KEY] = (
+                    "success",
+                    "本页已设为暂不整理，已进入下一待处理页。",
+                )
+            else:
+                st.session_state[_FLASH_KEY] = (
+                    "info",
+                    "本页已设为暂不整理；当前队列没有下一待处理页。",
+                )
+            st.rerun()
+
+    requested_navigation = previous_page if go_previous else next_page if go_next else None
+    if go_previous or go_next:
+        if requested_navigation is None:
+            direction_label = "上一" if go_previous else "下一"
+            st.info(f"当前队列没有{direction_label}待处理页。")
+        elif dirty:
+            _go_to_page(requested_navigation.id)
+            st.rerun()
+        else:
+            _go_to_page(requested_navigation.id)
+            st.rerun()
+
+if page.status is PageStatus.FAILED:
+    st.warning("该页处理失败；其他已完成页面和原 PDF 不受影响。")
+
+st.caption(
+    "快捷键：Ctrl+S 保存草稿；Ctrl+Enter 保存、复核并进入下一页；"
+    "Alt+Left / Alt+Right 切换待处理页（文本输入时不触发方向快捷键）。"
+)
+components.html(review_shortcuts_html(), height=0, width=0)
+
+if batch_rerun_requested:
+    st.rerun()

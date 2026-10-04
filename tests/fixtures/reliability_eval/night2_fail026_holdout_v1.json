@@ -1,0 +1,63 @@
+{
+ "eval_id": "night2_fail026_holdout_v1",
+ "corpus_ref": "hbv2-corpus-20260908-r4",
+ "frozen_at": "2026-09-08T13:45:00+08:00",
+ "product_code_head": "88db3ee (post-fix)",
+ "model_expectation": "FAIL-026 blind holdout（冻结于任何 post-fix 运行之前，首跑即终判，禁止看结果后改 expected）。未在 postfix/历史探针中问过的数据点：图2-1 第1轮=90（9.0 误读风险）、第3轮=38（3.8 误读风险）；边界集 p2 小间隙 102/120（12.0 误读风险，问 120）；p7 真小数第1点=2.6 必须保持（禁 26 化，constraint C）；电力电子 100kHz=35（整数惯例不得被守卫扰动）。",
+ "notes": "语料核验：p2 文本层含独立整数 102、120；p7 文本层含 2.6；电力电子 p3 图2-1 18/12/21/35（35 从未被提问）。",
+ "cases": [
+  {
+   "case_id": "H26-1",
+   "family": "holdout_gap_line",
+   "question": "人工智能基础课程讲义 图2-1 训练损失曲线第1轮的值是多少？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["90"],
+    "forbid_regex": ["以图为准", "图片为准"]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "H26-2",
+   "family": "holdout_gap_line",
+   "question": "人工智能基础课程讲义 图2-1 训练损失第3轮大概是多少？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["38"],
+    "forbid_regex": ["以图为准", "图片为准"]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "H26-3",
+   "family": "holdout_small_gap",
+   "question": "FAIL026图表标签边界测试集 图2-1 小间隙折线图第2个数据点是多少？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["120"]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "H26-4",
+   "family": "holdout_true_decimal",
+   "question": "FAIL026图表标签边界测试集 图7-1 真小数折线图第1个数据点是多少？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["2.6"],
+    "forbid_fragments": ["26"]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "H26-5",
+   "family": "holdout_realworld",
+   "question": "电力电子技术基础讲义 图2-1 中 100kHz 开关频率下的总损耗是多少瓦？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["35"]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  }
+ ]
+}

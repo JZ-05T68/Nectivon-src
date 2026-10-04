@@ -1,0 +1,31 @@
+{
+  "eval_id": "fail018_holdout_v1",
+  "corpus_ref": "dirty-long-term-v2",
+  "frozen_at": "2026-09-06T20:57:00+08:00",
+  "model_expectation": "FAIL-018 盲 holdout：自然口语/指代/纠偏问法；generic current-intent 不得静默旧值；comparison 应双披露；不存在的数据点应诚实拒答",
+  "notes": "自然口语盲集，E-1 修复前冻结，修复后才运行。禁止在修复开发期间运行或查看单题判定。",
+  "cases": [
+    {"case_id": "HF01", "family": "colloquial_generic", "question": "这个两千小时的时候多少度？", "expect": {"answer_fragments": ["63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF02", "family": "colloquial_deixis", "question": "现在那个图怎么看？两千小时对应的温度是多少？", "expect": {"answer_fragments": ["63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF03", "family": "retest_wording", "question": "复测以后2000小时是多少度？", "expect": {"answer_fragments": ["63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF04", "family": "memory_correction", "question": "我记得不是58吗？现在还是58吗？", "expect": {"answer_fragments": ["63"], "answer_any_fragments": [["取代", "不是", "更新", "复测"]]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF05", "family": "comparison_diff", "question": "新的和原来的差多少？2000小时的时候。", "expect": {"answer_fragments": ["58", "63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF06", "family": "latest_wording", "question": "最新的那个2000h是多少？", "expect": {"answer_fragments": ["63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF07", "family": "still_old_check", "question": "现在还按58算吗？", "expect": {"answer_fragments": ["63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF08", "family": "colloquial_normal", "question": "泵的轴承跑了两千个小时，温度大概多少？", "expect": {"answer_fragments": ["63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF09", "family": "old_usable", "question": "一车间的老数据现在还能用吗？", "expect": {"answer_any_fragments": [["不能", "取代", "已", "现行"], ["63", "复测", "二车间"]]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF10", "family": "which_data_5000", "question": "5000小时的时候轴承温度按哪个数据？是多少？", "expect": {"answer_fragments": ["80"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF11", "family": "master_correction", "question": "师傅说2000小时看58，对吗？", "expect": {"answer_fragments": ["63"], "answer_any_fragments": [["取代", "复测", "更新", "过时", "不是"]]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF12", "family": "current_3000", "question": "3000小时温度多少？现在。", "expect": {"answer_fragments": ["69"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF13", "family": "which_newer", "question": "两台泵房的记录哪个新？", "expect": {"answer_any_fragments": [["二车间", "2026"]]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF14", "family": "updated_check", "question": "轴承温度趋势有没有更新过？", "expect": {"answer_any_fragments": [["有", "更新", "复测", "取代"]]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF15", "family": "old_vs_now", "question": "以前记录的轴承温度和现在一样吗？2000小时的。", "expect": {"answer_fragments": ["63"], "answer_any_fragments": [["不一", "取代", "58", "复测"]]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF16", "family": "deixis_last_point", "question": "那个温度曲线最后一点是多少度？", "expect": {"answer_any_fragments": [["80", "72"]]}, "metrics": {"answer": "answer", "manual_review": "answer"}},
+    {"case_id": "HF17", "family": "disclose_both", "question": "2000小时时轴承温度多少度？要是不确定哪个版本，两份都告诉我。", "expect": {"answer_fragments": ["58", "63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF18", "family": "superseded_confirm", "question": "复测取代旧记录了吗？", "expect": {"answer_any_fragments": [["是", "已经", "取代"]]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF19", "family": "nonexistent_point", "question": "630小时的时候轴承温度是多少？", "expect": {"no_answer_ok": true}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF20", "family": "compare_points", "question": "1000小时呢？跟2000小时比哪个温度高？", "expect": {"answer_fragments": ["57", "63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF21", "family": "old_max", "question": "旧的那个图最大多少度？", "expect": {"answer_fragments": ["72"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "HF22", "family": "limit_vs_data", "question": "按现在的标准，2000小时的轴承温度限值是多少？", "expect": {"no_answer_ok": true, "answer_any_fragments": [["63"]]}, "metrics": {"answer": "answer", "manual_review": "answer"}}
+  ]
+}

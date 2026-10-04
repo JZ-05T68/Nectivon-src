@@ -1,0 +1,19 @@
+# streamlit 1.61 removed streamlit.elements.image.UseColumnWith, which the
+# pinned streamlit-image-coordinates 0.4.0 (latest available) still imports.
+streamlit>=1.59.1,<1.61
+streamlit-image-coordinates==0.4.0
+PyMuPDF
+Pillow
+python-dotenv
+pydantic-settings
+fastapi
+uvicorn
+jieba
+rapidfuzz
+rapidocr>=3.9.2,<4
+onnxruntime>=1.27.0,<2
+pytest
+# In-process FastAPI/Starlette TestClient transport (tests only).
+# starlette>=1.6 TestClient requires httpx2 (replaces the former httpx note).
+httpx2
+ruff

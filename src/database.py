@@ -1,0 +1,4473 @@
+"""SQLite persistence, migration, organization, and FTS5 search."""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+import sqlite3
+import unicodedata
+from collections.abc import Iterator, Sequence
+from contextlib import AbstractContextManager, contextmanager, nullcontext
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Final
+
+import jieba
+
+from src.ai.embedding_store import decode_vector, encode_vector
+from src.ai.provider import AiCallRecord, AiOutputRecord
+from src.migrations import SCHEMA_VERSION, MigrationError, migrate_database
+from src.models import (
+    KNOWLEDGE_MEMORY_STABLE_TYPE,
+    KNOWLEDGE_OBJECT_STABLE_TYPE,
+    DashboardStats,
+    Document,
+    ImportRecord,
+    ImportStatus,
+    KnowledgeAuthorship,
+    KnowledgeConfirmationStatus,
+    KnowledgeEpistemicBasis,
+    KnowledgeLifecycle,
+    KnowledgeMemoryEntry,
+    KnowledgeMemoryEntryKind,
+    KnowledgeMemoryStatus,
+    KnowledgeObject,
+    KnowledgeObjectKind,
+    KnowledgeObjectSource,
+    KnowledgeObjectSourceType,
+    KnowledgeProjectLink,
+    KnowledgeRelation,
+    KnowledgeRelationType,
+    KnowledgeRevision,
+    KnowledgeRevisionEventType,
+    KnowledgeSearchResult,
+    KnowledgeSearchResultType,
+    NoteImportance,
+    Page,
+    PageEmbedding,
+    PageStatus,
+    Project,
+    ReviewProgress,
+    ReviewQueuePage,
+    ReviewQueueQuery,
+    ReviewQueueSort,
+    SearchFacetCounts,
+    SearchField,
+    SearchFilters,
+    SearchResult,
+    SearchSort,
+    Tag,
+    build_stable_id,
+)
+from src.scan_artifact_filter import extract_printed_page_info, filter_knowledge_text
+
+LOGGER = logging.getLogger(__name__)
+_SHA256_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9a-fA-F]{64}$")
+_QUOTED_TERM: Final[re.Pattern[str]] = re.compile(r'"([^"]+)"')
+#: FAIL-021: extra rows appended after the relevance-ordered window so the
+#: strongest pure-FTS (bm25) matches are never crowded out by metadata boosts.
+FTS_TOPUP_LIMIT: Final[int] = 5
+#: V086-309-PRT1: keyword recall over-fetches before the knowledge-surface
+#: post-filter so scanner-artifact-only rows cannot displace real matches
+#: from the result window.
+SEARCH_RECALL_OVERFETCH: Final[int] = 4
+_UNSET: Final[object] = object()
+_DEFAULT_REVIEW_QUEUE_STATUSES: Final[tuple[PageStatus, ...]] = (
+    PageStatus.PENDING,
+    PageStatus.DRAFT,
+    PageStatus.FAILED,
+)
+_REVIEW_QUEUE_ORDERS: Final[dict[ReviewQueueSort, str]] = {
+    ReviewQueueSort.DOCUMENT_PAGE: "document_id ASC, page_number ASC, id ASC",
+}
+_SEARCH_FIELD_ORDER: Final[tuple[SearchField, ...]] = (
+    SearchField.MARKDOWN,
+    SearchField.OCR_TEXT,
+    SearchField.EXTRACTED_TEXT,
+    SearchField.DOCUMENT_TITLE,
+    SearchField.FILENAME,
+    SearchField.TAG,
+    SearchField.PROJECT,
+)
+_PROCESSING_STATUSES: Final[set[str]] = {
+    "text_extracted",
+    "ocr_completed",
+    "pending_review",
+    "manually_reviewed",
+    "failed",
+}
+_LEGACY_PAGE_STATUS_MAP: Final[dict[str, PageStatus]] = {
+    "ready": PageStatus.PENDING,
+    "text_extracted": PageStatus.PENDING,
+    "ocr_completed": PageStatus.PENDING,
+    "pending_review": PageStatus.PENDING,
+    "manually_reviewed": PageStatus.REVIEWED,
+}
+
+
+class DatabaseError(RuntimeError):
+    """Base exception for a local database operation that cannot be completed."""
+
+
+class DuplicateDocumentError(DatabaseError):
+    """Raised when a PDF with the same SHA-256 has already been imported."""
+
+
+class DuplicateNameError(DatabaseError):
+    """Raised when a normalized tag or project name already exists."""
+
+
+class RecordNotFoundError(DatabaseError):
+    """Raised when an expected document, page, tag, or project does not exist."""
+
+
+class Database:
+    """Typed data-access layer around one local SQLite database."""
+
+    SCHEMA_VERSION: Final[int] = SCHEMA_VERSION
+
+    def __init__(self, database_path: Path | str) -> None:
+        self.database_path = Path(database_path)
+        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.last_backup_path: Path | None = None
+        self.initialize()
+
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        connection = sqlite3.connect(self.database_path, timeout=30.0)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 30000")
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            LOGGER.exception("数据库操作失败：%s", self.database_path)
+            raise
+        finally:
+            connection.close()
+
+    def initialize(self) -> None:
+        """Back up and migrate the schema without deleting existing local data."""
+
+        try:
+            self.last_backup_path = migrate_database(self.database_path)
+        except MigrationError:
+            raise
+        except sqlite3.OperationalError as exc:
+            if "fts5" in str(exc).lower():
+                raise DatabaseError("当前 SQLite 构建不支持 FTS5 全文检索") from exc
+            raise DatabaseError("无法初始化本地数据库") from exc
+
+    # Documents and pages -------------------------------------------------
+    def create_document(
+        self,
+        *,
+        title: str,
+        filename: str,
+        source_path: Path | str,
+        sha256: str,
+        page_count: int = 0,
+        import_status: ImportStatus | str = ImportStatus.PROCESSING,
+    ) -> Document:
+        """Persist a PDF document, rejecting duplicate SHA-256 hashes."""
+
+        normalized_title = title.strip()
+        normalized_filename = filename.strip()
+        normalized_hash = sha256.strip().lower()
+        if not normalized_title:
+            raise ValueError("文档标题不能为空")
+        if not normalized_filename:
+            raise ValueError("文件名不能为空")
+        if not _SHA256_PATTERN.fullmatch(normalized_hash):
+            raise ValueError("SHA-256 必须是 64 位十六进制字符")
+        if page_count < 0:
+            raise ValueError("页数不能为负数")
+        status = _coerce_import_status(import_status)
+        timestamp = _utc_now()
+        try:
+            with self._connection() as connection:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO documents(
+                        title, filename, source_path, sha256, page_count,
+                        created_at, updated_at, import_status, imported_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        normalized_title,
+                        normalized_filename,
+                        str(Path(source_path)),
+                        normalized_hash,
+                        page_count,
+                        timestamp,
+                        timestamp,
+                        status.value,
+                        timestamp,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM documents WHERE id = ?", (cursor.lastrowid,)
+                ).fetchone()
+        except sqlite3.IntegrityError as exc:
+            if "documents.sha256" in str(exc):
+                raise DuplicateDocumentError("该文件已经导入（SHA-256 重复）") from exc
+            raise DatabaseError("无法保存文档元数据") from exc
+        return _document_from_row(row)
+
+    def get_document(self, document_id: int) -> Document | None:
+        """Return one document by primary key, or ``None`` when absent."""
+
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM documents WHERE id = ?", (document_id,)
+            ).fetchone()
+        return _document_from_row(row) if row is not None else None
+
+    def get_document_by_sha256(self, sha256: str) -> Document | None:
+        """Look up an already imported document by its SHA-256 digest."""
+
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM documents WHERE sha256 = ?", (sha256.strip().lower(),)
+            ).fetchone()
+        return _document_from_row(row) if row is not None else None
+
+    def list_documents(
+        self,
+        *,
+        sort_by: str = "imported_desc",
+        tag_ids: Sequence[int] = (),
+        project_ids: Sequence[int] = (),
+        import_status: ImportStatus | str | None = None,
+    ) -> list[Document]:
+        """List documents with stable local filters and sorting."""
+
+        order_by = {
+            "name_asc": "d.title COLLATE NOCASE ASC, d.id ASC",
+            "name_desc": "d.title COLLATE NOCASE DESC, d.id DESC",
+            "imported_asc": "d.imported_at ASC, d.id ASC",
+            "imported_desc": "d.imported_at DESC, d.id DESC",
+            "updated_desc": "d.updated_at DESC, d.id DESC",
+        }.get(sort_by, "d.imported_at DESC, d.id DESC")
+        conditions: list[str] = []
+        parameters: list[object] = []
+        if import_status is not None:
+            conditions.append("d.import_status = ?")
+            parameters.append(_coerce_import_status(import_status).value)
+        if tag_ids:
+            placeholders = ",".join("?" for _ in tag_ids)
+            conditions.append(
+                f"""d.id IN (
+                    SELECT document_id FROM document_tags
+                    WHERE tag_id IN ({placeholders})
+                    GROUP BY document_id HAVING COUNT(DISTINCT tag_id) = ?
+                )"""
+            )
+            parameters.extend(int(value) for value in tag_ids)
+            parameters.append(len(set(tag_ids)))
+        if project_ids:
+            placeholders = ",".join("?" for _ in project_ids)
+            conditions.append(
+                f"""d.id IN (
+                    SELECT document_id FROM project_documents
+                    WHERE project_id IN ({placeholders})
+                    GROUP BY document_id HAVING COUNT(DISTINCT project_id) = ?
+                )"""
+            )
+            parameters.extend(int(value) for value in project_ids)
+            parameters.append(len(set(project_ids)))
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"SELECT d.* FROM documents AS d {where} ORDER BY {order_by}", parameters
+            ).fetchall()
+        return [_document_from_row(row) for row in rows]
+
+    def update_document_import(
+        self,
+        document_id: int,
+        *,
+        status: ImportStatus | str,
+        page_count: int,
+        processed_pages: int,
+        text_pages: int,
+        review_pages: int,
+        error_message: str = "",
+    ) -> Document:
+        """Atomically update document import status and result statistics."""
+
+        values = (page_count, processed_pages, text_pages, review_pages)
+        if any(value < 0 for value in values):
+            raise ValueError("导入统计不能为负数")
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE documents SET
+                    page_count = ?, processed_page_count = ?, text_page_count = ?,
+                    review_page_count = ?, import_status = ?, import_error = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    page_count,
+                    processed_pages,
+                    text_pages,
+                    review_pages,
+                    _coerce_import_status(status).value,
+                    error_message[:2000],
+                    _utc_now(),
+                    document_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"文档不存在：{document_id}")
+            row = connection.execute(
+                "SELECT * FROM documents WHERE id = ?", (document_id,)
+            ).fetchone()
+        return _document_from_row(row)
+
+    def update_document_page_count(self, document_id: int, page_count: int) -> Document:
+        """Compatibility helper for v0.0.1 callers."""
+
+        document = self.get_document(document_id)
+        if document is None:
+            raise RecordNotFoundError(f"文档不存在：{document_id}")
+        return self.update_document_import(
+            document_id,
+            status=ImportStatus.COMPLETED,
+            page_count=page_count,
+            processed_pages=page_count,
+            text_pages=document.text_page_count,
+            review_pages=document.review_page_count,
+            error_message=document.import_error,
+        )
+
+    def create_page(
+        self,
+        *,
+        document_id: int,
+        page_number: int,
+        image_path: Path | str,
+        extracted_text: str = "",
+        ocr_text: str = "",
+        status: PageStatus | str = PageStatus.PENDING,
+        processing_status: str | None = None,
+        processing_error: str = "",
+        markdown_content: str = "",
+        markdown_path: Path | str | None = None,
+    ) -> Page:
+        """Persist one rendered page and all locally available text."""
+
+        if page_number < 1:
+            raise ValueError("页码必须从 1 开始")
+        normalized_status = _coerce_page_status(status)
+        if markdown_content.strip() and normalized_status not in {
+            PageStatus.REVIEWED,
+            PageStatus.SKIPPED,
+        }:
+            normalized_status = PageStatus.DRAFT
+        normalized_processing_status = _coerce_processing_status(
+            processing_status,
+            extracted_text=extracted_text,
+            ocr_text=ocr_text,
+            processing_error=processing_error,
+            review_status=normalized_status,
+        )
+        timestamp = _utc_now()
+        # V086-309: the FTS search mirrors are knowledge text — scanner
+        # branding is filtered out while the paper's own printed footers
+        # stay. Raw ocr_text/extracted_text are stored unmodified.
+        filtered_ocr = filter_knowledge_text(ocr_text)
+        filtered_extracted = filter_knowledge_text(extracted_text)
+        printed_info = extract_printed_page_info(
+            filtered_ocr.filtered_text or filtered_extracted.filtered_text
+        )
+        try:
+            with self._connection() as connection:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO pages(
+                        document_id, page_number, image_path, extracted_text,
+                        ocr_text, markdown_content, markdown_path, status, review_status,
+                        processing_error, search_extracted_text, search_ocr_text,
+                        search_markdown_content, created_at, updated_at, note_updated_at,
+                        reviewed_at, last_viewed_at,
+                        printed_page_number, printed_total_pages, document_footer
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        document_id,
+                        page_number,
+                        str(Path(image_path)),
+                        extracted_text,
+                        ocr_text,
+                        markdown_content,
+                        _optional_path(markdown_path),
+                        normalized_processing_status,
+                        normalized_status.value,
+                        processing_error[:2000],
+                        _tokenize_for_fts(filtered_extracted.filtered_text),
+                        _tokenize_for_fts(filtered_ocr.filtered_text),
+                        _tokenize_for_fts(markdown_content),
+                        timestamp,
+                        timestamp,
+                        timestamp if markdown_content.strip() else None,
+                        timestamp if normalized_status is PageStatus.REVIEWED else None,
+                        None,
+                        printed_info.printed_page_number,
+                        printed_info.printed_total_pages,
+                        printed_info.footer_text,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM pages WHERE id = ?", (cursor.lastrowid,)
+                ).fetchone()
+        except sqlite3.IntegrityError as exc:
+            raise DatabaseError(f"无法保存文档 {document_id} 的第 {page_number} 页") from exc
+        return _page_from_row(row)
+
+    def get_page(self, page_id: int) -> Page | None:
+        """Return one page by primary key, or ``None`` when absent."""
+
+        with self._connection() as connection:
+            row = connection.execute("SELECT * FROM pages WHERE id = ?", (page_id,)).fetchone()
+        return _page_from_row(row) if row is not None else None
+
+    def get_page_by_number(self, document_id: int, page_number: int) -> Page | None:
+        """Return a page using its document and one-based page number."""
+
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM pages WHERE document_id = ? AND page_number = ?",
+                (document_id, page_number),
+            ).fetchone()
+        return _page_from_row(row) if row is not None else None
+
+    def list_pages(self, document_id: int) -> list[Page]:
+        """List every page of a document in source order."""
+
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM pages WHERE document_id = ? ORDER BY page_number",
+                (document_id,),
+            ).fetchall()
+        return [_page_from_row(row) for row in rows]
+
+    def list_review_pages(self, document_id: int | None = None) -> list[Page]:
+        """List the default review queue, optionally restricted to a document."""
+
+        parameters: list[object] = [
+            PageStatus.PENDING.value,
+            PageStatus.DRAFT.value,
+            PageStatus.FAILED.value,
+        ]
+        where = "review_status IN (?, ?, ?)"
+        if document_id is not None:
+            where += " AND document_id = ?"
+            parameters.append(document_id)
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM pages WHERE {where} ORDER BY document_id, page_number",
+                parameters,
+            ).fetchall()
+        return [_page_from_row(row) for row in rows]
+
+    def paginate_review_pages(
+        self,
+        document_id: int | None = None,
+        *,
+        statuses: Sequence[PageStatus | str] | None = None,
+        sort: ReviewQueueSort | str = ReviewQueueSort.DOCUMENT_PAGE,
+        batch_number: int = 1,
+        batch_size: int = 20,
+    ) -> ReviewQueuePage:
+        """Return one bounded, stable, one-based batch of the review queue.
+
+        Count and data reads share one SQLite snapshot and the exact same
+        parameterized predicate. Only the whitelisted order fragment is
+        interpolated into SQL.
+        """
+
+        if document_id is not None and document_id <= 0:
+            raise ValueError("文档 ID 必须是正整数")
+        if isinstance(batch_number, bool) or not isinstance(batch_number, int):
+            raise ValueError("待整理批次编号必须是整数")
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int):
+            raise ValueError("待整理批次大小必须是整数")
+        if not 1 <= batch_size <= 100:
+            raise ValueError("待整理批次大小必须在 1 到 100 之间")
+        normalized_sort = ReviewQueueSort(sort)
+        requested_batch_number = batch_number
+        normalized_request = max(batch_number, 1)
+        requested_statuses = (
+            _DEFAULT_REVIEW_QUEUE_STATUSES if statuses is None else statuses
+        )
+        status_set = {PageStatus(status) for status in requested_statuses}
+        normalized_statuses = tuple(
+            status for status in PageStatus if status in status_set
+        )
+
+        conditions: list[str] = []
+        parameters: list[object] = []
+        if normalized_statuses:
+            placeholders = ",".join("?" for _ in normalized_statuses)
+            conditions.append(f"review_status IN ({placeholders})")
+            parameters.extend(status.value for status in normalized_statuses)
+        else:
+            conditions.append("0")
+        if document_id is not None:
+            conditions.append("document_id = ?")
+            parameters.append(document_id)
+        where = " AND ".join(conditions)
+
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            count_row = connection.execute(
+                f"SELECT COUNT(*) AS total_pages FROM pages WHERE {where}",
+                parameters,
+            ).fetchone()
+            total_pages = int(count_row["total_pages"])
+            total_batches = (total_pages + batch_size - 1) // batch_size
+            effective_batch = min(normalized_request, total_batches or 1)
+            if total_pages:
+                offset = (effective_batch - 1) * batch_size
+                rows = connection.execute(
+                    f"""SELECT * FROM pages WHERE {where}
+                    ORDER BY {_REVIEW_QUEUE_ORDERS[normalized_sort]}
+                    LIMIT ? OFFSET ?""",
+                    (*parameters, batch_size, offset),
+                ).fetchall()
+            else:
+                rows = []
+
+        normalized_query = ReviewQueueQuery(
+            document_id=document_id,
+            statuses=normalized_statuses,
+            sort=normalized_sort,
+            batch_size=batch_size,
+            batch_number=effective_batch,
+        )
+        return ReviewQueuePage(
+            pages=tuple(_page_from_row(row) for row in rows),
+            total_pages=total_pages,
+            batch_size=batch_size,
+            batch_number=effective_batch,
+            total_batches=total_batches,
+            requested_batch_number=requested_batch_number,
+            corrected=effective_batch != requested_batch_number,
+            query=normalized_query,
+        )
+
+    def get_first_review_page(self, document_id: int | None = None) -> Page | None:
+        """Return the first page in the default queue without loading the queue."""
+
+        parameters: list[object] = [
+            status.value for status in _DEFAULT_REVIEW_QUEUE_STATUSES
+        ]
+        where = "review_status IN (?,?,?)"
+        if document_id is not None:
+            where += " AND document_id = ?"
+            parameters.append(document_id)
+        with self._connection() as connection:
+            row = connection.execute(
+                f"""SELECT * FROM pages WHERE {where}
+                ORDER BY {_REVIEW_QUEUE_ORDERS[ReviewQueueSort.DOCUMENT_PAGE]}
+                LIMIT 1""",
+                parameters,
+            ).fetchone()
+        return _page_from_row(row) if row is not None else None
+
+    def list_pending_pages(self, document_id: int | None = None) -> list[Page]:
+        """Compatibility alias for pages in the default manual-review queue."""
+
+        return self.list_review_pages(document_id)
+
+    def get_adjacent_review_page(
+        self,
+        page_id: int,
+        direction: str,
+        document_id: int | None = None,
+    ) -> Page | None:
+        """Return the previous or next page in the stable default review queue."""
+
+        if direction not in {"previous", "next"}:
+            raise ValueError("待复核导航方向必须是 previous 或 next")
+        current = self.get_page(page_id)
+        if current is None:
+            raise RecordNotFoundError(f"页面不存在：{page_id}")
+        statuses = (
+            PageStatus.PENDING.value,
+            PageStatus.DRAFT.value,
+            PageStatus.FAILED.value,
+        )
+        if document_id is not None:
+            if current.document_id != document_id:
+                return None
+            comparison = "<" if direction == "previous" else ">"
+            order = "DESC" if direction == "previous" else "ASC"
+            query = f"""
+                SELECT * FROM pages
+                WHERE review_status IN (?, ?, ?)
+                    AND document_id = ? AND page_number {comparison} ?
+                ORDER BY page_number {order} LIMIT 1
+            """
+            parameters: tuple[object, ...] = (
+                *statuses,
+                document_id,
+                current.page_number,
+            )
+        else:
+            comparison = "<" if direction == "previous" else ">"
+            order = "DESC" if direction == "previous" else "ASC"
+            query = f"""
+                SELECT * FROM pages
+                WHERE review_status IN (?, ?, ?) AND (
+                    document_id {comparison} ? OR
+                    (document_id = ? AND page_number {comparison} ?)
+                )
+                ORDER BY document_id {order}, page_number {order} LIMIT 1
+            """
+            parameters = (
+                *statuses,
+                current.document_id,
+                current.document_id,
+                current.page_number,
+            )
+        with self._connection() as connection:
+            row = connection.execute(query, parameters).fetchone()
+        return _page_from_row(row) if row is not None else None
+
+    def list_pages_by_tag(self, tag_id: int) -> list[Page]:
+        """List pages directly associated with one tag."""
+
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT p.* FROM pages AS p
+                JOIN page_tags AS pt ON pt.page_id = p.id
+                WHERE pt.tag_id = ? ORDER BY p.document_id, p.page_number
+                """,
+                (tag_id,),
+            ).fetchall()
+        return [_page_from_row(row) for row in rows]
+
+    def update_page(
+        self,
+        page_id: int,
+        *,
+        extracted_text: str | None = None,
+        ocr_text: str | None = None,
+        markdown_content: str | None = None,
+        markdown_path: Path | str | None | object = _UNSET,
+        status: PageStatus | str | None = None,
+        processing_status: str | None = None,
+        processing_error: str | None = None,
+        image_path: Path | str | None = None,
+    ) -> Page:
+        """Update selected page fields while its FTS triggers stay synchronized."""
+
+        assignments: list[str] = []
+        values: list[object] = []
+        printed_page_number: int | None = None
+        printed_total_pages: int | None = None
+        document_footer = ""
+        # V086-309: search mirrors are knowledge text; raw fields stay raw.
+        searchable_fields = (
+            ("extracted_text", "search_extracted_text", extracted_text),
+            ("ocr_text", "search_ocr_text", ocr_text),
+            ("markdown_content", "search_markdown_content", markdown_content),
+        )
+        for field, search_field, value in searchable_fields:
+            if value is not None:
+                if field == "markdown_content":
+                    # The user's correction TEXT is user data — stored and
+                    # displayed verbatim, and passed to the Agent verbatim.
+                    # Only its FTS search MIRROR is knowledge text: scanner
+                    # branding in it stays out of retrieval (V086-309 §10.3)
+                    # while the original content is never modified.
+                    searchable_value = filter_knowledge_text(value).filtered_text
+                else:
+                    filtered = filter_knowledge_text(value)
+                    searchable_value = filtered.filtered_text
+                    info = extract_printed_page_info(filtered.filtered_text)
+                    if info.printed_page_number is not None or info.footer_text:
+                        printed_page_number = info.printed_page_number
+                        printed_total_pages = info.printed_total_pages
+                        document_footer = info.footer_text
+                assignments.extend((f"{field} = ?", f"{search_field} = ?"))
+                values.extend((value, _tokenize_for_fts(searchable_value)))
+                if field == "markdown_content":
+                    assignments.append("note_updated_at = ?")
+                    values.append(_utc_now())
+        if printed_page_number is not None or document_footer:
+            assignments.extend(
+                (
+                    "printed_page_number = ?",
+                    "printed_total_pages = ?",
+                    "document_footer = ?",
+                )
+            )
+            values.extend(
+                (printed_page_number, printed_total_pages, document_footer)
+            )
+        if markdown_path is not _UNSET:
+            assignments.append("markdown_path = ?")
+            values.append(_optional_path(markdown_path))
+        if status is not None:
+            normalized_status = _coerce_page_status(status)
+            assignments.extend(("review_status = ?", "reviewed_at = ?"))
+            values.extend(
+                (
+                    normalized_status.value,
+                    _utc_now() if normalized_status is PageStatus.REVIEWED else None,
+                )
+            )
+        if processing_status is not None:
+            assignments.append("status = ?")
+            values.append(_validate_processing_status(processing_status))
+        if processing_error is not None:
+            assignments.append("processing_error = ?")
+            values.append(processing_error[:2000])
+        if image_path is not None:
+            assignments.append("image_path = ?")
+            values.append(str(Path(image_path)))
+        if not assignments:
+            page = self.get_page(page_id)
+            if page is None:
+                raise RecordNotFoundError(f"页面不存在：{page_id}")
+            return page
+        timestamp = _utc_now()
+        alternate_timestamp = (
+            datetime.fromisoformat(timestamp) + timedelta(microseconds=1)
+        ).isoformat(timespec="microseconds")
+        assignments.append(
+            "updated_at = CASE WHEN updated_at = ? THEN ? ELSE ? END"
+        )
+        values.extend((timestamp, alternate_timestamp, timestamp, page_id))
+        with self._connection() as connection:
+            cursor = connection.execute(
+                f"UPDATE pages SET {', '.join(assignments)} WHERE id = ?", values
+            )
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"页面不存在：{page_id}")
+            row = connection.execute("SELECT * FROM pages WHERE id = ?", (page_id,)).fetchone()
+        return _page_from_row(row)
+
+    def update_page_markdown(
+        self,
+        page_id: int,
+        markdown_content: str,
+        markdown_path: Path | str | None,
+        *,
+        review_status: PageStatus | str = PageStatus.DRAFT,
+    ) -> Page:
+        """Save page Markdown with an explicit manual-review state."""
+
+        normalized_status = _coerce_page_status(review_status)
+        current = self.get_page(page_id)
+        if current is None:
+            raise RecordNotFoundError(f"页面不存在：{page_id}")
+        normalized_path = (
+            Path(markdown_path) if markdown_path is not None else None
+        )
+        if (
+            current.markdown_content == markdown_content
+            and current.markdown_path == normalized_path
+            and current.status is normalized_status
+        ):
+            return current
+
+        return self.update_page(
+            page_id,
+            markdown_content=markdown_content,
+            markdown_path=markdown_path,
+            status=normalized_status,
+        )
+
+    def mark_page_viewed(self, page_id: int) -> Page:
+        """Record a page visit without changing its content modification time."""
+
+        with self._connection() as connection:
+            cursor = connection.execute(
+                "UPDATE pages SET last_viewed_at = ? WHERE id = ?",
+                (_utc_now(), page_id),
+            )
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"页面不存在：{page_id}")
+            row = connection.execute("SELECT * FROM pages WHERE id = ?", (page_id,)).fetchone()
+        return _page_from_row(row)
+
+    # Import records ------------------------------------------------------
+    def create_import_record(self, filename: str, title: str, sha256: str) -> ImportRecord:
+        """Create a pending import attempt before document processing starts."""
+
+        timestamp = _utc_now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO import_records(filename, title, sha256, status, started_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (filename, title, sha256, ImportStatus.PENDING.value, timestamp),
+            )
+            row = connection.execute(
+                "SELECT * FROM import_records WHERE id = ?", (cursor.lastrowid,)
+            ).fetchone()
+        return _import_record_from_row(row)
+
+    def update_import_record(
+        self,
+        record_id: int,
+        *,
+        status: ImportStatus | str,
+        document_id: int | None = None,
+        total_pages: int = 0,
+        processed_pages: int = 0,
+        text_pages: int = 0,
+        review_pages: int = 0,
+        failed_pages: int = 0,
+        error_message: str = "",
+    ) -> ImportRecord:
+        """Update one import attempt and set its finish time for terminal states."""
+
+        normalized_status = _coerce_import_status(status)
+        finished_at = (
+            _utc_now()
+            if normalized_status
+            in {ImportStatus.COMPLETED, ImportStatus.FAILED, ImportStatus.PARTIALLY_COMPLETED}
+            else None
+        )
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE import_records SET
+                    status = ?, document_id = COALESCE(?, document_id), total_pages = ?,
+                    processed_pages = ?, text_pages = ?, review_pages = ?, failed_pages = ?,
+                    error_message = ?, finished_at = ?
+                WHERE id = ?
+                """,
+                (
+                    normalized_status.value,
+                    document_id,
+                    total_pages,
+                    processed_pages,
+                    text_pages,
+                    review_pages,
+                    failed_pages,
+                    error_message[:2000],
+                    finished_at,
+                    record_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"导入记录不存在：{record_id}")
+            row = connection.execute(
+                "SELECT * FROM import_records WHERE id = ?", (record_id,)
+            ).fetchone()
+        return _import_record_from_row(row)
+
+    def list_import_records(self, limit: int = 100) -> list[ImportRecord]:
+        """List recent import attempts, newest first."""
+
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM import_records ORDER BY started_at DESC, id DESC LIMIT ?",
+                (max(1, min(limit, 500)),),
+            ).fetchall()
+        return [_import_record_from_row(row) for row in rows]
+
+    # Tags ---------------------------------------------------------------
+    def create_tag(self, name: str) -> Tag:
+        """Create a normalized tag or return the existing same-name tag."""
+
+        display_name, normalized_name = _normalize_name(name, "标签")
+        timestamp = _utc_now()
+        with self._connection() as connection:
+            existing = connection.execute(
+                "SELECT * FROM tags WHERE normalized_name = ?", (normalized_name,)
+            ).fetchone()
+            if existing is not None:
+                return _tag_from_row(existing)
+            cursor = connection.execute(
+                "INSERT INTO tags(name, normalized_name, created_at) VALUES (?, ?, ?)",
+                (display_name, normalized_name, timestamp),
+            )
+            row = connection.execute(
+                "SELECT * FROM tags WHERE id = ?", (cursor.lastrowid,)
+            ).fetchone()
+        return _tag_from_row(row)
+
+    def list_tags(self) -> list[Tag]:
+        """List tags with dynamically calculated document and page usage counts."""
+
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT t.*, (
+                    (SELECT COUNT(*) FROM document_tags dt WHERE dt.tag_id = t.id) +
+                    (SELECT COUNT(*) FROM page_tags pt WHERE pt.tag_id = t.id)
+                ) AS usage_count
+                FROM tags AS t ORDER BY t.name COLLATE NOCASE
+                """
+            ).fetchall()
+        return [_tag_from_row(row) for row in rows]
+
+    def delete_tag(self, tag_id: int) -> None:
+        """Delete only a tag and its associations, never related materials."""
+
+        with self._connection() as connection:
+            cursor = connection.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"标签不存在：{tag_id}")
+
+    def get_document_tags(self, document_id: int) -> list[Tag]:
+        return self._tags_for("document_tags", "document_id", document_id)
+
+    def get_page_tags(self, page_id: int) -> list[Tag]:
+        return self._tags_for("page_tags", "page_id", page_id)
+
+    def _tags_for(self, table: str, key: str, value: int) -> list[Tag]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"""SELECT t.* FROM tags t JOIN {table} x ON x.tag_id = t.id
+                WHERE x.{key} = ? ORDER BY t.name COLLATE NOCASE""",
+                (value,),
+            ).fetchall()
+        return [_tag_from_row(row) for row in rows]
+
+    def set_document_tags(self, document_id: int, tag_ids: Sequence[int]) -> None:
+        self._set_associations("document_tags", "document_id", document_id, "tag_id", tag_ids)
+
+    def set_page_tags(self, page_id: int, tag_ids: Sequence[int]) -> None:
+        self._set_associations("page_tags", "page_id", page_id, "tag_id", tag_ids)
+
+    # Projects -----------------------------------------------------------
+    def create_project(
+        self, name: str, description: str = "", status: str = "active"
+    ) -> Project:
+        """Create a project with a meaningful unique normalized name."""
+
+        display_name, normalized_name = _normalize_name(name, "项目")
+        timestamp = _utc_now()
+        try:
+            with self._connection() as connection:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO projects(
+                        name, normalized_name, description, status, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        display_name,
+                        normalized_name,
+                        description.strip(),
+                        status.strip() or "active",
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM projects WHERE id = ?", (cursor.lastrowid,)
+                ).fetchone()
+        except sqlite3.IntegrityError as exc:
+            raise DuplicateNameError("已存在同名项目") from exc
+        return _project_from_row(row)
+
+    def update_project(
+        self, project_id: int, *, name: str, description: str, status: str
+    ) -> Project:
+        """Update project metadata without changing any source material."""
+
+        display_name, normalized_name = _normalize_name(name, "项目")
+        try:
+            with self._connection() as connection:
+                cursor = connection.execute(
+                    """
+                    UPDATE projects SET name = ?, normalized_name = ?, description = ?,
+                        status = ?, updated_at = ? WHERE id = ?
+                    """,
+                    (
+                        display_name,
+                        normalized_name,
+                        description.strip(),
+                        status.strip() or "active",
+                        _utc_now(),
+                        project_id,
+                    ),
+                )
+                if cursor.rowcount == 0:
+                    raise RecordNotFoundError(f"项目不存在：{project_id}")
+                row = connection.execute(
+                    "SELECT * FROM projects WHERE id = ?", (project_id,)
+                ).fetchone()
+        except sqlite3.IntegrityError as exc:
+            raise DuplicateNameError("已存在同名项目") from exc
+        return _project_from_row(row)
+
+    def list_projects(self) -> list[Project]:
+        """List projects with dynamic material counts."""
+
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT pr.*,
+                    (SELECT COUNT(*) FROM project_documents pd
+                        WHERE pd.project_id = pr.id) AS document_count,
+                    (SELECT COUNT(*) FROM project_pages pp
+                        WHERE pp.project_id = pr.id) AS page_count
+                FROM projects pr ORDER BY pr.updated_at DESC, pr.id DESC
+                """
+            ).fetchall()
+        return [_project_from_row(row) for row in rows]
+
+    def delete_project(self, project_id: int) -> None:
+        """Delete only a project and associations, never documents or pages."""
+
+        with self._connection() as connection:
+            cursor = connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"项目不存在：{project_id}")
+
+    def get_document_projects(self, document_id: int) -> list[Project]:
+        return self._projects_for("project_documents", "document_id", document_id)
+
+    def get_page_projects(self, page_id: int) -> list[Project]:
+        return self._projects_for("project_pages", "page_id", page_id)
+
+    def _projects_for(self, table: str, key: str, value: int) -> list[Project]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"""SELECT pr.* FROM projects pr JOIN {table} x ON x.project_id = pr.id
+                WHERE x.{key} = ? ORDER BY pr.name COLLATE NOCASE""",
+                (value,),
+            ).fetchall()
+        return [_project_from_row(row) for row in rows]
+
+    def set_document_projects(self, document_id: int, project_ids: Sequence[int]) -> None:
+        self._set_associations(
+            "project_documents", "document_id", document_id, "project_id", project_ids
+        )
+
+    def set_page_projects(self, page_id: int, project_ids: Sequence[int]) -> None:
+        self._set_associations(
+            "project_pages", "page_id", page_id, "project_id", project_ids
+        )
+
+    def list_project_documents(self, project_id: int) -> list[Document]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """SELECT d.* FROM documents d JOIN project_documents pd
+                ON pd.document_id = d.id WHERE pd.project_id = ?
+                ORDER BY d.title COLLATE NOCASE""",
+                (project_id,),
+            ).fetchall()
+        return [_document_from_row(row) for row in rows]
+
+    def list_project_pages(self, project_id: int) -> list[Page]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """SELECT p.* FROM pages p JOIN project_pages pp ON pp.page_id = p.id
+                WHERE pp.project_id = ? ORDER BY p.document_id, p.page_number""",
+                (project_id,),
+            ).fetchall()
+        return [_page_from_row(row) for row in rows]
+
+    def _set_associations(
+        self,
+        table: str,
+        owner_column: str,
+        owner_id: int,
+        target_column: str,
+        target_ids: Sequence[int],
+    ) -> None:
+        unique_ids = sorted({int(value) for value in target_ids})
+        timestamp = _utc_now()
+        with self._connection() as connection:
+            connection.execute(f"DELETE FROM {table} WHERE {owner_column} = ?", (owner_id,))
+            connection.executemany(
+                f"INSERT INTO {table}({owner_column}, {target_column}, created_at) "
+                "VALUES (?, ?, ?)",
+                [(owner_id, target_id, timestamp) for target_id in unique_ids],
+            )
+
+    # Dashboard and search -----------------------------------------------
+    def dashboard_stats(self) -> DashboardStats:
+        """Return dashboard counts in one local query."""
+
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM documents) AS documents,
+                    (SELECT COUNT(*) FROM pages) AS pages,
+                    (SELECT COUNT(*) FROM pages
+                        WHERE length(trim(markdown_content)) > 0) AS noted_pages,
+                    (SELECT COUNT(*) FROM pages
+                        WHERE review_status IN ('pending', 'draft', 'failed')) AS review_pages,
+                    (SELECT COUNT(*) FROM tags) AS tags,
+                    (SELECT COUNT(*) FROM projects) AS projects,
+                    (SELECT COUNT(*) FROM pages
+                        WHERE review_status = 'pending') AS pending_pages,
+                    (SELECT COUNT(*) FROM pages
+                        WHERE review_status = 'draft') AS draft_pages,
+                    (SELECT COUNT(*) FROM pages
+                        WHERE review_status = 'reviewed') AS reviewed_pages,
+                    (SELECT COUNT(*) FROM pages
+                        WHERE review_status = 'skipped') AS skipped_pages,
+                    (SELECT COUNT(*) FROM pages
+                        WHERE review_status = 'failed') AS failed_pages
+                """
+            ).fetchone()
+        return DashboardStats(**{key: int(row[key]) for key in row.keys()})
+
+    def review_progress(self, document_id: int | None = None) -> ReviewProgress:
+        """Return live workflow progress globally or for one document."""
+
+        where = "WHERE document_id = ?" if document_id is not None else ""
+        parameters: tuple[object, ...] = (document_id,) if document_id is not None else ()
+        with self._connection() as connection:
+            row = connection.execute(
+                f"""
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN review_status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                    SUM(CASE WHEN review_status = 'draft' THEN 1 ELSE 0 END) AS draft,
+                    SUM(CASE WHEN review_status = 'reviewed' THEN 1 ELSE 0 END) AS reviewed,
+                    SUM(CASE WHEN review_status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
+                    SUM(CASE WHEN review_status = 'failed' THEN 1 ELSE 0 END) AS failed
+                FROM pages {where}
+                """,
+                parameters,
+            ).fetchone()
+        counts = {key: int(row[key] or 0) for key in row.keys()}
+        processed = counts["reviewed"] + counts["skipped"]
+        remaining = counts["pending"] + counts["draft"] + counts["failed"]
+        return ReviewProgress(processed=processed, remaining=remaining, **counts)
+
+    def recent_edited_pages(self, limit: int = 5) -> list[Page]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """SELECT * FROM pages WHERE length(trim(markdown_content)) > 0
+                ORDER BY COALESCE(note_updated_at, updated_at) DESC LIMIT ?""",
+                (max(1, min(limit, 20)),),
+            ).fetchall()
+        return [_page_from_row(row) for row in rows]
+
+    def search(
+        self,
+        query: str,
+        limit: int = 20,
+        *,
+        terms: Sequence[str] | None = None,
+        rank_terms: Sequence[str] | None = None,
+        filters: SearchFilters | None = None,
+        sort_by: SearchSort | str = SearchSort.RELEVANCE,
+        coverage_content_boost: bool = False,
+    ) -> list[SearchResult]:
+        """Search all local fields with parameterized, composable filters.
+
+        FTS5 supplies ranking while literal field checks identify every matching
+        source. Multiple tags and projects are intentionally combined with AND.
+
+        ``terms`` drives recall (literal field matching) and highlighting.
+        ``rank_terms`` — when provided — restricts the FTS5 ``bm25`` ranking
+        weight to those terms only (HBV2-MORNING-20260909 M1): demoted
+        low-information terms (isolated digits, interrogative fragments) keep
+        recall but cannot flood the ranking. Empty ``rank_terms`` falls back to
+        ``terms`` so a numbers-only query keeps today's behaviour.
+
+        V086-309-PRT1: literal recall, matched-field display and the matched
+        content all evaluate against the *knowledge surface* — the same
+        scan-artifact-filtered text that feeds the FTS mirrors — so scanner
+        branding in raw OCR can recall a page neither through the result
+        window nor through a snippet.
+        """
+
+        normalized_query = query.strip()
+        if not normalized_query or limit <= 0:
+            return []
+        safe_limit = min(limit, 100)
+        literal_terms = tuple(
+            dict.fromkeys(
+                term.casefold().strip()
+                for term in (terms or _QUOTED_TERM.findall(normalized_query))
+                if term.strip()
+            )
+        )
+        if not literal_terms:
+            return []
+        ranking_terms = tuple(
+            dict.fromkeys(
+                term.casefold().strip() for term in (rank_terms or ()) if term.strip()
+            )
+        )
+        if not ranking_terms:
+            ranking_terms = literal_terms
+        elif ranking_terms != literal_terms and not self._ranking_terms_match_anything(
+            ranking_terms
+        ):
+            # M1-RESIDUAL fallback (HBV2 Phase 2 RUN2, 2026-09-09): when term
+            # demotion removed the digits/question fragments that kept the only
+            # literal link to the correct page, and the surviving ranking terms
+            # match *no page at all* through FTS, the ranking would order the
+            # whole recall pool by the document-id tie-break and sink that page
+            # below every unrelated row (staging: rank 51-72 of ~76). Restore
+            # full-term ranking for this query only — digits regain weight
+            # exclusively when nothing else carries any ranking signal, so the
+            # original numeric-flood protection stays intact whenever the
+            # surviving ranking terms genuinely match pages.
+            ranking_terms = literal_terms
+        rank_match_expression = " OR ".join(
+            f'"{term}"' for term in ranking_terms
+        )
+        active_filters = filters or SearchFilters()
+        match_fields = active_filters.match_fields or tuple(SearchField)
+        match_clause, match_parameters = _search_match_clause(
+            match_fields, literal_terms
+        )
+        filter_clauses, filter_parameters = _search_filter_clauses(active_filters)
+        where_clauses = [f"({match_clause})", *filter_clauses]
+        relevance_expression, relevance_parameters = _relevance_expression(
+            literal_terms, ranking_terms, coverage_content_boost=coverage_content_boost
+        )
+        order_by = _search_order_by(sort_by)
+        try:
+            with self._connection() as connection:
+                # V086-309-PRT1: the SQL recall over raw columns is a superset;
+                # the knowledge-surface post-filter below drops pages whose only
+                # literal match lives in scanner-artifact lines. Over-fetching
+                # keeps real matches from being displaced inside the window.
+                overfetch_limit = min(
+                    safe_limit * SEARCH_RECALL_OVERFETCH + FTS_TOPUP_LIMIT, 1000
+                )
+                rows = connection.execute(
+                    f"""
+                    WITH content_matches AS (
+                        SELECT rowid, bm25(page_search, 1.0, 0.9, 1.1) AS search_rank
+                        FROM page_search WHERE page_search MATCH ?
+                    )
+                    SELECT p.*, d.title AS document_title, d.filename,
+                        d.source_path AS document_source_path, d.sha256 AS document_sha256,
+                        d.updated_at AS document_updated_at, cm.search_rank,
+                        {relevance_expression} AS relevance_score
+                    FROM pages p
+                    JOIN documents d ON d.id = p.document_id
+                    LEFT JOIN content_matches cm ON cm.rowid = p.id
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY {order_by}
+                    LIMIT ?
+                    """,
+                    (
+                        rank_match_expression,
+                        *relevance_parameters,
+                        *match_parameters,
+                        *filter_parameters,
+                        overfetch_limit,
+                    ),
+                ).fetchall()
+                # FAIL-021 fix: metadata boosts (title/tag/project) can crowd
+                # the *strongest pure-FTS matches* out of the window when a
+                # query mixes a rare content word with broad terms. Insert the
+                # top bm25 matches the relevance ordering dropped, evicting the
+                # tail metadata-only rows (no FTS match) that displaced them.
+                # Window size is preserved: exactly ``safe_limit`` rows return.
+                fts_top_rows = connection.execute(
+                    f"""
+                    WITH content_matches AS (
+                        SELECT rowid, bm25(page_search, 1.0, 0.9, 1.1) AS search_rank
+                        FROM page_search WHERE page_search MATCH ?
+                    )
+                    SELECT p.*, d.title AS document_title, d.filename,
+                        d.source_path AS document_source_path, d.sha256 AS document_sha256,
+                        d.updated_at AS document_updated_at, cm.search_rank,
+                        {relevance_expression} AS relevance_score
+                    FROM pages p
+                    JOIN documents d ON d.id = p.document_id
+                    JOIN content_matches cm ON cm.rowid = p.id
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY cm.search_rank ASC
+                    LIMIT ?
+                    """,
+                    (
+                        rank_match_expression,
+                        *relevance_parameters,
+                        *match_parameters,
+                        *filter_parameters,
+                        FTS_TOPUP_LIMIT,
+                    ),
+                ).fetchall()
+                candidate_ids = tuple(
+                    dict.fromkeys(
+                        int(row["id"]) for row in (*rows, *fts_top_rows)
+                    )
+                )
+                page_metadata = self._metadata_for_pages_connection(
+                    connection, candidate_ids
+                )
+                knowledge_values: dict[int, dict[SearchField, str]] = {}
+
+                def _surface_of(row: sqlite3.Row) -> dict[SearchField, str]:
+                    page_id = int(row["id"])
+                    values = knowledge_values.get(page_id)
+                    if values is None:
+                        tags, projects = page_metadata.get(page_id, ((), ()))
+                        values = _knowledge_surface_values(row, tags, projects)
+                        knowledge_values[page_id] = values
+                    return values
+
+                rows = [
+                    row
+                    for row in rows
+                    if _page_matches_knowledge_surface(
+                        _surface_of(row), match_fields, literal_terms
+                    )
+                ][:safe_limit]
+                fts_top_rows = [
+                    fts_row
+                    for fts_row in fts_top_rows
+                    if _page_matches_knowledge_surface(
+                        _surface_of(fts_row), match_fields, literal_terms
+                    )
+                ]
+                seen_row_ids = {int(row["id"]) for row in rows}
+                topup_rows = [
+                    fts_row
+                    for fts_row in fts_top_rows
+                    if int(fts_row["id"]) not in seen_row_ids
+                ]
+                if topup_rows:
+                    evictable = [
+                        i for i, row in enumerate(rows) if row["search_rank"] is None
+                    ]
+                    inserted = 0
+                    for topup_row in topup_rows:
+                        if len(rows) >= safe_limit:
+                            if evictable:
+                                rows.pop(evictable.pop())
+                            else:
+                                # Evict the weakest *original* row. Popping
+                                # the list tail would remove the previously
+                                # inserted topup row, so with several topup
+                                # candidates only the last one survived and
+                                # the strongest pure-FTS page fell out of the
+                                # window (C3 family, 2026-09-09).
+                                rows.pop(len(rows) - 1 - inserted)
+                            inserted += 1
+                        rows.append(topup_row)
+                        seen_row_ids.add(int(topup_row["id"]))
+                    rows = rows[:safe_limit]
+                results: list[SearchResult] = []
+                for row in rows:
+                    page_id = int(row["id"])
+                    tags, projects = page_metadata.get(page_id, ((), ()))
+                    values = knowledge_values.get(page_id) or _surface_of(row)
+                    matched_fields = _matching_fields(values, literal_terms)
+                    content = _matched_content(values, matched_fields)
+                    rank = row["relevance_score"]
+                    results.append(
+                        SearchResult(
+                            page_id=page_id,
+                            document_id=int(row["document_id"]),
+                            document_title=str(row["document_title"]),
+                            filename=str(row["filename"]),
+                            page_number=int(row["page_number"]),
+                            image_path=Path(row["image_path"]),
+                            content=content,
+                            snippet="",
+                            rank=float(rank),
+                            status=PageStatus(row["review_status"]),
+                            match_type="、".join(
+                                field.label for field in matched_fields
+                            )
+                            or "页面内容",
+                            tags=tags,
+                            projects=projects,
+                            match_fields=matched_fields,
+                            document_source_path=Path(row["document_source_path"]),
+                            document_sha256=str(row["document_sha256"]),
+                            extracted_text=str(row["extracted_text"]),
+                            ocr_text=str(row["ocr_text"]),
+                            markdown_content=str(row["markdown_content"]),
+                            updated_at=_parse_datetime(str(row["updated_at"])),
+                        )
+                    )
+                return results
+        except sqlite3.OperationalError:
+            LOGGER.warning("忽略无效的 FTS5 检索表达式：%r", query, exc_info=True)
+            return []
+
+    def _ranking_terms_match_anything(self, ranking_terms: tuple[str, ...]) -> bool:
+        """True when the FTS index matches at least one ranking term anywhere.
+
+        M1-RESIDUAL fallback trigger (HBV2 Phase 2 RUN2): a cheap read-only
+        existence probe — never a ranking query. Any unexpected failure is
+        treated as "matches exist" so the pre-existing ranking behaviour is
+        preserved and the fallback can only widen, never narrow.
+        """
+
+        if not ranking_terms:
+            return True
+        expression = " OR ".join(f'"{term}"' for term in ranking_terms)
+        try:
+            with self._connection() as connection:
+                row = connection.execute(
+                    "SELECT 1 FROM page_search WHERE page_search MATCH ? LIMIT 1",
+                    (expression,),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            LOGGER.warning(
+                "排序词命中探测失败，按存在命中处理：%r", expression, exc_info=True
+            )
+            return True
+        return row is not None
+
+    def ranking_terms_document_frequency(
+        self, terms: Sequence[str]
+    ) -> dict[str, int]:
+        """Count documents whose FTS index matches each term standalone.
+
+        M1R-A second residual (HY4 retest 2026-09-10): the zero-recall widening
+        retry adds single-character fragments whose *standalone* tokens (一/大/
+        小…) match so many documents that bm25 drowns the rare characters
+        (缸/串/闸…) carrying the only real connection to the target page. The
+        retry gates its ranking terms on this frequency map — recall keeps the
+        full widened pool, only the ranking contribution is gated. Read-only;
+        any probe failure marks the term as frequent (fail-closed for ranking,
+        i.e. the term is dropped from ranking rather than flooding it).
+        """
+
+        frequencies: dict[str, int] = {}
+        if not terms:
+            return frequencies
+        try:
+            with self._connection() as connection:
+                for term in dict.fromkeys(t for t in terms if t):
+                    try:
+                        row = connection.execute(
+                            "SELECT COUNT(*) FROM page_search WHERE page_search MATCH ?",
+                            (f'"{term}"',),
+                        ).fetchone()
+                        frequencies[term] = int(row[0]) if row else 0
+                    except sqlite3.OperationalError:
+                        frequencies[term] = -1
+        except sqlite3.Error:
+            LOGGER.warning("排序词文档频率探测失败", exc_info=True)
+            return {term: -1 for term in terms}
+        return frequencies
+
+    def search_facet_counts(
+        self,
+        *,
+        terms: Sequence[str] = (),
+        filters: SearchFilters | None = None,
+    ) -> SearchFacetCounts:
+        """Count contextual facets consistently with the visible result set.
+
+        Document and status counts ignore their own OR-style dimension so valid
+        alternatives do not incorrectly collapse to zero. Project and tag counts
+        retain existing selections because adding either dimension uses AND
+        semantics: each count therefore predicts the remaining result set after
+        that candidate is added.
+
+        V086-309-PRT1: with literal terms present, candidate rows are
+        post-filtered against the knowledge surface so facet counts can never
+        advertise pages the result window correctly dropped (scanner-artifact
+        hits). The empty-terms case keeps the single aggregate query — no
+        knowledge filtering applies without terms.
+        """
+
+        literal_terms = tuple(
+            dict.fromkeys(term.casefold().strip() for term in terms if term.strip())
+        )
+        active_filters = filters or SearchFilters()
+        match_fields = active_filters.match_fields or tuple(SearchField)
+        if not literal_terms:
+            filtered_where, filtered_parameters = _search_context_where(
+                active_filters, literal_terms
+            )
+            document_where, document_parameters = _search_context_where(
+                active_filters, literal_terms, omit={"document"}
+            )
+            status_where, status_parameters = _search_context_where(
+                active_filters, literal_terms, omit={"status"}
+            )
+            with self._connection() as connection:
+                rows = connection.execute(
+                    f"""
+                    WITH filtered(page_id, document_id, review_status) AS (
+                        SELECT p.id, p.document_id, p.review_status
+                        FROM pages p
+                        JOIN documents d ON d.id = p.document_id
+                        {filtered_where}
+                    ),
+                    document_context(page_id, document_id) AS (
+                        SELECT p.id, p.document_id
+                        FROM pages p
+                        JOIN documents d ON d.id = p.document_id
+                        {document_where}
+                    ),
+                    status_context(page_id, review_status) AS (
+                        SELECT p.id, p.review_status
+                        FROM pages p
+                        JOIN documents d ON d.id = p.document_id
+                        {status_where}
+                    ),
+                    status_values(value) AS (
+                        VALUES ('pending'), ('draft'), ('reviewed'), ('skipped'), ('failed')
+                    ),
+                    effective_tags(page_id, tag_id) AS (
+                        SELECT f.page_id, dt.tag_id
+                        FROM filtered f
+                        JOIN document_tags dt ON dt.document_id = f.document_id
+                        UNION
+                        SELECT f.page_id, pt.tag_id
+                        FROM filtered f
+                        JOIN page_tags pt ON pt.page_id = f.page_id
+                    ),
+                    effective_projects(page_id, project_id) AS (
+                        SELECT f.page_id, pd.project_id
+                        FROM filtered f
+                        JOIN project_documents pd ON pd.document_id = f.document_id
+                        UNION
+                        SELECT f.page_id, pp.project_id
+                        FROM filtered f
+                        JOIN project_pages pp ON pp.page_id = f.page_id
+                    )
+                    SELECT 'total' AS facet, '' AS facet_key, COUNT(*) AS result_count
+                    FROM filtered
+                    UNION ALL
+                    SELECT 'status', sv.value, COUNT(sc.page_id)
+                    FROM status_values sv
+                    LEFT JOIN status_context sc ON sc.review_status = sv.value
+                    GROUP BY sv.value
+                    UNION ALL
+                    SELECT 'document', CAST(d.id AS TEXT), COUNT(dc.page_id)
+                    FROM documents d
+                    LEFT JOIN document_context dc ON dc.document_id = d.id
+                    GROUP BY d.id
+                    UNION ALL
+                    SELECT 'tag', CAST(t.id AS TEXT), COUNT(DISTINCT et.page_id)
+                    FROM tags t
+                    LEFT JOIN effective_tags et ON et.tag_id = t.id
+                    GROUP BY t.id
+                    UNION ALL
+                    SELECT 'project', CAST(pr.id AS TEXT), COUNT(DISTINCT ep.page_id)
+                    FROM projects pr
+                    LEFT JOIN effective_projects ep ON ep.project_id = pr.id
+                    GROUP BY pr.id
+                    """,
+                    (
+                        *filtered_parameters,
+                        *document_parameters,
+                        *status_parameters,
+                    ),
+                ).fetchall()
+            total = 0
+            statuses = {status: 0 for status in PageStatus}
+            documents: dict[int, int] = {}
+            tags: dict[int, int] = {}
+            projects: dict[int, int] = {}
+            for row in rows:
+                facet = str(row["facet"])
+                count = int(row["result_count"])
+                if facet == "total":
+                    total = count
+                elif facet == "status":
+                    statuses[PageStatus(str(row["facet_key"]))] = count
+                elif facet == "document":
+                    documents[int(row["facet_key"])] = count
+                elif facet == "tag":
+                    tags[int(row["facet_key"])] = count
+                elif facet == "project":
+                    projects[int(row["facet_key"])] = count
+            return SearchFacetCounts(
+                total=total,
+                statuses=statuses,
+                documents=documents,
+                projects=projects,
+                tags=tags,
+            )
+        filtered_where, filtered_parameters = _search_context_where(
+            active_filters, literal_terms
+        )
+        document_where, document_parameters = _search_context_where(
+            active_filters, literal_terms, omit={"document"}
+        )
+        status_where, status_parameters = _search_context_where(
+            active_filters, literal_terms, omit={"status"}
+        )
+        with self._connection() as connection:
+            filtered_rows = _knowledge_filtered_context_rows(
+                self,
+                connection,
+                filtered_where,
+                filtered_parameters,
+                match_fields,
+                literal_terms,
+            )
+            document_rows = _knowledge_filtered_context_rows(
+                self,
+                connection,
+                document_where,
+                document_parameters,
+                match_fields,
+                literal_terms,
+            )
+            status_rows = _knowledge_filtered_context_rows(
+                self,
+                connection,
+                status_where,
+                status_parameters,
+                match_fields,
+                literal_terms,
+            )
+            all_documents = [
+                int(row["id"])
+                for row in connection.execute("SELECT id FROM documents").fetchall()
+            ]
+            all_tags = [
+                int(row["id"])
+                for row in connection.execute("SELECT id FROM tags").fetchall()
+            ]
+            all_projects = [
+                int(row["id"])
+                for row in connection.execute("SELECT id FROM projects").fetchall()
+            ]
+            document_tag_rows = connection.execute(
+                "SELECT document_id, tag_id FROM document_tags"
+            ).fetchall()
+            page_tag_rows = connection.execute(
+                "SELECT page_id, tag_id FROM page_tags"
+            ).fetchall()
+            document_project_rows = connection.execute(
+                "SELECT document_id, project_id FROM project_documents"
+            ).fetchall()
+            page_project_rows = connection.execute(
+                "SELECT page_id, project_id FROM project_pages"
+            ).fetchall()
+        total = len(filtered_rows)
+        statuses = {status: 0 for status in PageStatus}
+        for row in status_rows:
+            try:
+                statuses[PageStatus(str(row["review_status"]))] += 1
+            except ValueError:
+                continue
+        documents = {document_id: 0 for document_id in all_documents}
+        for row in document_rows:
+            document_id = int(row["document_id"])
+            documents[document_id] = documents.get(document_id, 0) + 1
+        # Tag/project facets aggregate the *post-filtered* page set: a document
+        # tag applies to every filtered page of that document, a page tag only
+        # to the filtered page itself.
+        pages_by_document: dict[int, set[int]] = {}
+        page_id_set: set[int] = set()
+        for row in filtered_rows:
+            page_id = int(row["id"])
+            page_id_set.add(page_id)
+            pages_by_document.setdefault(int(row["document_id"]), set()).add(page_id)
+        pages_by_tag: dict[int, set[int]] = {}
+        for row in document_tag_rows:
+            tag_id = int(row["tag_id"])
+            document_id = int(row["document_id"])
+            for page_id in pages_by_document.get(document_id, ()):
+                pages_by_tag.setdefault(tag_id, set()).add(page_id)
+        for row in page_tag_rows:
+            page_id = int(row["page_id"])
+            if page_id in page_id_set:
+                pages_by_tag.setdefault(int(row["tag_id"]), set()).add(page_id)
+        tags = {tag_id: len(pages_by_tag.get(tag_id, ())) for tag_id in all_tags}
+        pages_by_project: dict[int, set[int]] = {}
+        for row in document_project_rows:
+            project_id = int(row["project_id"])
+            document_id = int(row["document_id"])
+            for page_id in pages_by_document.get(document_id, ()):
+                pages_by_project.setdefault(project_id, set()).add(page_id)
+        for row in page_project_rows:
+            page_id = int(row["page_id"])
+            if page_id in page_id_set:
+                pages_by_project.setdefault(int(row["project_id"]), set()).add(page_id)
+        projects = {
+            project_id: len(pages_by_project.get(project_id, ()))
+            for project_id in all_projects
+        }
+        return SearchFacetCounts(
+            total=total,
+            statuses=statuses,
+            documents=documents,
+            projects=projects,
+            tags=tags,
+        )
+
+    def search_document_counts(
+        self,
+        *,
+        terms: Sequence[str] = (),
+        filters: SearchFilters | None = None,
+    ) -> dict[int, int]:
+        """Count complete filtered page matches by document.
+
+        V086-309-PRT1: rows are post-filtered against the knowledge surface so
+        per-document counts agree with the visible result window.
+        """
+
+        literal_terms = tuple(
+            dict.fromkeys(term.casefold().strip() for term in terms if term.strip())
+        )
+        if not literal_terms:
+            return {}
+        active_filters = filters or SearchFilters()
+        match_fields = active_filters.match_fields or tuple(SearchField)
+        where, parameters = _search_context_where(active_filters, literal_terms)
+        with self._connection() as connection:
+            rows = _knowledge_filtered_context_rows(
+                self,
+                connection,
+                where,
+                parameters,
+                match_fields,
+                literal_terms,
+            )
+        counts: dict[int, int] = {}
+        for row in rows:
+            document_id = int(row["document_id"])
+            counts[document_id] = counts.get(document_id, 0) + 1
+        return counts
+
+    @staticmethod
+    def _metadata_for_pages_connection(
+        connection: sqlite3.Connection, page_ids: Sequence[int]
+    ) -> dict[int, tuple[tuple[str, ...], tuple[str, ...]]]:
+        """Load effective tags and projects for every result in one query."""
+
+        if not page_ids:
+            return {}
+        values = ",".join("(?)" for _ in page_ids)
+        rows = connection.execute(
+            f"""
+            WITH selected(page_id) AS (VALUES {values}),
+            metadata(page_id, kind, name) AS (
+                SELECT s.page_id, 'tag', t.name
+                FROM selected s
+                JOIN pages p ON p.id = s.page_id
+                JOIN document_tags dt ON dt.document_id = p.document_id
+                JOIN tags t ON t.id = dt.tag_id
+                UNION
+                SELECT s.page_id, 'tag', t.name
+                FROM selected s
+                JOIN page_tags pt ON pt.page_id = s.page_id
+                JOIN tags t ON t.id = pt.tag_id
+                UNION
+                SELECT s.page_id, 'project', pr.name
+                FROM selected s
+                JOIN pages p ON p.id = s.page_id
+                JOIN project_documents pd ON pd.document_id = p.document_id
+                JOIN projects pr ON pr.id = pd.project_id
+                UNION
+                SELECT s.page_id, 'project', pr.name
+                FROM selected s
+                JOIN project_pages pp ON pp.page_id = s.page_id
+                JOIN projects pr ON pr.id = pp.project_id
+            )
+            SELECT page_id, kind, name FROM metadata
+            ORDER BY page_id, kind, name COLLATE NOCASE
+            """,
+            tuple(page_ids),
+        ).fetchall()
+        tags: dict[int, list[str]] = {page_id: [] for page_id in page_ids}
+        projects: dict[int, list[str]] = {page_id: [] for page_id in page_ids}
+        for row in rows:
+            target = tags if row["kind"] == "tag" else projects
+            target[int(row["page_id"])].append(str(row["name"]))
+        return {
+            page_id: (tuple(tags[page_id]), tuple(projects[page_id]))
+            for page_id in page_ids
+        }
+
+    @staticmethod
+    def _tags_for_connection(connection: sqlite3.Connection, page_id: int) -> list[Tag]:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT t.* FROM tags t
+            JOIN pages p ON p.id = ?
+            LEFT JOIN document_tags dt ON dt.tag_id = t.id AND dt.document_id = p.document_id
+            LEFT JOIN page_tags pt ON pt.tag_id = t.id AND pt.page_id = p.id
+            WHERE dt.document_id IS NOT NULL OR pt.page_id IS NOT NULL
+            ORDER BY t.name COLLATE NOCASE
+            """,
+            (page_id,),
+        ).fetchall()
+        return [_tag_from_row(row) for row in rows]
+
+    @staticmethod
+    def _projects_for_connection(
+        connection: sqlite3.Connection, page_id: int
+    ) -> list[Project]:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT pr.* FROM projects pr
+            JOIN pages p ON p.id = ?
+            LEFT JOIN project_documents pd
+                ON pd.project_id = pr.id AND pd.document_id = p.document_id
+            LEFT JOIN project_pages pp ON pp.project_id = pr.id AND pp.page_id = p.id
+            WHERE pd.document_id IS NOT NULL OR pp.page_id IS NOT NULL
+            ORDER BY pr.name COLLATE NOCASE
+            """,
+            (page_id,),
+        ).fetchall()
+        return [_project_from_row(row) for row in rows]
+
+    # Page embeddings ---------------------------------------------------
+    def upsert_page_embedding(
+        self,
+        *,
+        page_id: int,
+        source_text_sha256: str,
+        model: str,
+        dimensions: int,
+        config_version: int,
+        vector: Sequence[float],
+    ) -> PageEmbedding:
+        """Insert or replace the current embedding for one page configuration.
+
+        The current record is uniquely keyed by
+        ``(page_id, model, dimensions, config_version)``: re-embedding after
+        a source-text change updates ``source_text_sha256``, ``vector`` and
+        ``updated_at`` in place instead of accumulating stale rows. This
+        method never calls any embedding API; the caller supplies the
+        already-computed vector and the fingerprint of the embedded text.
+        """
+
+        normalized_hash, normalized_model = _validate_page_embedding_fields(
+            page_id=page_id,
+            source_text_sha256=source_text_sha256,
+            model=model,
+            dimensions=dimensions,
+            config_version=config_version,
+        )
+        blob = encode_vector(vector, dimensions=dimensions)
+        timestamp = _utc_now()
+        try:
+            with self._connection() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO page_embeddings(
+                        page_id, source_text_sha256, model, dimensions,
+                        config_version, vector, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(page_id, model, dimensions, config_version)
+                    DO UPDATE SET
+                        source_text_sha256 = excluded.source_text_sha256,
+                        vector = excluded.vector,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        page_id,
+                        normalized_hash,
+                        normalized_model,
+                        dimensions,
+                        config_version,
+                        sqlite3.Binary(blob),
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                row = connection.execute(
+                    """
+                    SELECT * FROM page_embeddings
+                    WHERE page_id = ? AND model = ? AND dimensions = ?
+                      AND config_version = ?
+                    """,
+                    (page_id, normalized_model, dimensions, config_version),
+                ).fetchone()
+        except sqlite3.IntegrityError as exc:
+            raise RecordNotFoundError(f"找不到页面：{page_id}") from exc
+        if row is None:  # pragma: no cover - defensive, upsert just wrote it
+            raise DatabaseError("无法读取刚写入的页面 embedding")
+        return _page_embedding_from_row(row)
+
+    def get_page_embedding(
+        self,
+        *,
+        page_id: int,
+        model: str,
+        dimensions: int,
+        config_version: int,
+    ) -> PageEmbedding | None:
+        """Return the current embedding for one page configuration, if any.
+
+        The record is returned regardless of freshness; use
+        :meth:`get_fresh_page_embedding` when a stale vector must not be
+        treated as valid.
+        """
+
+        _validate_page_embedding_identity(
+            page_id=page_id,
+            model=model,
+            dimensions=dimensions,
+            config_version=config_version,
+        )
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM page_embeddings
+                WHERE page_id = ? AND model = ? AND dimensions = ?
+                  AND config_version = ?
+                """,
+                (page_id, model.strip(), dimensions, config_version),
+            ).fetchone()
+        return _page_embedding_from_row(row) if row is not None else None
+
+    def get_fresh_page_embedding(
+        self,
+        *,
+        page_id: int,
+        source_text_sha256: str,
+        model: str,
+        dimensions: int,
+        config_version: int,
+    ) -> PageEmbedding | None:
+        """Return the embedding only when it exactly matches the full identity.
+
+        Freshness requires an exact match on ``source_text_sha256``,
+        ``model``, ``dimensions`` and ``config_version``; any difference
+        returns ``None`` so a stale vector can never leak into recall.
+        """
+
+        normalized_hash, normalized_model = _validate_page_embedding_fields(
+            page_id=page_id,
+            source_text_sha256=source_text_sha256,
+            model=model,
+            dimensions=dimensions,
+            config_version=config_version,
+        )
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM page_embeddings
+                WHERE page_id = ? AND source_text_sha256 = ? AND model = ?
+                  AND dimensions = ? AND config_version = ?
+                """,
+                (page_id, normalized_hash, normalized_model, dimensions, config_version),
+            ).fetchone()
+        return _page_embedding_from_row(row) if row is not None else None
+
+    def list_page_embeddings(
+        self,
+        *,
+        model: str,
+        dimensions: int,
+        config_version: int,
+    ) -> tuple[PageEmbedding, ...]:
+        """List the current stored embeddings for one configuration.
+
+        Read-only, deterministic (``page_id`` then ``id`` ascending), with
+        fail-closed vector decoding. Being listed does **not** imply fresh:
+        freshness is decided by the caller against the current source-text
+        fingerprint, never inside SQL.
+        """
+
+        normalized_model = _validate_embedding_configuration(
+            model=model, dimensions=dimensions, config_version=config_version
+        )
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM page_embeddings
+                WHERE model = ? AND dimensions = ? AND config_version = ?
+                ORDER BY page_id ASC, id ASC
+                """,
+                (normalized_model, dimensions, config_version),
+            ).fetchall()
+        return tuple(_page_embedding_from_row(row) for row in rows)
+
+    # Knowledge objects (schema v10) ---------------------------------------
+    def get_knowledge_base_uuid(self) -> str:
+        """Return the persistent local knowledge-base UUID created by v10."""
+
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT kb_uuid FROM knowledge_base_meta WHERE id = 1"
+            ).fetchone()
+        if row is None:
+            raise DatabaseError("知识库元数据缺失：knowledge_base_meta 无记录")
+        return str(row["kb_uuid"])
+
+    def knowledge_object_stable_id(self, knowledge_object_id: int) -> str:
+        """Return the canonical stable ID for one knowledge object."""
+
+        return build_stable_id(
+            self.get_knowledge_base_uuid(),
+            KNOWLEDGE_OBJECT_STABLE_TYPE,
+            knowledge_object_id,
+        )
+
+    @contextmanager
+    def knowledge_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Run one multi-statement knowledge mutation in a single transaction.
+
+        Yields a connection with ``BEGIN IMMEDIATE`` already issued. On any
+        exception the whole transaction rolls back and nothing is committed.
+        """
+
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                yield connection
+            except Exception:
+                connection.rollback()
+                raise
+            else:
+                connection.commit()
+
+    def _knowledge_scope(
+        self, connection: sqlite3.Connection | None
+    ) -> AbstractContextManager[sqlite3.Connection]:
+        if connection is not None:
+            return nullcontext(connection)
+        return self._connection()
+
+    def create_knowledge_object(
+        self,
+        *,
+        kind: KnowledgeObjectKind | str,
+        title: str,
+        content: str,
+        importance: NoteImportance | str = NoteImportance.NORMAL,
+        authorship: KnowledgeAuthorship | str = KnowledgeAuthorship.USER,
+        epistemic_basis: KnowledgeEpistemicBasis | str = KnowledgeEpistemicBasis.UNKNOWN_LEGACY,
+        lifecycle: KnowledgeLifecycle | str = KnowledgeLifecycle.ACTIVE,
+        confirmation_status: KnowledgeConfirmationStatus
+        | str = KnowledgeConfirmationStatus.UNCONFIRMED,
+        connection: sqlite3.Connection | None = None,
+    ) -> KnowledgeObject:
+        """Persist one knowledge object with validated orthogonal fields."""
+
+        normalized_kind = KnowledgeObjectKind(kind)
+        normalized_importance = NoteImportance(importance)
+        normalized_authorship = KnowledgeAuthorship(authorship)
+        if normalized_authorship is KnowledgeAuthorship.AI:
+            raise ValueError("当前版本不允许创建 AI 署名的知识对象")
+        normalized_basis = KnowledgeEpistemicBasis(epistemic_basis)
+        normalized_lifecycle = KnowledgeLifecycle(lifecycle)
+        normalized_confirmation = KnowledgeConfirmationStatus(confirmation_status)
+        if normalized_confirmation is KnowledgeConfirmationStatus.CONFIRMED:
+            raise ValueError("新知识对象必须以未确认状态创建")
+        normalized_title = title.strip()
+        normalized_content = content.strip()
+        if not normalized_title:
+            raise ValueError("知识对象标题不能为空")
+        if len(normalized_title) > 200:
+            raise ValueError("知识对象标题不能超过 200 个字符")
+        if not normalized_content:
+            raise ValueError("知识对象内容不能为空")
+        if len(normalized_content) > 20000:
+            raise ValueError("知识对象内容不能超过 20000 个字符")
+        timestamp = _utc_now()
+        with self._knowledge_scope(connection) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO knowledge_objects(
+                    kind, authorship, epistemic_basis, title, content, importance,
+                    lifecycle, superseded_by_ko_id, confirmation_status,
+                    confirmed_at, confirmed_revision, current_revision,
+                    search_title, search_content, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, 1, ?, ?, ?, ?)
+                """,
+                (
+                    normalized_kind.value,
+                    normalized_authorship.value,
+                    normalized_basis.value,
+                    normalized_title,
+                    normalized_content,
+                    normalized_importance.value,
+                    normalized_lifecycle.value,
+                    normalized_confirmation.value,
+                    _tokenize_for_fts(normalized_title),
+                    _tokenize_for_fts(normalized_content),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM knowledge_objects WHERE id = ?", (cursor.lastrowid,)
+            ).fetchone()
+        return _knowledge_object_from_row(row)
+
+    def get_knowledge_object(self, knowledge_object_id: int) -> KnowledgeObject | None:
+        """Return one knowledge object by primary key, or ``None`` when absent."""
+
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM knowledge_objects WHERE id = ?", (knowledge_object_id,)
+            ).fetchone()
+        return _knowledge_object_from_row(row) if row is not None else None
+
+    def update_knowledge_object_content(
+        self,
+        knowledge_object_id: int,
+        *,
+        new_revision: int,
+        title: str | None = None,
+        content: str | None = None,
+        importance: NoteImportance | str | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> KnowledgeObject:
+        """Update content fields and advance ``current_revision`` atomically."""
+
+        if isinstance(new_revision, bool) or not isinstance(new_revision, int) or new_revision <= 0:
+            raise ValueError("new_revision 必须是正整数")
+        assignments: list[str] = []
+        values: list[object] = []
+        if title is not None:
+            normalized_title = title.strip()
+            if not normalized_title:
+                raise ValueError("知识对象标题不能为空")
+            if len(normalized_title) > 200:
+                raise ValueError("知识对象标题不能超过 200 个字符")
+            assignments.append("title = ?")
+            values.append(normalized_title)
+            assignments.append("search_title = ?")
+            values.append(_tokenize_for_fts(normalized_title))
+        if content is not None:
+            normalized_content = content.strip()
+            if not normalized_content:
+                raise ValueError("知识对象内容不能为空")
+            if len(normalized_content) > 20000:
+                raise ValueError("知识对象内容不能超过 20000 个字符")
+            assignments.append("content = ?")
+            values.append(normalized_content)
+            assignments.append("search_content = ?")
+            values.append(_tokenize_for_fts(normalized_content))
+        if importance is not None:
+            assignments.append("importance = ?")
+            values.append(NoteImportance(importance).value)
+        if not assignments:
+            raise ValueError("至少提供 title、content 或 importance 之一")
+        timestamp = _utc_now()
+        alternate_timestamp = (
+            datetime.fromisoformat(timestamp) + timedelta(microseconds=1)
+        ).isoformat(timespec="microseconds")
+        assignments.append("current_revision = ?")
+        values.append(new_revision)
+        assignments.append(
+            "updated_at = CASE WHEN updated_at = ? THEN ? ELSE ? END"
+        )
+        values.extend((timestamp, alternate_timestamp, timestamp, knowledge_object_id))
+        with self._knowledge_scope(connection) as connection:
+            cursor = connection.execute(
+                f"UPDATE knowledge_objects SET {', '.join(assignments)} WHERE id = ?",
+                values,
+            )
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"知识对象不存在：{knowledge_object_id}")
+            row = connection.execute(
+                "SELECT * FROM knowledge_objects WHERE id = ?", (knowledge_object_id,)
+            ).fetchone()
+        return _knowledge_object_from_row(row)
+
+    def update_knowledge_object_epistemic_basis(
+        self,
+        knowledge_object_id: int,
+        *,
+        epistemic_basis: KnowledgeEpistemicBasis | str,
+        new_revision: int,
+        connection: sqlite3.Connection | None = None,
+    ) -> KnowledgeObject:
+        """Revise ``epistemic_basis`` and advance ``current_revision`` atomically.
+
+        ``unknown_legacy`` is reserved for v9 migration backfill (written via
+        raw migration SQL, never through this method) and is rejected here.
+        """
+
+        normalized_basis = KnowledgeEpistemicBasis(epistemic_basis)
+        if normalized_basis is KnowledgeEpistemicBasis.UNKNOWN_LEGACY:
+            raise ValueError("形成依据不能改为「未知（旧数据）」")
+        if isinstance(new_revision, bool) or not isinstance(new_revision, int) or new_revision <= 0:
+            raise ValueError("new_revision 必须是正整数")
+        timestamp = _utc_now()
+        alternate_timestamp = (
+            datetime.fromisoformat(timestamp) + timedelta(microseconds=1)
+        ).isoformat(timespec="microseconds")
+        with self._knowledge_scope(connection) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE knowledge_objects SET
+                    epistemic_basis = ?,
+                    current_revision = ?,
+                    updated_at = CASE WHEN updated_at = ? THEN ? ELSE ? END
+                WHERE id = ?
+                """,
+                (
+                    normalized_basis.value,
+                    new_revision,
+                    timestamp,
+                    alternate_timestamp,
+                    timestamp,
+                    knowledge_object_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"知识对象不存在：{knowledge_object_id}")
+            row = connection.execute(
+                "SELECT * FROM knowledge_objects WHERE id = ?", (knowledge_object_id,)
+            ).fetchone()
+        return _knowledge_object_from_row(row)
+
+    def update_knowledge_object_confirmation(
+        self,
+        knowledge_object_id: int,
+        *,
+        confirmation_status: KnowledgeConfirmationStatus | str,
+        confirmed_at: str | None,
+        confirmed_revision: int | None,
+        connection: sqlite3.Connection | None = None,
+    ) -> KnowledgeObject:
+        """Update the confirmation fields of one knowledge object."""
+
+        normalized_status = KnowledgeConfirmationStatus(confirmation_status)
+        if normalized_status is KnowledgeConfirmationStatus.CONFIRMED:
+            if confirmed_at is None or confirmed_revision is None:
+                raise ValueError("确认状态必须同时写入 confirmed_at 与 confirmed_revision")
+        elif confirmed_at is not None:
+            raise ValueError("未确认状态不能携带 confirmed_at")
+        timestamp = _utc_now()
+        alternate_timestamp = (
+            datetime.fromisoformat(timestamp) + timedelta(microseconds=1)
+        ).isoformat(timespec="microseconds")
+        with self._knowledge_scope(connection) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE knowledge_objects SET
+                    confirmation_status = ?,
+                    confirmed_at = ?,
+                    confirmed_revision = ?,
+                    updated_at = CASE WHEN updated_at = ? THEN ? ELSE ? END
+                WHERE id = ?
+                """,
+                (
+                    normalized_status.value,
+                    confirmed_at,
+                    confirmed_revision,
+                    timestamp,
+                    alternate_timestamp,
+                    timestamp,
+                    knowledge_object_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"知识对象不存在：{knowledge_object_id}")
+            row = connection.execute(
+                "SELECT * FROM knowledge_objects WHERE id = ?", (knowledge_object_id,)
+            ).fetchone()
+        return _knowledge_object_from_row(row)
+
+    def update_knowledge_object_lifecycle(
+        self,
+        knowledge_object_id: int,
+        *,
+        lifecycle: KnowledgeLifecycle | str,
+        superseded_by_ko_id: int | None,
+        connection: sqlite3.Connection | None = None,
+    ) -> KnowledgeObject:
+        """Update the lifecycle fields of one knowledge object.
+
+        The caller must satisfy the lifecycle/pointer CHECK invariants:
+        active/archived carry NULL, superseded carries a successor. The
+        database CHECK is the second line of defence.
+        """
+
+        normalized_lifecycle = KnowledgeLifecycle(lifecycle)
+        timestamp = _utc_now()
+        alternate_timestamp = (
+            datetime.fromisoformat(timestamp) + timedelta(microseconds=1)
+        ).isoformat(timespec="microseconds")
+        with self._knowledge_scope(connection) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE knowledge_objects SET
+                    lifecycle = ?,
+                    superseded_by_ko_id = ?,
+                    updated_at = CASE WHEN updated_at = ? THEN ? ELSE ? END
+                WHERE id = ?
+                """,
+                (
+                    normalized_lifecycle.value,
+                    superseded_by_ko_id,
+                    timestamp,
+                    alternate_timestamp,
+                    timestamp,
+                    knowledge_object_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"知识对象不存在：{knowledge_object_id}")
+            row = connection.execute(
+                "SELECT * FROM knowledge_objects WHERE id = ?", (knowledge_object_id,)
+            ).fetchone()
+        return _knowledge_object_from_row(row)
+    def list_knowledge_objects(
+        self,
+        *,
+        kind: KnowledgeObjectKind | str | None = None,
+        importance: NoteImportance | str | None = None,
+        lifecycle: KnowledgeLifecycle | str | None = None,
+        confirmation_status: KnowledgeConfirmationStatus | str | None = None,
+        epistemic_basis: KnowledgeEpistemicBasis | str | None = None,
+        query: str = "",
+        sort_by: str = "updated_desc",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[KnowledgeObject]:
+        """List knowledge objects with stable filters, keyword search and sorting."""
+
+        self._validate_knowledge_pagination(limit, offset)
+        order_by = {
+            "updated_desc": "updated_at DESC, id DESC",
+            "created_desc": "created_at DESC, id DESC",
+            "title_asc": "title COLLATE NOCASE ASC, id ASC",
+        }.get(sort_by, "updated_at DESC, id DESC")
+        where, parameters = self._knowledge_object_where(
+            kind=kind,
+            importance=importance,
+            lifecycle=lifecycle,
+            confirmation_status=confirmation_status,
+            epistemic_basis=epistemic_basis,
+            query=query,
+        )
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM knowledge_objects {where} "
+                f"ORDER BY {order_by} LIMIT ? OFFSET ?",
+                (*parameters, limit, offset),
+            ).fetchall()
+        return [_knowledge_object_from_row(row) for row in rows]
+
+    def count_knowledge_objects(
+        self,
+        *,
+        kind: KnowledgeObjectKind | str | None = None,
+        importance: NoteImportance | str | None = None,
+        lifecycle: KnowledgeLifecycle | str | None = None,
+        confirmation_status: KnowledgeConfirmationStatus | str | None = None,
+        epistemic_basis: KnowledgeEpistemicBasis | str | None = None,
+        query: str = "",
+    ) -> int:
+        """Count knowledge objects with exactly the same filters as the list."""
+
+        where, parameters = self._knowledge_object_where(
+            kind=kind,
+            importance=importance,
+            lifecycle=lifecycle,
+            confirmation_status=confirmation_status,
+            epistemic_basis=epistemic_basis,
+            query=query,
+        )
+        with self._connection() as connection:
+            return int(
+                connection.execute(
+                    f"SELECT COUNT(*) FROM knowledge_objects {where}", parameters
+                ).fetchone()[0]
+            )
+
+    def delete_knowledge_object(self, knowledge_object_id: int) -> None:
+        """Delete one knowledge object plus its sources and relations.
+
+        ``knowledge_memory_entries`` survive with ``knowledge_object_id`` set
+        to NULL (``ON DELETE SET NULL``); revision rows are never touched. A
+        successor object that still has superseded predecessors is protected
+        by the ``ON DELETE RESTRICT`` foreign key; the service pre-checks this
+        to produce a clear Chinese error.
+        """
+
+        try:
+            with self._connection() as connection:
+                connection.execute(
+                    "DELETE FROM knowledge_project_links "
+                    "WHERE target_type = 'knowledge_object' AND target_id = ?",
+                    (knowledge_object_id,),
+                )
+                cursor = connection.execute(
+                    "DELETE FROM knowledge_objects WHERE id = ?", (knowledge_object_id,)
+                )
+                if cursor.rowcount == 0:
+                    raise RecordNotFoundError(f"知识对象不存在：{knowledge_object_id}")
+        except sqlite3.IntegrityError as exc:
+            if "FOREIGN KEY" in str(exc):
+                raise DatabaseError(
+                    "该知识对象仍被其它知识对象作为替代后继引用，请先处置替代关系"
+                ) from exc
+            raise
+
+    def count_inbound_supersessions(self, knowledge_object_id: int) -> int:
+        """Return how many superseded objects point at this object."""
+
+        with self._connection() as connection:
+            return int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM knowledge_objects "
+                    "WHERE superseded_by_ko_id = ?",
+                    (knowledge_object_id,),
+                ).fetchone()[0]
+            )
+
+    @staticmethod
+    def _knowledge_object_where(
+        *,
+        kind: KnowledgeObjectKind | str | None,
+        importance: NoteImportance | str | None,
+        lifecycle: KnowledgeLifecycle | str | None,
+        confirmation_status: KnowledgeConfirmationStatus | str | None,
+        epistemic_basis: KnowledgeEpistemicBasis | str | None,
+        query: str,
+    ) -> tuple[str, list[object]]:
+        conditions: list[str] = []
+        parameters: list[object] = []
+        if kind is not None:
+            conditions.append("kind = ?")
+            parameters.append(KnowledgeObjectKind(kind).value)
+        if importance is not None:
+            conditions.append("importance = ?")
+            parameters.append(NoteImportance(importance).value)
+        if lifecycle is not None:
+            conditions.append("lifecycle = ?")
+            parameters.append(KnowledgeLifecycle(lifecycle).value)
+        if confirmation_status is not None:
+            conditions.append("confirmation_status = ?")
+            parameters.append(KnowledgeConfirmationStatus(confirmation_status).value)
+        if epistemic_basis is not None:
+            conditions.append("epistemic_basis = ?")
+            parameters.append(KnowledgeEpistemicBasis(epistemic_basis).value)
+        normalized_query = query.strip()
+        if normalized_query:
+            pattern = _like_pattern(normalized_query)
+            conditions.append("(title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')")
+            parameters.extend((pattern, pattern))
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        return where, parameters
+
+    @staticmethod
+    def _validate_knowledge_pagination(limit: int, offset: int) -> None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("limit 必须是 1～500 的整数")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset 必须是非负整数")
+
+    # Knowledge object sources (schema v10) --------------------------------
+    def add_knowledge_object_source(
+        self,
+        *,
+        knowledge_object_id: int,
+        source_type: KnowledgeObjectSourceType | str,
+        source_id: int,
+        source_note: str = "",
+        source_fingerprint: str | None = None,
+        fingerprint_version: int = 1,
+        connection: sqlite3.Connection | None = None,
+    ) -> KnowledgeObjectSource:
+        """Link one knowledge object to one local source entity.
+
+        ``source_fingerprint`` is the canonical snapshot captured at link time;
+        passing ``None`` (legacy/backward-compatible default) stores the
+        UNKNOWN state. Target existence stays a service-layer check.
+        """
+
+        normalized_type = KnowledgeObjectSourceType(source_type)
+        _validate_positive_id(knowledge_object_id, "知识对象 ID")
+        _validate_positive_id(source_id, "来源 ID")
+        if len(source_note) > 500:
+            raise ValueError("来源说明不能超过 500 个字符")
+        timestamp = _utc_now()
+        try:
+            with self._knowledge_scope(connection) as connection:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO knowledge_object_sources(
+                        knowledge_object_id, source_type, source_id,
+                        source_note, source_fingerprint, fingerprint_version,
+                        captured_at, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        knowledge_object_id,
+                        normalized_type.value,
+                        source_id,
+                        source_note.strip(),
+                        source_fingerprint,
+                        fingerprint_version,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM knowledge_object_sources WHERE id = ?",
+                    (cursor.lastrowid,),
+                ).fetchone()
+        except sqlite3.IntegrityError as exc:
+            if "FOREIGN KEY" in str(exc):
+                raise RecordNotFoundError(f"知识对象不存在：{knowledge_object_id}") from exc
+            raise DatabaseError("该来源已经关联到该知识对象") from exc
+        return _knowledge_object_source_from_row(row)
+
+    def update_knowledge_object_source_fingerprint(
+        self,
+        source_id: int,
+        *,
+        source_fingerprint: str,
+        fingerprint_version: int = 1,
+        connection: sqlite3.Connection | None = None,
+    ) -> KnowledgeObjectSource:
+        """Recapture the canonical fingerprint of one existing source link."""
+
+        _validate_positive_id(source_id, "来源 ID")
+        timestamp = _utc_now()
+        with self._knowledge_scope(connection) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE knowledge_object_sources SET
+                    source_fingerprint = ?,
+                    fingerprint_version = ?,
+                    captured_at = ?
+                WHERE id = ?
+                """,
+                (source_fingerprint, fingerprint_version, timestamp, source_id),
+            )
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"知识对象来源不存在：{source_id}")
+            row = connection.execute(
+                "SELECT * FROM knowledge_object_sources WHERE id = ?", (source_id,)
+            ).fetchone()
+        return _knowledge_object_source_from_row(row)
+
+    def get_knowledge_object_source(self, source_id: int) -> KnowledgeObjectSource | None:
+        """Return one source link by primary key, or ``None`` when absent."""
+
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM knowledge_object_sources WHERE id = ?", (source_id,)
+            ).fetchone()
+        return _knowledge_object_source_from_row(row) if row is not None else None
+
+    def list_knowledge_object_sources(
+        self, knowledge_object_id: int
+    ) -> list[KnowledgeObjectSource]:
+        """List every source link of one knowledge object in creation order."""
+
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM knowledge_object_sources
+                WHERE knowledge_object_id = ? ORDER BY id
+                """,
+                (knowledge_object_id,),
+            ).fetchall()
+        return [_knowledge_object_source_from_row(row) for row in rows]
+
+    def remove_knowledge_object_source(
+        self, source_id: int, *, connection: sqlite3.Connection | None = None
+    ) -> None:
+        """Remove one source link; the source material itself is never touched."""
+
+        with self._knowledge_scope(connection) as connection:
+            cursor = connection.execute(
+                "DELETE FROM knowledge_object_sources WHERE id = ?", (source_id,)
+            )
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"知识对象来源不存在：{source_id}")
+
+    # Knowledge relations (schema v9) -------------------------------------
+    def add_knowledge_relation(
+        self,
+        *,
+        source_ko_id: int,
+        target_ko_id: int,
+        relation_type: KnowledgeRelationType | str,
+        description: str = "",
+    ) -> KnowledgeRelation:
+        """Create one typed directed relation between two knowledge objects."""
+
+        normalized_type = KnowledgeRelationType(relation_type)
+        _validate_positive_id(source_ko_id, "起点知识对象 ID")
+        _validate_positive_id(target_ko_id, "终点知识对象 ID")
+        if source_ko_id == target_ko_id:
+            raise ValueError("知识对象不能关联到自身")
+        if len(description) > 1000:
+            raise ValueError("关系说明不能超过 1000 个字符")
+        timestamp = _utc_now()
+        try:
+            with self._connection() as connection:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO knowledge_relations(
+                        source_ko_id, target_ko_id, relation_type,
+                        description, created_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        source_ko_id,
+                        target_ko_id,
+                        normalized_type.value,
+                        description.strip(),
+                        timestamp,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM knowledge_relations WHERE id = ?",
+                    (cursor.lastrowid,),
+                ).fetchone()
+        except sqlite3.IntegrityError as exc:
+            if "FOREIGN KEY" in str(exc):
+                raise RecordNotFoundError("关联的知识对象不存在") from exc
+            raise DatabaseError("该知识关系已经存在") from exc
+        return _knowledge_relation_from_row(row)
+
+    def get_knowledge_relation(self, relation_id: int) -> KnowledgeRelation | None:
+        """Return one relation by primary key, or ``None`` when absent."""
+
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM knowledge_relations WHERE id = ?", (relation_id,)
+            ).fetchone()
+        return _knowledge_relation_from_row(row) if row is not None else None
+
+    def list_knowledge_relations(
+        self, knowledge_object_id: int
+    ) -> list[KnowledgeRelation]:
+        """List every relation touching one knowledge object (both directions)."""
+
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM knowledge_relations
+                WHERE source_ko_id = ? OR target_ko_id = ?
+                ORDER BY id
+                """,
+                (knowledge_object_id, knowledge_object_id),
+            ).fetchall()
+        return [_knowledge_relation_from_row(row) for row in rows]
+
+    def remove_knowledge_relation(self, relation_id: int) -> None:
+        """Delete one relation row; the knowledge objects themselves remain."""
+
+        with self._connection() as connection:
+            cursor = connection.execute(
+                "DELETE FROM knowledge_relations WHERE id = ?", (relation_id,)
+            )
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"知识关系不存在：{relation_id}")
+
+    # Knowledge memory entries (schema v10, v12 extended) -------------------
+    def create_knowledge_memory_entry(
+        self,
+        *,
+        kind: KnowledgeMemoryEntryKind | str,
+        title: str,
+        content: str = "",
+        root_cause: str = "",
+        lesson: str = "",
+        knowledge_object_id: int | None = None,
+        document_id: int | None = None,
+        page_id: int | None = None,
+        status: KnowledgeMemoryStatus | str = KnowledgeMemoryStatus.ACTIVE,
+        outcome: str = "",
+        context_conditions: str = "",
+        creation_origin: str | None = None,
+        citation_snapshot: str = "",
+        content_fingerprint: str | None = None,
+        source_entry_id: int | None = None,
+        source_title: str | None = None,
+        root_cause_confirmed: bool = False,
+    ) -> KnowledgeMemoryEntry:
+        """Persist one user-authored memory entry with optional links.
+
+        ``content_revision`` starts at 1; ``outcome`` and
+        ``context_conditions`` are the v12 Experience Model ground fields and
+        are stored verbatim as user-supplied text, never auto-filled.
+
+        The v13 identity fields are stored as supplied by the service layer:
+        ``creation_origin`` (``human_saved`` / ``agent_assisted``), the
+        service-validated ``citation_snapshot`` JSON, the exact-duplicate
+        ``content_fingerprint``, the structured-experience source link
+        (``source_entry_id`` / ``source_title``) and the explicit
+        ``root_cause_confirmed`` gesture flag.
+        """
+
+        normalized_kind = KnowledgeMemoryEntryKind(kind)
+        normalized_status = KnowledgeMemoryStatus(status)
+        normalized_title = title.strip()
+        if not normalized_title:
+            raise ValueError("记忆标题不能为空")
+        if len(normalized_title) > 200:
+            raise ValueError("记忆标题不能超过 200 个字符")
+        if len(content) > 20000:
+            raise ValueError("记忆内容不能超过 20000 个字符")
+        if len(root_cause) > 4000:
+            raise ValueError("最终原因不能超过 4000 个字符")
+        if len(lesson) > 4000:
+            raise ValueError("经验教训不能超过 4000 个字符")
+        if len(outcome) > 4000:
+            raise ValueError("结果不能超过 4000 个字符")
+        if len(context_conditions) > 4000:
+            raise ValueError("适用条件不能超过 4000 个字符")
+        if len(citation_snapshot) > 20000:
+            raise ValueError("引用快照不能超过 20000 个字符")
+        if content_fingerprint is not None and len(content_fingerprint) != 64:
+            raise ValueError("内容指纹必须是 64 位十六进制摘要")
+        if source_title is not None and len(source_title.strip()) > 200:
+            raise ValueError("来源问答标题不能超过 200 个字符")
+        if creation_origin is not None and creation_origin not in (
+            "human_saved",
+            "agent_assisted",
+        ):
+            raise ValueError("记忆来源标识必须是 human_saved 或 agent_assisted")
+        knowledge_object_id = _optional_positive_id(knowledge_object_id, "知识对象 ID")
+        document_id = _optional_positive_id(document_id, "文档 ID")
+        page_id = _optional_positive_id(page_id, "页面 ID")
+        source_entry_id = _optional_positive_id(source_entry_id, "来源记忆 ID")
+        timestamp = _utc_now()
+        try:
+            with self._connection() as connection:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO knowledge_memory_entries(
+                        kind, title, content, root_cause, lesson,
+                        knowledge_object_id, document_id, page_id, status,
+                        content_revision, outcome, context_conditions,
+                        creation_origin, citation_snapshot, content_fingerprint,
+                        source_entry_id, source_title, root_cause_confirmed,
+                        search_title, search_content, search_root_cause,
+                        search_lesson, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?,
+                              ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        normalized_kind.value,
+                        normalized_title,
+                        content.strip(),
+                        root_cause.strip(),
+                        lesson.strip(),
+                        knowledge_object_id,
+                        document_id,
+                        page_id,
+                        normalized_status.value,
+                        outcome.strip(),
+                        context_conditions.strip(),
+                        creation_origin,
+                        citation_snapshot,
+                        content_fingerprint,
+                        source_entry_id,
+                        source_title.strip() if source_title is not None else None,
+                        1 if root_cause_confirmed else 0,
+                        _tokenize_for_fts(normalized_title),
+                        _tokenize_for_fts(content),
+                        _tokenize_for_fts(root_cause),
+                        _tokenize_for_fts(lesson),
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM knowledge_memory_entries WHERE id = ?",
+                    (cursor.lastrowid,),
+                ).fetchone()
+        except sqlite3.IntegrityError as exc:
+            raise DatabaseError("保存记忆条目失败，请检查关联的知识对象或页面") from exc
+        return _knowledge_memory_entry_from_row(row)
+
+    def get_knowledge_memory_entry(
+        self, entry_id: int
+    ) -> KnowledgeMemoryEntry | None:
+        """Return one memory entry by primary key, or ``None`` when absent."""
+
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM knowledge_memory_entries WHERE id = ?", (entry_id,)
+            ).fetchone()
+        return _knowledge_memory_entry_from_row(row) if row is not None else None
+
+    def update_knowledge_memory_entry(
+        self,
+        entry_id: int,
+        *,
+        title: str | None = None,
+        content: str | None = None,
+        root_cause: str | None = None,
+        lesson: str | None = None,
+        outcome: str | None = None,
+        context_conditions: str | None = None,
+    ) -> KnowledgeMemoryEntry:
+        """Update selected memory-entry text fields in one transaction.
+
+        Any content-bearing field change (title/content/root_cause/lesson/
+        outcome/context_conditions) increments ``content_revision`` by one;
+        status-only changes do not touch the revision counter.
+        """
+
+        assignments: list[str] = []
+        values: list[object] = []
+        if title is not None:
+            normalized_title = title.strip()
+            if not normalized_title:
+                raise ValueError("记忆标题不能为空")
+            if len(normalized_title) > 200:
+                raise ValueError("记忆标题不能超过 200 个字符")
+            assignments.append("title = ?")
+            values.append(normalized_title)
+            assignments.append("search_title = ?")
+            values.append(_tokenize_for_fts(normalized_title))
+        for field, value, max_length in (
+            ("content", content, 20000),
+            ("root_cause", root_cause, 4000),
+            ("lesson", lesson, 4000),
+        ):
+            if value is not None:
+                if len(value) > max_length:
+                    raise ValueError(f"{field} 超过最大长度")
+                normalized_value = value.strip()
+                assignments.append(f"{field} = ?")
+                values.append(normalized_value)
+                assignments.append(f"search_{field} = ?")
+                values.append(_tokenize_for_fts(normalized_value))
+        for field, label, value in (
+            ("outcome", "结果", outcome),
+            ("context_conditions", "适用条件", context_conditions),
+        ):
+            if value is not None:
+                if len(value) > 4000:
+                    raise ValueError(f"{label}不能超过 4000 个字符")
+                assignments.append(f"{field} = ?")
+                values.append(value.strip())
+        if not assignments:
+            entry = self.get_knowledge_memory_entry(entry_id)
+            if entry is None:
+                raise RecordNotFoundError(f"记忆条目不存在：{entry_id}")
+            return entry
+        assignments.append("content_revision = content_revision + 1")
+        timestamp = _utc_now()
+        alternate_timestamp = (
+            datetime.fromisoformat(timestamp) + timedelta(microseconds=1)
+        ).isoformat(timespec="microseconds")
+        assignments.append(
+            "updated_at = CASE WHEN updated_at = ? THEN ? ELSE ? END"
+        )
+        values.extend((timestamp, alternate_timestamp, timestamp, entry_id))
+        with self._connection() as connection:
+            cursor = connection.execute(
+                f"UPDATE knowledge_memory_entries SET {', '.join(assignments)} "
+                "WHERE id = ?",
+                values,
+            )
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"记忆条目不存在：{entry_id}")
+            row = connection.execute(
+                "SELECT * FROM knowledge_memory_entries WHERE id = ?", (entry_id,)
+            ).fetchone()
+        return _knowledge_memory_entry_from_row(row)
+
+    def update_knowledge_memory_status(
+        self,
+        entry_id: int,
+        *,
+        status: KnowledgeMemoryStatus | str,
+    ) -> KnowledgeMemoryEntry:
+        """Transition one memory entry's lifecycle status.
+
+        v13 adds the ``deleted`` soft-delete tombstone alongside the existing
+        ``active`` / ``archived`` values; visibility rules live in the service
+        and search layers, never here.
+        """
+
+        normalized_status = KnowledgeMemoryStatus(status)
+        timestamp = _utc_now()
+        alternate_timestamp = (
+            datetime.fromisoformat(timestamp) + timedelta(microseconds=1)
+        ).isoformat(timespec="microseconds")
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE knowledge_memory_entries SET
+                    status = ?,
+                    updated_at = CASE WHEN updated_at = ? THEN ? ELSE ? END
+                WHERE id = ?
+                """,
+                (normalized_status.value, timestamp, alternate_timestamp, timestamp, entry_id),
+            )
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"记忆条目不存在：{entry_id}")
+            row = connection.execute(
+                "SELECT * FROM knowledge_memory_entries WHERE id = ?", (entry_id,)
+            ).fetchone()
+        return _knowledge_memory_entry_from_row(row)
+
+    def list_knowledge_memory_entries(
+        self,
+        *,
+        kind: KnowledgeMemoryEntryKind | str | None = None,
+        status: KnowledgeMemoryStatus | str | None = None,
+        knowledge_object_id: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[KnowledgeMemoryEntry]:
+        """List memory entries with stable filters, newest update first.
+
+        Tombstoned (``deleted``) rows are excluded unless the caller filters
+        with ``status='deleted'`` explicitly; they stay reachable for the
+        restore flow only.
+        """
+
+        self._validate_knowledge_pagination(limit, offset)
+        conditions: list[str] = []
+        parameters: list[object] = []
+        if kind is not None:
+            conditions.append("kind = ?")
+            parameters.append(KnowledgeMemoryEntryKind(kind).value)
+        if status is not None:
+            conditions.append("status = ?")
+            parameters.append(KnowledgeMemoryStatus(status).value)
+        else:
+            conditions.append("status != 'deleted'")
+        if knowledge_object_id is not None:
+            conditions.append("knowledge_object_id = ?")
+            parameters.append(knowledge_object_id)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM knowledge_memory_entries {where} "
+                "ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?",
+                (*parameters, limit, offset),
+            ).fetchall()
+        return [_knowledge_memory_entry_from_row(row) for row in rows]
+
+    def count_knowledge_memory_entries(
+        self,
+        *,
+        kind: KnowledgeMemoryEntryKind | str | None = None,
+        status: KnowledgeMemoryStatus | str | None = None,
+        knowledge_object_id: int | None = None,
+    ) -> int:
+        """Count memory entries with exactly the same filters as the list."""
+
+        conditions: list[str] = []
+        parameters: list[object] = []
+        if kind is not None:
+            conditions.append("kind = ?")
+            parameters.append(KnowledgeMemoryEntryKind(kind).value)
+        if status is not None:
+            conditions.append("status = ?")
+            parameters.append(KnowledgeMemoryStatus(status).value)
+        else:
+            conditions.append("status != 'deleted'")
+        if knowledge_object_id is not None:
+            conditions.append("knowledge_object_id = ?")
+            parameters.append(knowledge_object_id)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        with self._connection() as connection:
+            return int(
+                connection.execute(
+                    f"SELECT COUNT(*) FROM knowledge_memory_entries {where}",
+                    parameters,
+                ).fetchone()[0]
+            )
+
+    def find_active_raw_qa_by_fingerprint(
+        self, content_fingerprint: str
+    ) -> KnowledgeMemoryEntry | None:
+        """Return the active saved Q&A with this exact fingerprint, if any.
+
+        Only ``kind='raw_qa'`` rows with ``status='active'`` participate in
+        duplicate detection: a tombstoned copy the user explicitly removed
+        never blocks saving the same Q&A again.
+        """
+
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM knowledge_memory_entries
+                WHERE kind = 'raw_qa' AND status = 'active'
+                  AND content_fingerprint = ?
+                ORDER BY id LIMIT 1
+                """,
+                (content_fingerprint,),
+            ).fetchone()
+        return _knowledge_memory_entry_from_row(row) if row is not None else None
+
+    def create_knowledge_memory_link(
+        self,
+        *,
+        from_entry_id: int,
+        to_entry_id: int,
+        relation_type: str,
+        note: str = "",
+        created_at: str | None = None,
+    ) -> None:
+        """Persist one evolution relation between two experiences (v0.7.4)."""
+
+        timestamp = created_at or _utc_now()
+        try:
+            with self._connection() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO knowledge_memory_links(
+                        from_entry_id, to_entry_id, relation_type, note, created_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (from_entry_id, to_entry_id, relation_type, note, timestamp),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"经验关系写入失败：{exc}") from exc
+
+    def list_knowledge_memory_links(self, entry_id: int) -> list[dict[str, object]]:
+        """Return every evolution relation touching one experience."""
+
+        with self._connection() as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute(
+                """
+                SELECT id, from_entry_id, to_entry_id, relation_type, note, created_at
+                FROM knowledge_memory_links
+                WHERE from_entry_id = ? OR to_entry_id = ?
+                ORDER BY created_at DESC, id DESC
+                """,
+                (entry_id, entry_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def find_active_experience_by_source(
+        self, source_entry_id: int
+    ) -> KnowledgeMemoryEntry | None:
+        """Return the active experience distilled from one raw Q&A (v0.7.3).
+
+        Guards against promoting the same saved Q&A into duplicate
+        experiences; tombstoned or purged sources do not block re-promotion.
+        """
+
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM knowledge_memory_entries
+                WHERE kind = 'experience' AND status = 'active'
+                  AND source_entry_id = ?
+                ORDER BY id LIMIT 1
+                """,
+                (source_entry_id,),
+            ).fetchone()
+        return _knowledge_memory_entry_from_row(row) if row is not None else None
+
+    def delete_knowledge_memory_entry(self, entry_id: int) -> None:
+        """Permanently purge one memory entry (v13 hard delete).
+
+        This is the explicit "永久删除" step behind the soft-delete tombstone.
+        Project links pointing at this entry are removed together with it;
+        the project itself is never affected. Linked source material is
+        never touched, and a structured experience that referenced this
+        entry keeps its own copied citation snapshot.
+        """
+
+        with self._connection() as connection:
+            connection.execute(
+                "DELETE FROM knowledge_project_links "
+                "WHERE target_type = 'knowledge_memory' AND target_id = ?",
+                (entry_id,),
+            )
+            cursor = connection.execute(
+                "DELETE FROM knowledge_memory_entries WHERE id = ?", (entry_id,)
+            )
+            if cursor.rowcount == 0:
+                raise RecordNotFoundError(f"记忆条目不存在：{entry_id}")
+
+    # AI call / output audit ledger (schema v12) ----------------------------
+    def insert_agent_run_audit(self, trace: object) -> None:
+        """Append one request-level Agent attribution row (schema v17)."""
+
+        arguments = dict(getattr(trace, "decision_arguments", {}) or {})
+        top_page_ids = list(getattr(trace, "top_evidence_page_ids", ()) or ())
+        evidence_page_ids = list(getattr(trace, "evidence_page_ids", ()) or ())
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO agent_run_audits(
+                    run_id, request_id, started_at, duration_ms,
+                    decision_status, decision_finish_reason,
+                    decision_output_chars, decision_output_tokens,
+                    decision_tool, decision_arguments,
+                    tool_status, tool_result_status, result_count,
+                    top_evidence_page_ids,
+                    final_status, final_finish_reason,
+                    final_declared_insufficient, evidence_count,
+                    evidence_page_ids, evidence_excerpt_chars,
+                    ui_failure_reason_code, outcome, error_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trace.run_id,  # type: ignore[attr-defined]
+                    getattr(trace, "request_id", None),
+                    trace.started_at,  # type: ignore[attr-defined]
+                    getattr(trace, "duration_ms", None),
+                    getattr(trace, "decision_status", None),
+                    getattr(trace, "decision_finish_reason", None),
+                    getattr(trace, "decision_output_chars", None),
+                    getattr(trace, "decision_output_tokens", None),
+                    getattr(trace, "decision_tool", None),
+                    json.dumps(arguments, ensure_ascii=False, sort_keys=True),
+                    getattr(trace, "tool_audit_status", "tool_not_called"),
+                    getattr(trace, "tool_status", None),
+                    getattr(trace, "tool_result_count", 0),
+                    json.dumps(top_page_ids),
+                    getattr(trace, "final_status", None),
+                    getattr(trace, "final_finish_reason", None),
+                    int(bool(getattr(trace, "final_declared_insufficient", False))),
+                    getattr(trace, "evidence_count", 0),
+                    json.dumps(evidence_page_ids),
+                    getattr(trace, "evidence_excerpt_chars", 0),
+                    getattr(trace, "ui_failure_reason_code", None),
+                    trace.outcome,  # type: ignore[attr-defined]
+                    getattr(trace, "error_code", None),
+                    _utc_now(),
+                ),
+            )
+
+    def list_agent_run_audits(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> list[dict[str, object]]:
+        """Return request-level Agent attribution rows, newest first."""
+
+        if not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("limit 必须是 1～500 的整数")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset 必须是非负整数")
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM agent_run_audits ORDER BY id DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def insert_ai_call(self, record: AiCallRecord) -> None:
+        """Append one AI call audit row; never updates or deletes old rows."""
+
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO ai_calls(
+                    call_uuid, capability, model, prompt_sha256, input_chars,
+                    status, error_class, retry_count, latency_ms,
+                    prompt_tokens, completion_tokens, total_tokens,
+                    finish_reason, source_feature, target_refs, created_at,
+                    provider, resolved_model
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.call_uuid,
+                    record.capability,
+                    record.requested_model,
+                    record.prompt_sha256,
+                    record.input_chars,
+                    record.status,
+                    record.error_class,
+                    record.retry_count,
+                    record.latency_ms,
+                    record.prompt_tokens,
+                    record.completion_tokens,
+                    record.total_tokens,
+                    record.finish_reason,
+                    record.source_feature,
+                    json.dumps(list(record.target_refs), ensure_ascii=False),
+                    record.created_at or _utc_now(),
+                    record.provider,
+                    record.resolved_model,
+                ),
+            )
+
+    def list_ai_calls(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> list[AiCallRecord]:
+        """Return AI call audit rows, newest first, read-only."""
+
+        if not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("limit 必须是 1～500 的整数")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset 必须是非负整数")
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM ai_calls ORDER BY id DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+        return [_ai_call_from_row(row) for row in rows]
+
+    def total_ai_tokens_since(self, since_iso: str) -> int:
+        """Sum successful AI call tokens since an ISO timestamp (inclusive)."""
+
+        with self._connection() as connection:
+            return int(
+                connection.execute(
+                    "SELECT COALESCE(SUM(total_tokens), 0) FROM ai_calls "
+                    "WHERE status = 'success' AND created_at >= ?",
+                    (since_iso,),
+                ).fetchone()[0]
+            )
+
+    def insert_ai_output(self, record: AiOutputRecord) -> None:
+        """Append one AI output audit anchor; never writes knowledge assets."""
+
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO ai_outputs(
+                    output_uuid, call_uuid, model, context_package_sha256,
+                    output_sha256, output_kind, source_feature, target_refs,
+                    recheck_path, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.output_uuid,
+                    record.call_uuid,
+                    record.model,
+                    record.context_package_sha256,
+                    record.output_sha256,
+                    record.output_kind,
+                    record.source_feature,
+                    json.dumps(list(record.target_refs), ensure_ascii=False),
+                    record.recheck_path,
+                    record.created_at or _utc_now(),
+                ),
+            )
+
+    def list_ai_outputs(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> list[AiOutputRecord]:
+        """Return AI output audit anchors, newest first, read-only."""
+
+        if not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("limit 必须是 1～500 的整数")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset 必须是非负整数")
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM ai_outputs ORDER BY id DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+        return [_ai_output_from_row(row) for row in rows]
+
+    # Project-to-knowledge links (schema v12) -------------------------------
+    def link_knowledge_to_project(
+        self, *, project_id: int, target_type: str, target_id: int
+    ) -> bool:
+        """Link a knowledge object or memory entry to a project.
+
+        Returns ``True`` when a new link was created and ``False`` when the
+        link already existed. Both the project and the knowledge target must
+        exist; the target is validated by the service layer's polymorphic
+        check before this data-access method is called.
+        """
+
+        if target_type not in {"knowledge_object", "knowledge_memory"}:
+            raise ValueError("target_type 必须是 knowledge_object 或 knowledge_memory")
+        project_id = _optional_positive_id(project_id, "项目 ID") or 0
+        target_id = _optional_positive_id(target_id, "目标 ID") or 0
+        timestamp = _utc_now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO knowledge_project_links(
+                    project_id, target_type, target_id, created_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (project_id, target_type, target_id, timestamp),
+            )
+        return cursor.rowcount > 0
+
+    def unlink_knowledge_from_project(
+        self, *, project_id: int, target_type: str, target_id: int
+    ) -> None:
+        """Remove one project-to-knowledge link; neither side is deleted."""
+
+        if target_type not in {"knowledge_object", "knowledge_memory"}:
+            raise ValueError("target_type 必须是 knowledge_object 或 knowledge_memory")
+        with self._connection() as connection:
+            connection.execute(
+                "DELETE FROM knowledge_project_links "
+                "WHERE project_id = ? AND target_type = ? AND target_id = ?",
+                (project_id, target_type, target_id),
+            )
+
+    def list_project_knowledge_links(
+        self, *, project_id: int | None = None, target_type: str | None = None
+    ) -> list[KnowledgeProjectLink]:
+        """List project-to-knowledge links with optional filters."""
+
+        conditions: list[str] = []
+        parameters: list[object] = []
+        if project_id is not None:
+            conditions.append("project_id = ?")
+            parameters.append(project_id)
+        if target_type is not None:
+            if target_type not in {"knowledge_object", "knowledge_memory"}:
+                raise ValueError("target_type 必须是 knowledge_object 或 knowledge_memory")
+            conditions.append("target_type = ?")
+            parameters.append(target_type)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM knowledge_project_links {where} ORDER BY id",
+                parameters,
+            ).fetchall()
+        return [_knowledge_project_link_from_row(row) for row in rows]
+
+    # Knowledge revisions (schema v10) ------------------------------------
+    def next_knowledge_revision_number(
+        self,
+        knowledge_object_id: int,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> int:
+        """Return the next per-object revision event sequence number."""
+
+        with self._knowledge_scope(connection) as connection:
+            row = connection.execute(
+                """
+                SELECT COALESCE(MAX(revision_number), 0) + 1
+                FROM knowledge_object_revisions
+                WHERE knowledge_object_id = ?
+                """,
+                (knowledge_object_id,),
+            ).fetchone()
+        return int(row[0])
+
+    def insert_knowledge_revision(
+        self,
+        *,
+        knowledge_object_id: int | None,
+        object_local_id_snapshot: int | None,
+        object_stable_id_snapshot: str | None,
+        object_title_snapshot: str,
+        object_kind_snapshot: str,
+        revision_number: int,
+        event_type: KnowledgeRevisionEventType | str,
+        before_title: str | None = None,
+        after_title: str | None = None,
+        before_content: str | None = None,
+        after_content: str | None = None,
+        before_lifecycle: str | None = None,
+        after_lifecycle: str | None = None,
+        before_confirmation: str | None = None,
+        after_confirmation: str | None = None,
+        superseded_by_before: int | None = None,
+        superseded_by_after: int | None = None,
+        source_ref: str | None = None,
+        detail: str = "",
+        connection: sqlite3.Connection | None = None,
+    ) -> KnowledgeRevision:
+        """Append one immutable revision row. There is no update/delete API."""
+
+        normalized_event = KnowledgeRevisionEventType(event_type)
+        timestamp = _utc_now()
+        with self._knowledge_scope(connection) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO knowledge_object_revisions (
+                    knowledge_object_id, object_local_id_snapshot,
+                    object_stable_id_snapshot, object_title_snapshot,
+                    object_kind_snapshot, revision_number, event_type,
+                    before_title, after_title, before_content, after_content,
+                    before_lifecycle, after_lifecycle, before_confirmation,
+                    after_confirmation, superseded_by_before,
+                    superseded_by_after, source_ref, payload_version, detail,
+                    created_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?
+                )
+                """,
+                (
+                    knowledge_object_id,
+                    object_local_id_snapshot,
+                    object_stable_id_snapshot,
+                    object_title_snapshot,
+                    object_kind_snapshot,
+                    revision_number,
+                    normalized_event.value,
+                    before_title,
+                    after_title,
+                    before_content,
+                    after_content,
+                    before_lifecycle,
+                    after_lifecycle,
+                    before_confirmation,
+                    after_confirmation,
+                    superseded_by_before,
+                    superseded_by_after,
+                    source_ref,
+                    detail,
+                    timestamp,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM knowledge_object_revisions WHERE id = ?",
+                (cursor.lastrowid,),
+            ).fetchone()
+        return _knowledge_revision_from_row(row)
+
+    def list_knowledge_revisions(
+        self, knowledge_object_id: int
+    ) -> list[KnowledgeRevision]:
+        """List every revision of one knowledge object in revision order."""
+
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM knowledge_object_revisions
+                WHERE knowledge_object_id = ?
+                ORDER BY revision_number ASC, id ASC
+                """,
+                (knowledge_object_id,),
+            ).fetchall()
+        return [_knowledge_revision_from_row(row) for row in rows]
+
+    # Knowledge search (schema v11) ------------------------------------------
+    def search_knowledge(
+        self,
+        match_expression: str,
+        *,
+        limit: int = 20,
+        include_archived: bool = False,
+        include_superseded: bool = False,
+    ) -> list[KnowledgeSearchResult]:
+        """Search knowledge objects and memory entries with FTS5 MATCH recall.
+
+        This is the knowledge scope only: FTS5 ``MATCH`` is the recall gate and
+        ``bm25`` is the intra-type ranking key. The page scope (``search``) is
+        deliberately untouched. Results are grouped knowledge-objects first,
+        then memory entries; ``limit`` applies per type. ``knowledge_object_
+        revisions`` are never queried and therefore can never appear.
+        """
+
+        normalized_expression = match_expression.strip()
+        if not normalized_expression or limit <= 0:
+            return []
+        safe_limit = min(limit, 100)
+        object_lifecycles = ["active"]
+        if include_archived:
+            object_lifecycles.append("archived")
+        if include_superseded:
+            object_lifecycles.append("superseded")
+        memory_statuses = ["active"]
+        if include_archived:
+            memory_statuses.append("archived")
+        kb_uuid = self.get_knowledge_base_uuid()
+        try:
+            with self._connection() as connection:
+                object_rows = connection.execute(
+                    f"""
+                    SELECT ko.id, ko.kind, ko.title, ko.content, ko.lifecycle,
+                           ko.updated_at,
+                           bm25(knowledge_object_search, 1.0, 1.0) AS search_rank
+                    FROM knowledge_object_search
+                    JOIN knowledge_objects ko ON ko.id = knowledge_object_search.rowid
+                    WHERE knowledge_object_search MATCH ?
+                      AND ko.lifecycle IN ({",".join("?" for _ in object_lifecycles)})
+                    ORDER BY search_rank ASC, ko.updated_at DESC, ko.id DESC
+                    LIMIT ?
+                    """,
+                    (normalized_expression, *object_lifecycles, safe_limit),
+                ).fetchall()
+                memory_rows = connection.execute(
+                    f"""
+                    SELECT me.id, me.kind, me.title, me.content, me.root_cause,
+                           me.lesson, me.status, me.updated_at,
+                           me.knowledge_object_id, me.document_id, me.page_id,
+                           me.creation_origin, me.outcome, me.context_conditions,
+                           me.root_cause_confirmed,
+                           bm25(knowledge_memory_search, 1.0, 1.0, 1.0, 1.0)
+                               AS search_rank
+                    FROM knowledge_memory_search
+                    JOIN knowledge_memory_entries me
+                        ON me.id = knowledge_memory_search.rowid
+                    WHERE knowledge_memory_search MATCH ?
+                      AND me.status IN ({",".join("?" for _ in memory_statuses)})
+                    ORDER BY search_rank ASC, me.updated_at DESC, me.id DESC
+                    LIMIT ?
+                    """,
+                    (normalized_expression, *memory_statuses, safe_limit),
+                ).fetchall()
+                object_ids = tuple(int(row["id"]) for row in object_rows)
+                anchors = self._knowledge_source_anchors(connection, object_ids)
+                results: list[KnowledgeSearchResult] = []
+                for row in object_rows:
+                    lifecycle = KnowledgeLifecycle(row["lifecycle"])
+                    kind = KnowledgeObjectKind(row["kind"])
+                    results.append(
+                        KnowledgeSearchResult(
+                            result_type=KnowledgeSearchResultType.KNOWLEDGE_OBJECT,
+                            id=int(row["id"]),
+                            stable_id=build_stable_id(
+                                kb_uuid,
+                                KNOWLEDGE_OBJECT_STABLE_TYPE,
+                                int(row["id"]),
+                            ),
+                            title=str(row["title"]),
+                            content=str(row["content"]),
+                            status=lifecycle.value,
+                            status_label=lifecycle.label,
+                            kind=kind.value,
+                            kind_label=kind.label,
+                            updated_at=_parse_datetime(str(row["updated_at"])),
+                            source_anchors=anchors.get(int(row["id"]), ()),
+                        )
+                    )
+                for row in memory_rows:
+                    status = KnowledgeMemoryStatus(row["status"])
+                    kind = KnowledgeMemoryEntryKind(row["kind"])
+                    content = "\n".join(
+                        value
+                        for value in (
+                            str(row["content"]),
+                            str(row["root_cause"]),
+                            str(row["lesson"]),
+                        )
+                        if value
+                    ) or str(row["title"])
+                    results.append(
+                        KnowledgeSearchResult(
+                            result_type=KnowledgeSearchResultType.KNOWLEDGE_MEMORY,
+                            id=int(row["id"]),
+                            stable_id=build_stable_id(
+                                kb_uuid,
+                                KNOWLEDGE_MEMORY_STABLE_TYPE,
+                                int(row["id"]),
+                            ),
+                            title=str(row["title"]),
+                            content=content,
+                            status=status.value,
+                            status_label=status.label,
+                            kind=kind.value,
+                            kind_label=kind.label,
+                            updated_at=_parse_datetime(str(row["updated_at"])),
+                            knowledge_object_id=_optional_int(
+                                row["knowledge_object_id"]
+                            ),
+                            document_id=_optional_int(row["document_id"]),
+                            page_id=_optional_int(row["page_id"]),
+                            creation_origin=(
+                                str(row["creation_origin"])
+                                if row["creation_origin"] is not None
+                                else None
+                            ),
+                            outcome=str(row["outcome"]),
+                            context_conditions=str(row["context_conditions"]),
+                            root_cause_confirmed=bool(row["root_cause_confirmed"]),
+                        )
+                    )
+                return results
+        except sqlite3.OperationalError:
+            LOGGER.warning(
+                "忽略无效的知识 FTS5 检索表达式：%r", match_expression, exc_info=True
+            )
+            return []
+
+    @staticmethod
+    def _knowledge_source_anchors(
+        connection: sqlite3.Connection, knowledge_object_ids: Sequence[int]
+    ) -> dict[int, tuple[tuple[str, int], ...]]:
+        """Return ``knowledge_object_id -> ((source_type, source_id), ...)``."""
+
+        if not knowledge_object_ids:
+            return {}
+        placeholders = ",".join("?" for _ in knowledge_object_ids)
+        rows = connection.execute(
+            f"""
+            SELECT knowledge_object_id, source_type, source_id
+            FROM knowledge_object_sources
+            WHERE knowledge_object_id IN ({placeholders})
+            ORDER BY knowledge_object_id, id
+            """,
+            tuple(knowledge_object_ids),
+        ).fetchall()
+        anchors: dict[int, list[tuple[str, int]]] = {
+            knowledge_object_id: [] for knowledge_object_id in knowledge_object_ids
+        }
+        for row in rows:
+            anchors[int(row["knowledge_object_id"])].append(
+                (str(row["source_type"]), int(row["source_id"]))
+            )
+        return {
+            knowledge_object_id: tuple(values)
+            for knowledge_object_id, values in anchors.items()
+        }
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat(timespec="microseconds")
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
+
+
+def _coerce_page_status(status: PageStatus | str) -> PageStatus:
+    try:
+        if isinstance(status, PageStatus):
+            return status
+        if status in _LEGACY_PAGE_STATUS_MAP:
+            return _LEGACY_PAGE_STATUS_MAP[status]
+        return PageStatus(status)
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in PageStatus)
+        raise ValueError(f"页面状态必须是：{allowed}") from exc
+
+
+def _validate_processing_status(status: str) -> str:
+    normalized = status.strip()
+    if normalized not in _PROCESSING_STATUSES:
+        allowed = ", ".join(sorted(_PROCESSING_STATUSES))
+        raise ValueError(f"页面处理状态必须是：{allowed}")
+    return normalized
+
+
+def _coerce_processing_status(
+    status: str | None,
+    *,
+    extracted_text: str,
+    ocr_text: str,
+    processing_error: str,
+    review_status: PageStatus,
+) -> str:
+    if status is not None:
+        return _validate_processing_status(status)
+    if processing_error or review_status is PageStatus.FAILED:
+        return "failed"
+    if ocr_text.strip():
+        return "ocr_completed"
+    if extracted_text.strip():
+        return "text_extracted"
+    return "pending_review"
+
+
+def _coerce_import_status(status: ImportStatus | str) -> ImportStatus:
+    try:
+        return status if isinstance(status, ImportStatus) else ImportStatus(status)
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in ImportStatus)
+        raise ValueError(f"导入状态必须是：{allowed}") from exc
+
+
+def _optional_path(value: Path | str | None | object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (Path, str)):
+        return str(Path(value))
+    raise TypeError("路径必须是 pathlib.Path、字符串或 None")
+
+
+def _tokenize_for_fts(content: str) -> str:
+    """Add spaces between jieba tokens for reliable Chinese FTS5 lookup."""
+
+    if not content.strip():
+        return ""
+    tokens = (token.strip().lower() for token in jieba.cut_for_search(content) if token.strip())
+    return " ".join(token for token in tokens if any(char.isalnum() for char in token))
+
+
+def _normalize_name(value: str, kind: str) -> tuple[str, str]:
+    display = " ".join(unicodedata.normalize("NFKC", value).strip().split())
+    if not display:
+        raise ValueError(f"{kind}名称不能为空")
+    if len(display) > 100:
+        raise ValueError(f"{kind}名称不能超过 100 个字符")
+    return display, display.casefold()
+
+
+def _validate_embedding_configuration(
+    *,
+    model: str,
+    dimensions: int,
+    config_version: int,
+) -> str:
+    """Validate one embedding configuration and return the normalized model."""
+
+    normalized_model = model.strip()
+    if not normalized_model:
+        raise ValueError("embedding model 不能为空")
+    if isinstance(dimensions, bool) or not isinstance(dimensions, int) or dimensions <= 0:
+        raise ValueError(f"dimensions 必须为正整数：{dimensions!r}")
+    if (
+        isinstance(config_version, bool)
+        or not isinstance(config_version, int)
+        or config_version <= 0
+    ):
+        raise ValueError(f"config_version 必须为正整数：{config_version!r}")
+    return normalized_model
+
+
+def _validate_page_embedding_identity(
+    *,
+    page_id: int,
+    model: str,
+    dimensions: int,
+    config_version: int,
+) -> str:
+    """Validate the embedding configuration identity and return the model name."""
+
+    if isinstance(page_id, bool) or not isinstance(page_id, int) or page_id <= 0:
+        raise ValueError(f"page_id 必须为正整数：{page_id!r}")
+    return _validate_embedding_configuration(
+        model=model, dimensions=dimensions, config_version=config_version
+    )
+
+
+def _validate_page_embedding_fields(
+    *,
+    page_id: int,
+    source_text_sha256: str,
+    model: str,
+    dimensions: int,
+    config_version: int,
+) -> tuple[str, str]:
+    """Validate the full embedding identity plus the freshness fingerprint."""
+
+    normalized_model = _validate_page_embedding_identity(
+        page_id=page_id,
+        model=model,
+        dimensions=dimensions,
+        config_version=config_version,
+    )
+    normalized_hash = source_text_sha256.strip().lower()
+    if not _SHA256_PATTERN.fullmatch(normalized_hash):
+        raise ValueError("source_text_sha256 必须是 64 位十六进制字符")
+    return normalized_hash, normalized_model
+
+
+def _page_embedding_from_row(row: sqlite3.Row) -> PageEmbedding:
+    dimensions = int(row["dimensions"])
+    try:
+        vector = decode_vector(row["vector"], dimensions=dimensions)
+    except ValueError as exc:
+        raise DatabaseError(
+            f"页面 {row['page_id']} 的 embedding 数据损坏：{exc}"
+        ) from exc
+    return PageEmbedding(
+        id=int(row["id"]),
+        page_id=int(row["page_id"]),
+        source_text_sha256=str(row["source_text_sha256"]),
+        model=str(row["model"]),
+        dimensions=dimensions,
+        config_version=int(row["config_version"]),
+        vector=vector,
+        created_at=_parse_datetime(row["created_at"]),  # type: ignore[arg-type]
+        updated_at=_parse_datetime(row["updated_at"]),  # type: ignore[arg-type]
+    )
+
+
+def _document_from_row(row: sqlite3.Row) -> Document:
+    imported_at = _parse_datetime(row["imported_at"])
+    return Document(
+        id=int(row["id"]),
+        title=str(row["title"]),
+        filename=str(row["filename"]),
+        source_path=Path(row["source_path"]),
+        sha256=str(row["sha256"]),
+        page_count=int(row["page_count"]),
+        created_at=_parse_datetime(row["created_at"]),  # type: ignore[arg-type]
+        updated_at=_parse_datetime(row["updated_at"]),  # type: ignore[arg-type]
+        import_status=ImportStatus(row["import_status"]),
+        processed_page_count=int(row["processed_page_count"]),
+        text_page_count=int(row["text_page_count"]),
+        review_page_count=int(row["review_page_count"]),
+        import_error=str(row["import_error"]),
+        imported_at=imported_at,
+    )
+
+
+def _page_from_row(row: sqlite3.Row) -> Page:
+    markdown_path = row["markdown_path"]
+    return Page(
+        id=int(row["id"]),
+        document_id=int(row["document_id"]),
+        page_number=int(row["page_number"]),
+        image_path=Path(row["image_path"]),
+        extracted_text=str(row["extracted_text"]),
+        ocr_text=str(row["ocr_text"]),
+        markdown_content=str(row["markdown_content"]),
+        markdown_path=Path(markdown_path) if markdown_path is not None else None,
+        status=PageStatus(row["review_status"]),
+        processing_error=str(row["processing_error"]),
+        created_at=_parse_datetime(row["created_at"]),  # type: ignore[arg-type]
+        updated_at=_parse_datetime(row["updated_at"]),  # type: ignore[arg-type]
+        note_updated_at=_parse_datetime(row["note_updated_at"]),
+        reviewed_at=_parse_datetime(row["reviewed_at"]),
+        last_viewed_at=_parse_datetime(row["last_viewed_at"]),
+        processing_status=str(row["status"]),
+    )
+
+
+def _tag_from_row(row: sqlite3.Row) -> Tag:
+    keys = row.keys()
+    return Tag(
+        id=int(row["id"]),
+        name=str(row["name"]),
+        created_at=_parse_datetime(row["created_at"]),  # type: ignore[arg-type]
+        usage_count=int(row["usage_count"]) if "usage_count" in keys else 0,
+    )
+
+
+def _project_from_row(row: sqlite3.Row) -> Project:
+    keys = row.keys()
+    return Project(
+        id=int(row["id"]),
+        name=str(row["name"]),
+        description=str(row["description"]),
+        status=str(row["status"]),
+        created_at=_parse_datetime(row["created_at"]),  # type: ignore[arg-type]
+        updated_at=_parse_datetime(row["updated_at"]),  # type: ignore[arg-type]
+        document_count=int(row["document_count"]) if "document_count" in keys else 0,
+        page_count=int(row["page_count"]) if "page_count" in keys else 0,
+    )
+
+
+def _import_record_from_row(row: sqlite3.Row) -> ImportRecord:
+    return ImportRecord(
+        id=int(row["id"]),
+        filename=str(row["filename"]),
+        title=str(row["title"]),
+        sha256=str(row["sha256"]),
+        status=ImportStatus(row["status"]),
+        document_id=int(row["document_id"]) if row["document_id"] is not None else None,
+        total_pages=int(row["total_pages"]),
+        processed_pages=int(row["processed_pages"]),
+        text_pages=int(row["text_pages"]),
+        review_pages=int(row["review_pages"]),
+        failed_pages=int(row["failed_pages"]),
+        error_message=str(row["error_message"]),
+        started_at=_parse_datetime(row["started_at"]),  # type: ignore[arg-type]
+        finished_at=_parse_datetime(row["finished_at"]),
+    )
+
+
+def _search_match_clause(
+    fields: Sequence[SearchField], terms: Sequence[str]
+) -> tuple[str, list[object]]:
+    """Build a literal match expression from whitelisted field fragments."""
+
+    clauses: list[str] = []
+    parameters: list[object] = []
+    field_expressions = {
+        SearchField.EXTRACTED_TEXT: "lower(p.extracted_text) LIKE ? ESCAPE '\\'",
+        SearchField.OCR_TEXT: "lower(p.ocr_text) LIKE ? ESCAPE '\\'",
+        SearchField.MARKDOWN: "lower(p.markdown_content) LIKE ? ESCAPE '\\'",
+        SearchField.DOCUMENT_TITLE: "lower(d.title) LIKE ? ESCAPE '\\'",
+        SearchField.FILENAME: "lower(d.filename) LIKE ? ESCAPE '\\'",
+    }
+    for raw_field in dict.fromkeys(fields):
+        field = SearchField(raw_field)
+        patterns = [_like_pattern(term) for term in terms]
+        if field in field_expressions:
+            clauses.append(
+                "(" + " OR ".join(field_expressions[field] for _ in patterns) + ")"
+            )
+            parameters.extend(patterns)
+        elif field is SearchField.TAG:
+            term_clause = " OR ".join(
+                "lower(t.name) LIKE ? ESCAPE '\\'" for _ in patterns
+            )
+            clauses.append(
+                f"""EXISTS (
+                    SELECT 1 FROM tags t
+                    LEFT JOIN document_tags dt ON dt.tag_id = t.id
+                    LEFT JOIN page_tags pt ON pt.tag_id = t.id
+                    WHERE ({term_clause}) AND
+                        (dt.document_id = d.id OR pt.page_id = p.id)
+                )"""
+            )
+            parameters.extend(patterns)
+        elif field is SearchField.PROJECT:
+            term_clause = " OR ".join(
+                "lower(pr.name) LIKE ? ESCAPE '\\'" for _ in patterns
+            )
+            clauses.append(
+                f"""EXISTS (
+                    SELECT 1 FROM projects pr
+                    LEFT JOIN project_documents pd ON pd.project_id = pr.id
+                    LEFT JOIN project_pages pp ON pp.project_id = pr.id
+                    WHERE ({term_clause}) AND
+                        (pd.document_id = d.id OR pp.page_id = p.id)
+                )"""
+            )
+            parameters.extend(patterns)
+    return " OR ".join(clauses) or "0", parameters
+
+
+def _knowledge_surface_values(
+    row: sqlite3.Row,
+    tags: Sequence[str],
+    projects: Sequence[str],
+) -> dict[SearchField, str]:
+    """Per-field knowledge-surface text for keyword recall and snippets.
+
+    V086-309-PRT1: the three content fields pass through the same
+    scan-artifact filter that builds the FTS mirrors at write time, so
+    literal keyword recall, snippets and FTS ranking share ONE knowledge
+    surface (``RAW EVIDENCE != SEARCHABLE KNOWLEDGE SURFACE``). Filtering
+    happens in memory on the search path only — raw evidence columns are
+    never modified.
+    """
+
+    return {
+        SearchField.MARKDOWN: filter_knowledge_text(
+            str(row["markdown_content"])
+        ).filtered_text,
+        SearchField.OCR_TEXT: filter_knowledge_text(
+            str(row["ocr_text"])
+        ).filtered_text,
+        SearchField.EXTRACTED_TEXT: filter_knowledge_text(
+            str(row["extracted_text"])
+        ).filtered_text,
+        SearchField.DOCUMENT_TITLE: str(row["document_title"]),
+        SearchField.FILENAME: str(row["filename"]),
+        SearchField.TAG: "\n".join(tags),
+        SearchField.PROJECT: "\n".join(projects),
+    }
+
+
+def _page_matches_knowledge_surface(
+    values: dict[SearchField, str],
+    fields: Sequence[SearchField],
+    terms: Sequence[str],
+) -> bool:
+    """True when any whitelisted field's knowledge surface contains a term.
+
+    Mirrors the OR-of-fields semantics of ``_search_match_clause`` with the
+    sanitized content fields instead of the raw columns, so a page recalled
+    only by scanner branding in raw OCR is dropped before it can reach the
+    result window, the snippets or the facet counts.
+    """
+
+    normalized_terms = tuple(
+        term.casefold() for term in terms if term.strip()
+    )
+    if not normalized_terms:
+        return True
+    folded = {field: value.casefold() for field, value in values.items()}
+    return any(
+        term in folded.get(field, "")
+        for field in dict.fromkeys(fields)
+        for term in normalized_terms
+    )
+
+
+def _knowledge_filtered_context_rows(
+    database: Database,
+    connection: sqlite3.Connection,
+    where: str,
+    parameters: Sequence[object],
+    match_fields: Sequence[SearchField],
+    literal_terms: Sequence[str],
+) -> list[sqlite3.Row]:
+    """Fetch facet/document-count context rows and keep knowledge matches.
+
+    Shared by ``search_facet_counts`` and ``search_document_counts``: the SQL
+    recall (raw columns) is a superset; the in-memory knowledge-surface check
+    removes pages whose only literal match lives in scanner-artifact lines,
+    keeping the counts consistent with the post-filtered result window.
+    """
+
+    rows = connection.execute(
+        f"""
+        SELECT p.id, p.document_id, p.review_status,
+            p.markdown_content, p.ocr_text, p.extracted_text,
+            d.title AS document_title, d.filename
+        FROM pages p
+        JOIN documents d ON d.id = p.document_id
+        {where}
+        """,
+        tuple(parameters),
+    ).fetchall()
+    if not literal_terms:
+        return list(rows)
+    metadata = database._metadata_for_pages_connection(
+        connection, tuple(int(row["id"]) for row in rows)
+    )
+    kept: list[sqlite3.Row] = []
+    for row in rows:
+        tags, projects = metadata.get(int(row["id"]), ((), ()))
+        values = _knowledge_surface_values(row, tags, projects)
+        if _page_matches_knowledge_surface(values, match_fields, literal_terms):
+            kept.append(row)
+    return kept
+
+
+def _search_filter_clauses(
+    filters: SearchFilters, *, omit: set[str] | frozenset[str] = frozenset()
+) -> tuple[list[str], list[object]]:
+    """Build filter SQL using placeholders only; tag/project values use AND."""
+
+    clauses: list[str] = []
+    parameters: list[object] = []
+    document_ids = _positive_ids(filters.document_ids)
+    if document_ids and "document" not in omit:
+        placeholders = ",".join("?" for _ in document_ids)
+        clauses.append(f"p.document_id IN ({placeholders})")
+        parameters.extend(document_ids)
+    statuses = tuple(dict.fromkeys(PageStatus(value).value for value in filters.statuses))
+    if statuses and "status" not in omit:
+        placeholders = ",".join("?" for _ in statuses)
+        clauses.append(f"p.review_status IN ({placeholders})")
+        parameters.extend(statuses)
+    for tag_id in _positive_ids(filters.tag_ids) if "tag" not in omit else ():
+        clauses.append(
+            """EXISTS (
+                SELECT 1 FROM tags filter_tag
+                LEFT JOIN document_tags filter_dt
+                    ON filter_dt.tag_id = filter_tag.id
+                LEFT JOIN page_tags filter_pt
+                    ON filter_pt.tag_id = filter_tag.id
+                WHERE filter_tag.id = ? AND
+                    (filter_dt.document_id = p.document_id OR filter_pt.page_id = p.id)
+            )"""
+        )
+        parameters.append(tag_id)
+    for project_id in (
+        _positive_ids(filters.project_ids) if "project" not in omit else ()
+    ):
+        clauses.append(
+            """EXISTS (
+                SELECT 1 FROM projects filter_project
+                LEFT JOIN project_documents filter_pd
+                    ON filter_pd.project_id = filter_project.id
+                LEFT JOIN project_pages filter_pp
+                    ON filter_pp.project_id = filter_project.id
+                WHERE filter_project.id = ? AND
+                    (filter_pd.document_id = p.document_id OR filter_pp.page_id = p.id)
+            )"""
+        )
+        parameters.append(project_id)
+    if filters.has_note and "has_note" not in omit:
+        clauses.append("length(trim(p.markdown_content)) > 0")
+    if filters.evidence_basket_id is not None and "basket" not in omit:
+        basket_id = int(filters.evidence_basket_id)
+        if basket_id <= 0:
+            raise ValueError("证据篮编号必须大于 0")
+        clauses.append(
+            """EXISTS (
+                SELECT 1 FROM evidence_items filter_evidence
+                WHERE filter_evidence.basket_id = ?
+                    AND filter_evidence.page_id = p.id
+            )"""
+        )
+        parameters.append(basket_id)
+    return clauses, parameters
+
+
+def _search_context_where(
+    filters: SearchFilters,
+    terms: Sequence[str],
+    *,
+    omit: set[str] | frozenset[str] = frozenset(),
+) -> tuple[str, list[object]]:
+    """Build one parameterized context used by search facet aggregation."""
+
+    clauses, parameters = _search_filter_clauses(filters, omit=omit)
+    if terms:
+        fields = filters.match_fields or tuple(SearchField)
+        match_clause, match_parameters = _search_match_clause(fields, terms)
+        clauses.insert(0, f"({match_clause})")
+        parameters = [*match_parameters, *parameters]
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    return where, parameters
+
+
+def _search_order_by(sort_by: SearchSort | str) -> str:
+    try:
+        normalized = SearchSort(sort_by)
+    except ValueError:
+        normalized = SearchSort.RELEVANCE
+    return {
+        SearchSort.RELEVANCE: (
+            "relevance_score ASC, p.document_id, p.page_number"
+        ),
+        SearchSort.DOCUMENT_PAGE: (
+            "d.title COLLATE NOCASE ASC, p.page_number ASC, p.id ASC"
+        ),
+        SearchSort.VIEWED_DESC: (
+            "p.last_viewed_at IS NULL, p.last_viewed_at DESC, "
+            "p.document_id, p.page_number"
+        ),
+        SearchSort.UPDATED_DESC: (
+            "p.updated_at DESC, p.document_id, p.page_number"
+        ),
+    }[normalized]
+
+
+def _relevance_expression(
+    terms: Sequence[str],
+    rank_terms: Sequence[str] | None = None,
+    *,
+    coverage_content_boost: bool = False,
+) -> tuple[str, list[object]]:
+    """Build an explainable metadata/content boost independent of the UI.
+
+    Field boosts (title/filename/tag/project and the content columns) anchor
+    on the *ranking* terms when provided (HBV2-MORNING-20260909 M1): a demoted
+    isolated digit contained in a document title (2024, v1.0, VFD-900) must
+    not hand its -30 title boost to number-dense decoy pages. Literal recall
+    and matched-field display remain driven by the full term list.
+
+    The exact-phrase bonus keeps the first literal term except when that term
+    is an isolated pure digit and substantive ranking terms exist. This keeps
+    the high-precision leading CJK phrase behavior while preventing a demoted
+    question number from re-entering through the separate -10 phrase path.
+    For a digits-only query ``rank_terms`` is empty and the existing literal
+    fallback remains, so ordinary numeric recall still works.
+
+    ``coverage_content_boost`` (M1R-A second residual, HY4 retest 2026-09-10):
+    with the flag on, the three *content* fields (extracted/OCR/markdown)
+    switch from one boolean CASE per field to one additive CASE per ranking
+    term, so a page containing more distinct query words outranks pages that
+    contain fewer. The default keeps the frozen per-field boolean because the
+    Phase 1D baseline and the frozen query set depend on it byte-for-byte;
+    the flag is enabled only by the zero-recall widening retry, where the
+    widened pool is otherwise tie-broken by document id and the correct page
+    (matching several rare fragments) drowns among pages matching one.
+    """
+
+    weighted_fields = (
+        (SearchField.DOCUMENT_TITLE, 30.0),
+        (SearchField.FILENAME, 18.0),
+        (SearchField.TAG, 14.0),
+        (SearchField.PROJECT, 12.0),
+        (SearchField.MARKDOWN, 7.0),
+        (SearchField.OCR_TEXT, 5.0),
+        (SearchField.EXTRACTED_TEXT, 4.0),
+    )
+    content_fields = (
+        SearchField.MARKDOWN,
+        SearchField.OCR_TEXT,
+        SearchField.EXTRACTED_TEXT,
+    )
+    parts = ["COALESCE(cm.search_rank, 0.0)"]
+    parameters: list[object] = []
+    boost_terms = tuple(rank_terms) if rank_terms else tuple(terms)
+    for field, weight in weighted_fields:
+        if coverage_content_boost and field in content_fields:
+            for boost_term in dict.fromkeys(boost_terms):
+                clause, field_parameters = _search_match_clause(
+                    (field,), (boost_term,)
+                )
+                parts.append(f"CASE WHEN ({clause}) THEN -{weight} ELSE 0.0 END")
+                parameters.extend(field_parameters)
+            continue
+        clause, field_parameters = _search_match_clause((field,), boost_terms)
+        parts.append(f"CASE WHEN ({clause}) THEN -{weight} ELSE 0.0 END")
+        parameters.extend(field_parameters)
+    if rank_terms:
+        phrase_anchor = next(
+            (term for term in terms if not re.fullmatch(r"[0-9]+", term)),
+            None,
+        )
+        phrase_anchor = phrase_anchor or boost_terms[0]
+    else:
+        phrase_anchor = terms[0] if terms else None
+    if phrase_anchor is not None:
+        phrase_clause, phrase_parameters = _search_match_clause(
+            tuple(SearchField), (phrase_anchor,)
+        )
+        parts.append(f"CASE WHEN ({phrase_clause}) THEN -10.0 ELSE 0.0 END")
+        parameters.extend(phrase_parameters)
+    return " + ".join(parts), parameters
+
+
+def _matching_fields(
+    values: dict[SearchField, str],
+    terms: Sequence[str],
+) -> tuple[SearchField, ...]:
+    """Report which knowledge surfaces actually contain a query term.
+
+    V086-309-PRT1: evaluation uses the sanitized per-field values so a match
+    that only exists in a raw scanner-artifact line is never displayed as a
+    matched field (and can therefore not leak into a snippet either).
+    """
+
+    folded = {field: value.casefold() for field, value in values.items()}
+    return tuple(
+        field
+        for field in _SEARCH_FIELD_ORDER
+        if any(term.casefold() in folded[field] for term in terms)
+    )
+
+
+def _matched_content(
+    values: dict[SearchField, str],
+    fields: Sequence[SearchField],
+) -> str:
+    """Return the first matched knowledge surface that carries visible text."""
+
+    for field in fields:
+        if values[field].strip():
+            return values[field]
+    return (
+        values[SearchField.MARKDOWN].strip()
+        or values[SearchField.OCR_TEXT].strip()
+        or values[SearchField.EXTRACTED_TEXT].strip()
+        or values[SearchField.DOCUMENT_TITLE].strip()
+        or values[SearchField.FILENAME].strip()
+    )
+
+
+def _like_pattern(term: str) -> str:
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _positive_ids(values: Sequence[int]) -> tuple[int, ...]:
+    return tuple(dict.fromkeys(int(value) for value in values if int(value) > 0))
+
+
+def _validate_positive_id(value: object, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{label} 必须是正整数：{value!r}")
+    return value
+
+
+def _optional_positive_id(value: object, label: str) -> int | None:
+    if value is None:
+        return None
+    return _validate_positive_id(value, label)
+
+
+def _optional_int(value: object) -> int | None:
+    return int(value) if value is not None else None  # type: ignore[arg-type]
+
+
+def _knowledge_object_from_row(row: sqlite3.Row) -> KnowledgeObject:
+    return KnowledgeObject(
+        id=int(row["id"]),
+        kind=KnowledgeObjectKind(row["kind"]),
+        authorship=KnowledgeAuthorship(row["authorship"]),
+        epistemic_basis=KnowledgeEpistemicBasis(row["epistemic_basis"]),
+        title=str(row["title"]),
+        content=str(row["content"]),
+        importance=NoteImportance(row["importance"]),
+        lifecycle=KnowledgeLifecycle(row["lifecycle"]),
+        superseded_by_ko_id=_optional_int(row["superseded_by_ko_id"]),
+        confirmation_status=KnowledgeConfirmationStatus(row["confirmation_status"]),
+        confirmed_at=_parse_datetime(row["confirmed_at"]),
+        confirmed_revision=_optional_int(row["confirmed_revision"]),
+        current_revision=int(row["current_revision"]),
+        created_at=_parse_datetime(row["created_at"]),  # type: ignore[arg-type]
+        updated_at=_parse_datetime(row["updated_at"]),  # type: ignore[arg-type]
+    )
+
+
+def _knowledge_object_source_from_row(row: sqlite3.Row) -> KnowledgeObjectSource:
+    return KnowledgeObjectSource(
+        id=int(row["id"]),
+        knowledge_object_id=int(row["knowledge_object_id"]),
+        source_type=KnowledgeObjectSourceType(row["source_type"]),
+        source_id=int(row["source_id"]),
+        source_note=str(row["source_note"]),
+        source_fingerprint=(
+            str(row["source_fingerprint"])
+            if row["source_fingerprint"] is not None
+            else None
+        ),
+        fingerprint_version=int(row["fingerprint_version"]),
+        captured_at=_parse_datetime(row["captured_at"]),  # type: ignore[arg-type]
+        created_at=_parse_datetime(row["created_at"]),  # type: ignore[arg-type]
+    )
+
+
+def _knowledge_relation_from_row(row: sqlite3.Row) -> KnowledgeRelation:
+    return KnowledgeRelation(
+        id=int(row["id"]),
+        source_ko_id=int(row["source_ko_id"]),
+        target_ko_id=int(row["target_ko_id"]),
+        relation_type=KnowledgeRelationType(row["relation_type"]),
+        description=str(row["description"]),
+        created_at=_parse_datetime(row["created_at"]),  # type: ignore[arg-type]
+    )
+
+
+def _knowledge_memory_entry_from_row(row: sqlite3.Row) -> KnowledgeMemoryEntry:
+    return KnowledgeMemoryEntry(
+        id=int(row["id"]),
+        kind=KnowledgeMemoryEntryKind(row["kind"]),
+        title=str(row["title"]),
+        content=str(row["content"]),
+        root_cause=str(row["root_cause"]),
+        lesson=str(row["lesson"]),
+        knowledge_object_id=_optional_int(row["knowledge_object_id"]),
+        document_id=_optional_int(row["document_id"]),
+        page_id=_optional_int(row["page_id"]),
+        status=KnowledgeMemoryStatus(row["status"]),
+        created_at=_parse_datetime(row["created_at"]),  # type: ignore[arg-type]
+        updated_at=_parse_datetime(row["updated_at"]),  # type: ignore[arg-type]
+        content_revision=int(row["content_revision"]),
+        outcome=str(row["outcome"]),
+        context_conditions=str(row["context_conditions"]),
+        creation_origin=(
+            str(row["creation_origin"])
+            if row["creation_origin"] is not None
+            else None
+        ),
+        citation_snapshot=str(row["citation_snapshot"]),
+        content_fingerprint=(
+            str(row["content_fingerprint"])
+            if row["content_fingerprint"] is not None
+            else None
+        ),
+        source_entry_id=_optional_int(row["source_entry_id"]),
+        source_title=(
+            str(row["source_title"]) if row["source_title"] is not None else None
+        ),
+        root_cause_confirmed=bool(row["root_cause_confirmed"]),
+    )
+
+
+def _ai_call_from_row(row: sqlite3.Row) -> AiCallRecord:
+    return AiCallRecord(
+        call_uuid=str(row["call_uuid"]),
+        capability=str(row["capability"]),
+        model=str(row["model"]),
+        prompt_sha256=str(row["prompt_sha256"]),
+        input_chars=int(row["input_chars"]),
+        status=str(row["status"]),
+        source_feature=str(row["source_feature"]),
+        target_refs=_json_string_tuple(row["target_refs"]),
+        error_class=(
+            str(row["error_class"]) if row["error_class"] is not None else None
+        ),
+        retry_count=int(row["retry_count"]),
+        latency_ms=(
+            int(row["latency_ms"]) if row["latency_ms"] is not None else None
+        ),
+        prompt_tokens=(
+            int(row["prompt_tokens"]) if row["prompt_tokens"] is not None else None
+        ),
+        completion_tokens=(
+            int(row["completion_tokens"])
+            if row["completion_tokens"] is not None
+            else None
+        ),
+        total_tokens=(
+            int(row["total_tokens"]) if row["total_tokens"] is not None else None
+        ),
+        finish_reason=(
+            str(row["finish_reason"]) if row["finish_reason"] is not None else None
+        ),
+        created_at=str(row["created_at"]),
+        provider=str(row["provider"]),
+        resolved_model=(
+            str(row["resolved_model"])
+            if row["resolved_model"] is not None
+            else None
+        ),
+    )
+
+
+def _ai_output_from_row(row: sqlite3.Row) -> AiOutputRecord:
+    return AiOutputRecord(
+        output_uuid=str(row["output_uuid"]),
+        call_uuid=(
+            str(row["call_uuid"]) if row["call_uuid"] is not None else None
+        ),
+        model=str(row["model"]),
+        context_package_sha256=(
+            str(row["context_package_sha256"])
+            if row["context_package_sha256"] is not None
+            else None
+        ),
+        output_sha256=str(row["output_sha256"]),
+        output_kind=str(row["output_kind"]),
+        source_feature=str(row["source_feature"]),
+        target_refs=_json_string_tuple(row["target_refs"]),
+        recheck_path=(
+            str(row["recheck_path"]) if row["recheck_path"] is not None else None
+        ),
+        created_at=str(row["created_at"]),
+    )
+
+
+def _knowledge_project_link_from_row(row: sqlite3.Row) -> KnowledgeProjectLink:
+    return KnowledgeProjectLink(
+        id=int(row["id"]),
+        project_id=int(row["project_id"]),
+        target_type=str(row["target_type"]),
+        target_id=int(row["target_id"]),
+        created_at=_parse_datetime(row["created_at"]),  # type: ignore[arg-type]
+    )
+
+
+def _json_string_tuple(value: str) -> tuple[str, ...]:
+    """Decode a JSON string array stored in an audit column, fail-safe."""
+
+    if not value:
+        return ()
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        LOGGER.warning("审计列 JSON 解析失败，按空引用处理：%s", value)
+        return ()
+    if not isinstance(decoded, list):
+        return ()
+    return tuple(str(item) for item in decoded)
+
+
+def _knowledge_revision_from_row(row: sqlite3.Row) -> KnowledgeRevision:
+    return KnowledgeRevision(
+        id=int(row["id"]),
+        knowledge_object_id=_optional_int(row["knowledge_object_id"]),
+        object_local_id_snapshot=_optional_int(row["object_local_id_snapshot"]),
+        object_stable_id_snapshot=(
+            str(row["object_stable_id_snapshot"])
+            if row["object_stable_id_snapshot"] is not None
+            else None
+        ),
+        object_title_snapshot=str(row["object_title_snapshot"]),
+        object_kind_snapshot=str(row["object_kind_snapshot"]),
+        revision_number=int(row["revision_number"]),
+        event_type=KnowledgeRevisionEventType(row["event_type"]),
+        before_title=(
+            str(row["before_title"]) if row["before_title"] is not None else None
+        ),
+        after_title=(
+            str(row["after_title"]) if row["after_title"] is not None else None
+        ),
+        before_content=(
+            str(row["before_content"]) if row["before_content"] is not None else None
+        ),
+        after_content=(
+            str(row["after_content"]) if row["after_content"] is not None else None
+        ),
+        before_lifecycle=(
+            str(row["before_lifecycle"]) if row["before_lifecycle"] is not None else None
+        ),
+        after_lifecycle=(
+            str(row["after_lifecycle"]) if row["after_lifecycle"] is not None else None
+        ),
+        before_confirmation=(
+            str(row["before_confirmation"])
+            if row["before_confirmation"] is not None
+            else None
+        ),
+        after_confirmation=(
+            str(row["after_confirmation"])
+            if row["after_confirmation"] is not None
+            else None
+        ),
+        superseded_by_before=_optional_int(row["superseded_by_before"]),
+        superseded_by_after=_optional_int(row["superseded_by_after"]),
+        source_ref=(
+            str(row["source_ref"]) if row["source_ref"] is not None else None
+        ),
+        payload_version=int(row["payload_version"]),
+        detail=str(row["detail"]),
+        created_at=_parse_datetime(row["created_at"]),  # type: ignore[arg-type]
+    )
+
+
+__all__ = [
+    "Database",
+    "DatabaseError",
+    "DuplicateDocumentError",
+    "DuplicateNameError",
+    "RecordNotFoundError",
+]

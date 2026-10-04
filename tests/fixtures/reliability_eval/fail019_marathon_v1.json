@@ -1,0 +1,1339 @@
+{
+ "eval_id": "fail019_marathon_v1",
+ "corpus_ref": "dirty-long-term-v2",
+ "frozen_at": "2026-09-06T15:30:43.307629+00:00",
+ "model_expectation": "FAIL-019 复现战役：20 种措辞 x 5 次重复 = 100 case-runs。真值绑定 90↔2mm、120↔3mm、150↔4mm；任何值-标签错位配对即为复现。目标：统计经验复现率与首次出错层。",
+ "notes": "冻结于 marathon 启动前；repetition 用于概率性错误事实的复现统计。",
+ "cases": [
+  {
+   "case_id": "M001",
+   "family": "fail019_row_binding",
+   "question": "2mm板用多少安起弧？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M002",
+   "family": "fail019_row_binding",
+   "question": "2毫米板焊接电流多少？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M003",
+   "family": "fail019_row_binding",
+   "question": "焊2mm的板电流打多少？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M004",
+   "family": "fail019_row_binding",
+   "question": "二毫米板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M005",
+   "family": "fail019_row_binding",
+   "question": "3mm板用多少安起弧？",
+   "expect": {
+    "answer_fragments": [
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M006",
+   "family": "fail019_row_binding",
+   "question": "三毫米焊接电流是多少？",
+   "expect": {
+    "answer_fragments": [
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M007",
+   "family": "fail019_row_binding",
+   "question": "4mm板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M008",
+   "family": "fail019_row_binding",
+   "question": "4毫米的焊接电流？",
+   "expect": {
+    "answer_fragments": [
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M009",
+   "family": "fail019_row_binding",
+   "question": "2mm和3mm分别用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M010",
+   "family": "fail019_row_binding",
+   "question": "2/3/4mm一起列出来",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M011",
+   "family": "fail019_row_binding",
+   "question": "把三种板厚的电流都列出来",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M012",
+   "family": "fail019_row_binding",
+   "question": "90还是120？2mm板用哪个？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M013",
+   "family": "fail019_row_binding",
+   "question": "薄一点那个板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M014",
+   "family": "fail019_row_binding",
+   "question": "150对应多厚的板？",
+   "expect": {
+    "answer_fragments": [
+     "4"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M015",
+   "family": "fail019_row_binding",
+   "question": "哪种板厚电流最大？",
+   "expect": {
+    "answer_fragments": [
+     "4"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M016",
+   "family": "fail019_row_binding",
+   "question": "焊接电流对照表里2mm是多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M017",
+   "family": "fail019_row_binding",
+   "question": "板厚2mm电流90对吗？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M018",
+   "family": "fail019_row_binding",
+   "question": "最薄的板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M019",
+   "family": "fail019_row_binding",
+   "question": "3mm和4mm的焊接电流分别是多少？",
+   "expect": {
+    "answer_fragments": [
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M020",
+   "family": "fail019_row_binding",
+   "question": "焊接板厚电流对照，2毫米对应多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M021",
+   "family": "fail019_row_binding",
+   "question": "2mm板用多少安起弧？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M022",
+   "family": "fail019_row_binding",
+   "question": "2毫米板焊接电流多少？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M023",
+   "family": "fail019_row_binding",
+   "question": "焊2mm的板电流打多少？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M024",
+   "family": "fail019_row_binding",
+   "question": "二毫米板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M025",
+   "family": "fail019_row_binding",
+   "question": "3mm板用多少安起弧？",
+   "expect": {
+    "answer_fragments": [
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M026",
+   "family": "fail019_row_binding",
+   "question": "三毫米焊接电流是多少？",
+   "expect": {
+    "answer_fragments": [
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M027",
+   "family": "fail019_row_binding",
+   "question": "4mm板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M028",
+   "family": "fail019_row_binding",
+   "question": "4毫米的焊接电流？",
+   "expect": {
+    "answer_fragments": [
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M029",
+   "family": "fail019_row_binding",
+   "question": "2mm和3mm分别用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M030",
+   "family": "fail019_row_binding",
+   "question": "2/3/4mm一起列出来",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M031",
+   "family": "fail019_row_binding",
+   "question": "把三种板厚的电流都列出来",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M032",
+   "family": "fail019_row_binding",
+   "question": "90还是120？2mm板用哪个？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M033",
+   "family": "fail019_row_binding",
+   "question": "薄一点那个板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M034",
+   "family": "fail019_row_binding",
+   "question": "150对应多厚的板？",
+   "expect": {
+    "answer_fragments": [
+     "4"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M035",
+   "family": "fail019_row_binding",
+   "question": "哪种板厚电流最大？",
+   "expect": {
+    "answer_fragments": [
+     "4"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M036",
+   "family": "fail019_row_binding",
+   "question": "焊接电流对照表里2mm是多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M037",
+   "family": "fail019_row_binding",
+   "question": "板厚2mm电流90对吗？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M038",
+   "family": "fail019_row_binding",
+   "question": "最薄的板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M039",
+   "family": "fail019_row_binding",
+   "question": "3mm和4mm的焊接电流分别是多少？",
+   "expect": {
+    "answer_fragments": [
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M040",
+   "family": "fail019_row_binding",
+   "question": "焊接板厚电流对照，2毫米对应多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M041",
+   "family": "fail019_row_binding",
+   "question": "2mm板用多少安起弧？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M042",
+   "family": "fail019_row_binding",
+   "question": "2毫米板焊接电流多少？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M043",
+   "family": "fail019_row_binding",
+   "question": "焊2mm的板电流打多少？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M044",
+   "family": "fail019_row_binding",
+   "question": "二毫米板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M045",
+   "family": "fail019_row_binding",
+   "question": "3mm板用多少安起弧？",
+   "expect": {
+    "answer_fragments": [
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M046",
+   "family": "fail019_row_binding",
+   "question": "三毫米焊接电流是多少？",
+   "expect": {
+    "answer_fragments": [
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M047",
+   "family": "fail019_row_binding",
+   "question": "4mm板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M048",
+   "family": "fail019_row_binding",
+   "question": "4毫米的焊接电流？",
+   "expect": {
+    "answer_fragments": [
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M049",
+   "family": "fail019_row_binding",
+   "question": "2mm和3mm分别用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M050",
+   "family": "fail019_row_binding",
+   "question": "2/3/4mm一起列出来",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M051",
+   "family": "fail019_row_binding",
+   "question": "把三种板厚的电流都列出来",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M052",
+   "family": "fail019_row_binding",
+   "question": "90还是120？2mm板用哪个？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M053",
+   "family": "fail019_row_binding",
+   "question": "薄一点那个板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M054",
+   "family": "fail019_row_binding",
+   "question": "150对应多厚的板？",
+   "expect": {
+    "answer_fragments": [
+     "4"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M055",
+   "family": "fail019_row_binding",
+   "question": "哪种板厚电流最大？",
+   "expect": {
+    "answer_fragments": [
+     "4"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M056",
+   "family": "fail019_row_binding",
+   "question": "焊接电流对照表里2mm是多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M057",
+   "family": "fail019_row_binding",
+   "question": "板厚2mm电流90对吗？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M058",
+   "family": "fail019_row_binding",
+   "question": "最薄的板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M059",
+   "family": "fail019_row_binding",
+   "question": "3mm和4mm的焊接电流分别是多少？",
+   "expect": {
+    "answer_fragments": [
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M060",
+   "family": "fail019_row_binding",
+   "question": "焊接板厚电流对照，2毫米对应多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M061",
+   "family": "fail019_row_binding",
+   "question": "2mm板用多少安起弧？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M062",
+   "family": "fail019_row_binding",
+   "question": "2毫米板焊接电流多少？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M063",
+   "family": "fail019_row_binding",
+   "question": "焊2mm的板电流打多少？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M064",
+   "family": "fail019_row_binding",
+   "question": "二毫米板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M065",
+   "family": "fail019_row_binding",
+   "question": "3mm板用多少安起弧？",
+   "expect": {
+    "answer_fragments": [
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M066",
+   "family": "fail019_row_binding",
+   "question": "三毫米焊接电流是多少？",
+   "expect": {
+    "answer_fragments": [
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M067",
+   "family": "fail019_row_binding",
+   "question": "4mm板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M068",
+   "family": "fail019_row_binding",
+   "question": "4毫米的焊接电流？",
+   "expect": {
+    "answer_fragments": [
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M069",
+   "family": "fail019_row_binding",
+   "question": "2mm和3mm分别用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M070",
+   "family": "fail019_row_binding",
+   "question": "2/3/4mm一起列出来",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M071",
+   "family": "fail019_row_binding",
+   "question": "把三种板厚的电流都列出来",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M072",
+   "family": "fail019_row_binding",
+   "question": "90还是120？2mm板用哪个？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M073",
+   "family": "fail019_row_binding",
+   "question": "薄一点那个板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M074",
+   "family": "fail019_row_binding",
+   "question": "150对应多厚的板？",
+   "expect": {
+    "answer_fragments": [
+     "4"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M075",
+   "family": "fail019_row_binding",
+   "question": "哪种板厚电流最大？",
+   "expect": {
+    "answer_fragments": [
+     "4"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M076",
+   "family": "fail019_row_binding",
+   "question": "焊接电流对照表里2mm是多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M077",
+   "family": "fail019_row_binding",
+   "question": "板厚2mm电流90对吗？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M078",
+   "family": "fail019_row_binding",
+   "question": "最薄的板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M079",
+   "family": "fail019_row_binding",
+   "question": "3mm和4mm的焊接电流分别是多少？",
+   "expect": {
+    "answer_fragments": [
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M080",
+   "family": "fail019_row_binding",
+   "question": "焊接板厚电流对照，2毫米对应多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M081",
+   "family": "fail019_row_binding",
+   "question": "2mm板用多少安起弧？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M082",
+   "family": "fail019_row_binding",
+   "question": "2毫米板焊接电流多少？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M083",
+   "family": "fail019_row_binding",
+   "question": "焊2mm的板电流打多少？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M084",
+   "family": "fail019_row_binding",
+   "question": "二毫米板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M085",
+   "family": "fail019_row_binding",
+   "question": "3mm板用多少安起弧？",
+   "expect": {
+    "answer_fragments": [
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M086",
+   "family": "fail019_row_binding",
+   "question": "三毫米焊接电流是多少？",
+   "expect": {
+    "answer_fragments": [
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M087",
+   "family": "fail019_row_binding",
+   "question": "4mm板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M088",
+   "family": "fail019_row_binding",
+   "question": "4毫米的焊接电流？",
+   "expect": {
+    "answer_fragments": [
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M089",
+   "family": "fail019_row_binding",
+   "question": "2mm和3mm分别用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M090",
+   "family": "fail019_row_binding",
+   "question": "2/3/4mm一起列出来",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M091",
+   "family": "fail019_row_binding",
+   "question": "把三种板厚的电流都列出来",
+   "expect": {
+    "answer_fragments": [
+     "90",
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M092",
+   "family": "fail019_row_binding",
+   "question": "90还是120？2mm板用哪个？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M093",
+   "family": "fail019_row_binding",
+   "question": "薄一点那个板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M094",
+   "family": "fail019_row_binding",
+   "question": "150对应多厚的板？",
+   "expect": {
+    "answer_fragments": [
+     "4"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M095",
+   "family": "fail019_row_binding",
+   "question": "哪种板厚电流最大？",
+   "expect": {
+    "answer_fragments": [
+     "4"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M096",
+   "family": "fail019_row_binding",
+   "question": "焊接电流对照表里2mm是多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M097",
+   "family": "fail019_row_binding",
+   "question": "板厚2mm电流90对吗？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M098",
+   "family": "fail019_row_binding",
+   "question": "最薄的板用多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M099",
+   "family": "fail019_row_binding",
+   "question": "3mm和4mm的焊接电流分别是多少？",
+   "expect": {
+    "answer_fragments": [
+     "120",
+     "150"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  },
+  {
+   "case_id": "M100",
+   "family": "fail019_row_binding",
+   "question": "焊接板厚电流对照，2毫米对应多少安？",
+   "expect": {
+    "answer_fragments": [
+     "90"
+    ]
+   },
+   "metrics": {
+    "answer": "answer"
+   }
+  }
+ ]
+}

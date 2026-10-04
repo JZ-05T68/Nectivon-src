@@ -1,0 +1,56 @@
+{
+  "manifest_id": "dirty-long-term-v1",
+  "frozen_at": "2026-09-06T07:15:00+08:00",
+  "database_path_expected": "<STAGING_DATABASE_PATH>",
+  "documents": [
+    {
+      "title": "传动轴振动排查手册",
+      "sha256": "c343f8e717c955315b249ba29cce48d774e3f78d67a63e58f823f284a142df97"
+    },
+    {
+      "title": "泵维护视觉手册",
+      "sha256": "c1045ea08cf28afcc275598da539b2279a3abca840a97d85526cfc4bb796745c"
+    },
+    {
+      "title": "空压机维护说明",
+      "sha256": "30f24ffbc24229c86608626c5273e8f67c360c94232fcbe9f4fe04f2bf46bff8"
+    },
+    {
+      "title": "故障分布模糊分级",
+      "sha256": "581773ee84eccc3df01dca367a2d1a4e679ee6e3818dc92a9fa4004c0a31c903"
+    },
+    {
+      "title": "冷却水泵性能图表",
+      "sha256": "b8f41b05f2ee9d07bf8fdbc8a6f57b4ac24df1b098d0fea7324481f187712212"
+    },
+    {
+      "title": "材料科学_回火工艺",
+      "sha256": "0d2b6d31c2f113d0f8baf081731e8f1616add538757d2cfdf774a5cd74bc19ff"
+    },
+    {
+      "title": "泵维护视觉手册_v1.0",
+      "sha256": "28fbdce6db9f6ee632a8a8e351f21b3a2ac326123cc221c39671b42327f27f97"
+    },
+    {
+      "title": "泵维护视觉手册_v1.1",
+      "sha256": "6d7c60170c2cfc98c71d86243d9156d524fa2dee06023ff6b3d4dca195ffc7c9"
+    },
+    {
+      "title": "泵维护视觉手册_v2.0",
+      "sha256": "f93f8f923efeb0f1faea5a78c45bf78c975346dae3c559f889ca56d605759e94"
+    },
+    {
+      "title": "冷却水泵性能图表",
+      "sha256": "7edd63fcff11394ef601ce579a5f9c8dd6553ca2c40b666cc0eb79b7a234795b"
+    },
+    {
+      "title": "变频器OC报警排查记录",
+      "sha256": "77b6720f48f431e722348f6d4d45e68776734398374e780bc6dc2d6a09976244"
+    },
+    {
+      "title": "空压机完整维护手册",
+      "sha256": "5e8a2c06416822f345d8be29057ac64d57e4cddb9299b3c5b3b6e2a7fe0c8a94"
+    }
+  ],
+  "knowledge_memory_entry_count": 24
+}

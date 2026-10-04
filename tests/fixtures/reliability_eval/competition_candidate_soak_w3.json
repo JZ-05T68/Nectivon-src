@@ -1,0 +1,33 @@
+{
+  "eval_id": "competition_candidate_soak_w3",
+  "corpus_ref": "dirty-long-term-v2",
+  "frozen_at": "2026-09-06T18:12:00+08:00",
+  "model_expectation": "真实单步 Agent + 硬模型；多主题单查询边界测绘：同族应全答；跨族第二主题允许诚实拒答/部分回答，但不得出现错误事实或编造",
+  "notes": "COMPETITION CANDIDATE STRESS W3：多主题单查询边界矩阵（2 topics same/diff family、3 topics、visual+text、visual+experience、version+experience、两个版本族）。",
+  "cases": [
+    {"case_id": "MT01", "family": "two_topic_same_doc", "question": "液压站现行额定油压和油温限值分别是多少？", "expect": {"answer_fragments": ["12.5", "55"]}, "metrics": {"multi_topic": "answer"}},
+    {"case_id": "MT02", "family": "two_topic_cross_family", "question": "液压站现行额定油压和焊接3mm板的电流分别是多少？", "expect": {"answer_fragments": ["12.5", "120"]}, "metrics": {"multi_topic": "answer", "boundary_probe": "answer"}},
+    {"case_id": "MT03", "family": "two_version_families", "question": "齿轮箱现行温度报警阈值和液压站现行额定油压分别是多少？", "expect": {"answer_fragments": ["80", "12.5"]}, "metrics": {"multi_topic": "answer", "boundary_probe": "answer"}},
+    {"case_id": "MT04", "family": "version_plus_experience", "question": "齿轮箱现行温度报警阈值是多少？之前异振最终查明的根因是什么？", "expect": {"answer_fragments": ["80"], "answer_any_fragments": [["地脚", "基础", "松动"]]}, "metrics": {"multi_topic": "answer", "boundary_probe": "answer"}},
+    {"case_id": "MT05", "family": "visual_plus_text", "question": "冷却水泵P-303的额定流量和输送线的链速分别是多少？", "expect": {"answer_fragments": ["46", "0.8"]}, "metrics": {"multi_topic": "answer", "boundary_probe": "answer"}},
+    {"case_id": "MT06", "family": "two_visual_docs", "question": "cam4的帧率和注塑周期里冷却的占比分别是多少？", "expect": {"answer_fragments": ["60", "50"]}, "metrics": {"multi_topic": "answer", "boundary_probe": "answer"}},
+    {"case_id": "MT07", "family": "two_topic_noise_flange", "question": "工位D的噪音是多少分贝？法兰M12的力矩是多少？", "expect": {"answer_fragments": ["85", "65"]}, "metrics": {"multi_topic": "answer", "boundary_probe": "answer"}},
+    {"case_id": "MT08", "family": "two_topic_plan_training", "question": "2026年大修安排几次？2026Q1安全培训覆盖几个人？", "expect": {"answer_fragments": ["3", "8"]}, "metrics": {"multi_topic": "answer", "boundary_probe": "answer"}},
+    {"case_id": "MT09", "family": "two_topic_grounding_photo", "question": "输送线接地电阻要求多少？光电传感器对准公差多少？", "expect": {"answer_fragments": ["4", "5"]}, "metrics": {"multi_topic": "answer"}},
+    {"case_id": "MT10", "family": "two_topic_spare_belt", "question": "滤芯P-191116最低库存几件？新皮带中部挠度多少？", "expect": {"answer_fragments": ["1", "4.5"]}, "metrics": {"multi_topic": "answer", "boundary_probe": "answer"}},
+    {"case_id": "MT11", "family": "two_topic_servo_vfd", "question": "伺服过载能力是多少？变频器散热风扇多久清洁一次？", "expect": {"answer_fragments": ["120"], "answer_any_fragments": [["每月"], ["60"]]}, "metrics": {"multi_topic": "answer", "boundary_probe": "answer"}},
+    {"case_id": "MT12", "family": "two_topic_oil_tank", "question": "液压站油温限值多少？空压机储气罐多久排污一次？", "expect": {"answer_fragments": ["55", "500"]}, "metrics": {"multi_topic": "answer", "boundary_probe": "answer"}},
+    {"case_id": "MT13", "family": "two_topic_belt_cooling", "question": "二号机皮带走廊张力多久测一次？冷却水进口温度上限多少？", "expect": {"answer_any_fragments": [["季度"], ["35"]]}, "metrics": {"multi_topic": "answer"}},
+    {"case_id": "MT14", "family": "two_topic_valve_exhaust", "question": "安全阀多久校验一次？排气温度多少度报警？", "expect": {"answer_fragments": ["2000", "105"]}, "metrics": {"multi_topic": "answer"}},
+    {"case_id": "MT15", "family": "three_topic_mixed", "question": "齿轮箱2024版温度阈值、绝缘B分册合格线、车间最吵工位的分贝数分别是多少？", "expect": {"answer_fragments": ["75", "10"], "answer_any_fragments": [["D", "85"]]}, "metrics": {"multi_topic": "answer", "boundary_probe": "answer"}},
+    {"case_id": "MT16", "family": "two_draft_conditional", "question": "液压站v3草案油压拟调到多少？空压机高粉尘车间维护周期是多少？", "expect": {"answer_fragments": ["13", "300"]}, "metrics": {"multi_topic": "answer", "boundary_probe": "answer"}},
+    {"case_id": "MT17", "family": "two_topic_terminal_backup", "question": "输送线端子多久紧固一次？变频器参数多久备份一次？", "expect": {"answer_any_fragments": [["半年"], ["季度"]]}, "metrics": {"multi_topic": "answer"}},
+    {"case_id": "MT18", "family": "two_topic_quiet_load", "question": "车间最安静的工位是多少分贝？电机100%负载电流多少安？", "expect": {"answer_fragments": ["75", "15"]}, "metrics": {"multi_topic": "answer", "boundary_probe": "answer"}},
+    {"case_id": "MT19", "family": "two_topic_weld_cam", "question": "2mm板焊接电流多少安？cam2帧率多少？", "expect": {"answer_fragments": ["90", "25"]}, "metrics": {"multi_topic": "answer", "boundary_probe": "answer"}},
+    {"case_id": "MT20", "family": "two_topic_same_visual", "question": "注塑周期里射胶和顶出各占多少？", "expect": {"answer_fragments": ["15", "15"]}, "metrics": {"multi_topic": "answer"}},
+    {"case_id": "MT21", "family": "numeric_neighbor_two_docs", "question": "传动轴地脚螺栓力矩标准是多少？泵手册M8最大力矩是多少？", "expect": {"answer_fragments": ["46", "30"]}, "metrics": {"multi_topic": "answer", "numeric_neighbor": "answer"}},
+    {"case_id": "MT22", "family": "version_attribution_pair", "question": "液压站12 MPa和12.5 MPa分别属于哪个版本？", "expect": {"answer_any_fragments": [["v1", "1"], ["v2", "2"]]}, "metrics": {"version_soak": "answer"}},
+    {"case_id": "MT23", "family": "version_attribution_pair", "question": "齿轮箱80°C和75°C阈值分别出自哪个版本？", "expect": {"answer_any_fragments": [["2026", "试行"], ["2024"]]}, "metrics": {"version_soak": "answer"}},
+    {"case_id": "MT24", "family": "experience_pair_values", "question": "齿轮箱第8次会话测的对中偏差是多少？最终复紧地脚用多大力矩？", "expect": {"answer_fragments": ["0.08", "46"]}, "metrics": {"multi_topic": "answer", "experience_authority": "answer"}}
+  ]
+}

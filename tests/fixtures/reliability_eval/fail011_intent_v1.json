@@ -1,0 +1,207 @@
+{
+  "eval_id": "EKB-FAIL011-INTENT-v1",
+  "corpus_ref": "v0.8-frozen-corpus-v1",
+  "frozen_at": "2026-09-06T06:40:00+08:00",
+  "model_expectation": "qwen3.8-max",
+  "notes": "FAIL-011 经验意图泛化集：A 族=经验召回应命中；B 族=document-only 负控（禁止因'原因/规格'字样强转 knowledge_search）；C-F 族=组合意图（单步边界内最小可靠语义，能力不足记 ARCHITECTURAL_LIMITATION 而非硬凑）。",
+  "cases": [
+    {
+      "case_id": "X01",
+      "family": "intent_experience_only",
+      "question": "变频器这个 OC 报警，我以前是不是搞过？",
+      "expect": {
+        "tool": ["knowledge_search"],
+        "answer_any_fragments": [["保存", "问答", "经验", "整理过"]]
+      },
+      "metrics": {"tool_selection": "tool", "experience_positive": "answer"}
+    },
+    {
+      "case_id": "X02",
+      "family": "intent_experience_only",
+      "question": "我以前是不是遇到过伺服电机方向反的问题？",
+      "expect": {
+        "tool": ["knowledge_search"],
+        "answer_any_fragments": [["对调", "DIR_INV", "经验", "整理过", "遇到过"]],
+        "memory_must_any": [4, 16]
+      },
+      "metrics": {"tool_selection": "tool", "experience_positive": "answer", "citation": "citation"}
+    },
+    {
+      "case_id": "X03",
+      "family": "intent_experience_only",
+      "question": "主轴振荡这个问题之前是怎么排查的？",
+      "expect": {
+        "tool": ["knowledge_search"],
+        "answer_any_fragments": [["速度环增益", "增益"]],
+        "memory_must_any": [6]
+      },
+      "metrics": {"tool_selection": "tool", "experience_positive": "answer", "citation": "citation"}
+    },
+    {
+      "case_id": "X04",
+      "family": "intent_experience_only",
+      "question": "主轴电机这种故障有什么教训？",
+      "expect": {
+        "tool": ["knowledge_search"],
+        "answer_any_fragments": [["增益", "振荡"]],
+        "memory_must_any": [6]
+      },
+      "metrics": {"tool_selection": "tool", "experience_positive": "answer", "citation": "citation"}
+    },
+    {
+      "case_id": "X05",
+      "family": "intent_experience_only",
+      "question": "上次那个传动轴的排查最后是怎么处理的？",
+      "expect": {
+        "tool": ["knowledge_search"],
+        "answer_any_fragments": [["46", "0.35", "对中"]],
+        "memory_must_any": [2, 14]
+      },
+      "metrics": {"tool_selection": "tool", "experience_positive": "answer", "citation": "citation"}
+    },
+    {
+      "case_id": "X06",
+      "family": "intent_experience_evolution",
+      "question": "伺服方向反那个结论，后来还适用吗？",
+      "expect": {
+        "tool": ["knowledge_search"],
+        "answer_any_fragments": [["DIR_INV"]],
+        "memory_must_any": [16]
+      },
+      "metrics": {"tool_selection": "tool", "experience_positive": "answer", "epistemic": "answer", "citation": "citation"}
+    },
+    {
+      "case_id": "X07",
+      "family": "intent_experience_only",
+      "question": "地脚螺栓力矩我之前整理过结论吗？",
+      "expect": {
+        "tool": ["knowledge_search"],
+        "answer_any_fragments": [["25", "30"]],
+        "memory_must_any": [12]
+      },
+      "metrics": {"tool_selection": "tool", "experience_positive": "answer", "citation": "citation"}
+    },
+    {
+      "case_id": "X08",
+      "family": "intent_experience_only",
+      "question": "联轴器对中这类问题我以前有经验吗？",
+      "expect": {
+        "tool": ["knowledge_search"],
+        "answer_any_fragments": [["0.35", "对中"]],
+        "memory_must_any": [14]
+      },
+      "metrics": {"tool_selection": "tool", "experience_positive": "answer", "citation": "citation"}
+    },
+    {
+      "case_id": "X09",
+      "family": "intent_document_negative",
+      "question": "OC 报警的官方定义是什么？",
+      "expect": {
+        "tool": ["page_search"],
+        "forbid_tool": ["knowledge_search"],
+        "no_answer_ok": true
+      },
+      "metrics": {"tool_selection": "tool", "negative_rejection": "answer"}
+    },
+    {
+      "case_id": "X10",
+      "family": "intent_document_negative",
+      "question": "地脚螺栓的国标规格等级是什么？",
+      "expect": {
+        "tool": ["page_search"],
+        "forbid_tool": ["knowledge_search"],
+        "no_answer_ok": true
+      },
+      "metrics": {"tool_selection": "tool", "negative_rejection": "answer"}
+    },
+    {
+      "case_id": "X11",
+      "family": "intent_document_negative",
+      "question": "空压机的额定功率是多少千瓦？",
+      "expect": {
+        "tool": ["page_search"],
+        "forbid_tool": ["knowledge_search"],
+        "no_answer_ok": true
+      },
+      "metrics": {"tool_selection": "tool", "negative_rejection": "answer"}
+    },
+    {
+      "case_id": "X12",
+      "family": "intent_document_positive",
+      "question": "传动轴振动排查手册里对中偏差要求是多少？",
+      "expect": {
+        "tool": ["page_search"],
+        "forbid_tool": ["knowledge_search"],
+        "answer_fragments": ["0.35"],
+        "cite_must": [{"doc": "传动轴振动排查手册", "page": 1}]
+      },
+      "metrics": {"tool_selection": "tool", "answer": "answer", "citation": "citation"}
+    },
+    {
+      "case_id": "X13",
+      "family": "intent_experience_condition",
+      "question": "我之前那条 HLD-750 的经验，在 DemoSuite 3.3 上还能用吗？",
+      "expect": {
+        "tool": ["knowledge_search"],
+        "answer_fragments": ["3.2"],
+        "answer_any_fragments": [["未验证", "不确定", "没有验证", "仅在", "只在", "只验证", "不适用", "谨慎", "无法判断", "不能确定"]],
+        "memory_must_any": [4]
+      },
+      "metrics": {"tool_selection": "tool", "condition_respect": "answer", "experience_positive": "citation", "epistemic": "answer", "citation": "citation"}
+    },
+    {
+      "case_id": "X14",
+      "family": "intent_experience_condition",
+      "question": "以前处理主轴振荡降增益的办法，在高负载新工况下还适用吗？",
+      "expect": {
+        "tool": ["knowledge_search"],
+        "answer_any_fragments": [["增益"], ["适用", "不同", "不确定", "谨慎", "视", "无法判断"]],
+        "memory_must_any": [6]
+      },
+      "metrics": {"tool_selection": "tool", "condition_respect": "answer", "experience_positive": "citation", "citation": "citation"}
+    },
+    {
+      "case_id": "X15",
+      "family": "intent_experience_document",
+      "question": "我以前整理的 M8 力矩结论和现在的新版手册一致吗？",
+      "expect": {
+        "tool": ["knowledge_search", "page_visual_search"],
+        "conflict_required": true
+      },
+      "metrics": {"tool_selection": "tool", "version_discrimination": "answer"}
+    },
+    {
+      "case_id": "X16",
+      "family": "intent_experience_version",
+      "question": "以前按 v1.0 手册整理的力矩经验，放到 v1.1 还能用吗？",
+      "expect": {
+        "tool": ["knowledge_search", "page_visual_search"],
+        "conflict_required": true
+      },
+      "metrics": {"tool_selection": "tool", "version_discrimination": "answer"}
+    },
+    {
+      "case_id": "X17",
+      "family": "intent_experience_evolution",
+      "question": "我以前那个伺服方向反的判断，后来是不是被推翻了？",
+      "expect": {
+        "tool": ["knowledge_search"],
+        "answer_fragments": ["DIR_INV"],
+        "answer_any_fragments": [["推翻", "更正", "修正", "更新", "复测"]],
+        "memory_must_any": [16]
+      },
+      "metrics": {"tool_selection": "tool", "experience_positive": "answer", "epistemic": "answer", "citation": "citation"}
+    },
+    {
+      "case_id": "X18",
+      "family": "intent_experience_evolution",
+      "question": "OC 报警那个老结论现在还算数吗？",
+      "expect": {
+        "tool": ["knowledge_search"],
+        "answer_any_fragments": [["保存", "问答", "经验", "整理过"]],
+        "memory_must_any": [9]
+      },
+      "metrics": {"tool_selection": "tool", "experience_negative": "answer", "epistemic": "answer", "citation": "citation"}
+    }
+  ]
+}

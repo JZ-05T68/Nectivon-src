@@ -1,0 +1,1350 @@
+{
+  "eval_id": "EKB-RELIABILITY-FROZEN-EVAL-v1",
+  "frozen_at": "2026-09-06T01:30:00+08:00",
+  "model_expectation": "qwen3.8-max",
+  "notes": "expect 块仅供判定器使用，禁止进入被测链路。语料 GT 登记见 docs/v0.8-reliability-eval-plan.md §2。",
+  "cases": [
+    {
+      "case_id": "R01",
+      "family": "retrieval_positive",
+      "taxonomy": [
+        "A1"
+      ],
+      "question": "传动轴振动排查手册里规定的现场验证标记是什么？",
+      "expect": {
+        "tool": [
+          "page_search",
+          "knowledge_search"
+        ],
+        "answer_fragments": [
+          "EKB-SIM-8841"
+        ],
+        "cite_must": [
+          {
+            "doc": "传动轴振动排查手册",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "retrieval": "citation",
+        "tool_selection": "tool",
+        "answer": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "R02",
+      "family": "retrieval_positive",
+      "taxonomy": [
+        "A1"
+      ],
+      "question": "空压机的维护周期是多少小时？",
+      "expect": {
+        "tool": [
+          "page_search"
+        ],
+        "forbid_tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "500"
+        ],
+        "cite_must": [
+          {
+            "doc": "空压机维护说明",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "retrieval": "citation",
+        "tool_selection": "tool",
+        "tool_precision": "tool",
+        "answer": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "R03",
+      "family": "retrieval_positive",
+      "taxonomy": [
+        "A1"
+      ],
+      "question": "传动轴振动排查手册记录的联轴器对中偏差是多少毫米？",
+      "expect": {
+        "tool": [
+          "page_search",
+          "knowledge_search"
+        ],
+        "answer_fragments": [
+          "0.35"
+        ],
+        "cite_must": [
+          {
+            "doc": "传动轴振动排查手册",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "retrieval": "citation",
+        "tool_selection": "tool",
+        "answer": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "R04",
+      "family": "retrieval_positive",
+      "taxonomy": [
+        "A1",
+        "F1"
+      ],
+      "question": "地脚螺栓 M10 的标准紧固力矩是多少？",
+      "expect": {
+        "tool": [
+          "page_search",
+          "page_visual_search",
+          "knowledge_search"
+        ],
+        "answer_fragments": [
+          "46"
+        ]
+      },
+      "metrics": {
+        "tool_selection": "tool",
+        "answer": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "R05",
+      "family": "retrieval_positive_paraphrase",
+      "taxonomy": [
+        "A1"
+      ],
+      "question": "帮我看下 EKB-SIM-8841 这个标记出自哪份资料，它是干什么的？",
+      "expect": {
+        "answer_fragments": [
+          "EKB-SIM-8841"
+        ],
+        "cite_must": [
+          {
+            "doc": "传动轴振动排查手册",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "retrieval": "citation",
+        "answer": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "N01",
+      "family": "retrieval_negative",
+      "taxonomy": [
+        "A1",
+        "D5"
+      ],
+      "question": "EKB-S42 的电机轴承型号是什么？",
+      "expect": {
+        "no_answer_ok": true,
+        "answer_any_fragments": [
+          [
+            "没有",
+            "未",
+            "不足",
+            "无法",
+            "找不到"
+          ]
+        ]
+      },
+      "metrics": {
+        "negative_rejection": "answer",
+        "unsupported_claim": "answer"
+      }
+    },
+    {
+      "case_id": "N02",
+      "family": "retrieval_negative",
+      "taxonomy": [
+        "A1",
+        "D5"
+      ],
+      "question": "液压站 build 压力整定应该按什么标准执行？",
+      "expect": {
+        "no_answer_ok": true,
+        "answer_any_fragments": [
+          [
+            "没有",
+            "未",
+            "不足",
+            "无法",
+            "找不到"
+          ]
+        ]
+      },
+      "metrics": {
+        "negative_rejection": "answer",
+        "unsupported_claim": "answer"
+      }
+    },
+    {
+      "case_id": "T01",
+      "family": "tool_selection",
+      "taxonomy": [
+        "B1",
+        "B4"
+      ],
+      "question": "空压机维护周期和运行环境有关系吗？",
+      "expect": {
+        "tool": [
+          "page_search"
+        ],
+        "forbid_tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "500"
+        ]
+      },
+      "metrics": {
+        "tool_selection": "tool",
+        "tool_precision": "tool",
+        "answer": "answer"
+      }
+    },
+    {
+      "case_id": "T02",
+      "family": "visual_extreme",
+      "taxonomy": [
+        "B3",
+        "F2"
+      ],
+      "question": "各台冷却水泵里哪台的额定流量最大？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "P-203"
+        ],
+        "answer_any_fragments": [
+          [
+            "42",
+            "四十二"
+          ]
+        ],
+        "cite_must": [
+          {
+            "doc": "冷却水泵性能图表",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "T03",
+      "family": "visual_extraction",
+      "taxonomy": [
+        "B3",
+        "F2"
+      ],
+      "question": "冷却水泵性能图表里 P-202 的额定流量数值是多少？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "38"
+        ],
+        "cite_must": [
+          {
+            "doc": "冷却水泵性能图表",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "T04",
+      "family": "visual_extraction",
+      "taxonomy": [
+        "B3",
+        "F2"
+      ],
+      "question": "45 钢加热到 200°C 回火后硬度是多少 HRC？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "50"
+        ],
+        "cite_must": [
+          {
+            "doc": "材料科学_回火工艺",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "T05",
+      "family": "visual_extreme",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "泵故障原因分布图里占比最大的是哪一类？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "密封失效"
+        ],
+        "answer_any_fragments": [
+          [
+            "45",
+            "四十五"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "T06",
+      "family": "negative_control_text_sufficient",
+      "taxonomy": [
+        "B4"
+      ],
+      "question": "资料里说的高粉尘环境下空压机维护周期上限是多少小时？",
+      "expect": {
+        "tool": [
+          "page_search"
+        ],
+        "forbid_tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "500"
+        ],
+        "forbid_fragments": [
+          "300"
+        ]
+      },
+      "metrics": {
+        "tool_selection": "tool",
+        "tool_precision": "tool",
+        "condition_respect": "answer",
+        "unsupported_claim": "answer"
+      }
+    },
+    {
+      "case_id": "E01",
+      "family": "experience_positive",
+      "taxonomy": [
+        "C2"
+      ],
+      "question": "上次车间那台 HLD-750 伺服电机方向反了，当时是怎么处理的？",
+      "expect": {
+        "tool": [
+          "knowledge_search"
+        ],
+        "answer_fragments": [
+          "3.2"
+        ],
+        "answer_any_fragments": [
+          [
+            "对调",
+            "U/V",
+            "调换"
+          ]
+        ],
+        "memory_must": [
+          4
+        ]
+      },
+      "metrics": {
+        "experience_positive": "answer",
+        "tool_selection": "tool",
+        "condition_respect": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "E02",
+      "family": "experience_positive",
+      "taxonomy": [
+        "C2",
+        "G2"
+      ],
+      "question": "主轴电机高负载振荡的问题最后是怎么解决的？",
+      "expect": {
+        "tool": [
+          "knowledge_search"
+        ],
+        "answer_fragments": [
+          "速度环增益"
+        ],
+        "memory_must": [
+          6
+        ]
+      },
+      "metrics": {
+        "experience_positive": "answer",
+        "tool_selection": "tool",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "E03",
+      "family": "superseded_experience",
+      "taxonomy": [
+        "C7",
+        "G3",
+        "G4"
+      ],
+      "question": "伺服方向反的真正根因到底是什么？",
+      "expect": {
+        "tool": [
+          "knowledge_search"
+        ],
+        "answer_fragments": [
+          "DIR_INV"
+        ],
+        "answer_any_fragments": [
+          [
+            "经验",
+            "整理过",
+            "保存"
+          ]
+        ],
+        "memory_must": [
+          16
+        ]
+      },
+      "metrics": {
+        "experience_positive": "answer",
+        "tool_selection": "tool",
+        "epistemic": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "E04",
+      "family": "superseded_experience",
+      "taxonomy": [
+        "C7",
+        "G3"
+      ],
+      "question": "地脚螺栓力矩我之前整理过什么结论？",
+      "expect": {
+        "tool": [
+          "knowledge_search"
+        ],
+        "answer_any_fragments": [
+          [
+            "25"
+          ],
+          [
+            "30"
+          ]
+        ],
+        "memory_must": [
+          12
+        ],
+        "memory_forbid": [
+          11
+        ]
+      },
+      "metrics": {
+        "experience_positive": "answer",
+        "tool_selection": "tool",
+        "epistemic": "citation",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "EN01",
+      "family": "experience_negative",
+      "taxonomy": [
+        "C4",
+        "G1",
+        "G2"
+      ],
+      "question": "变频器 OC 报警是什么原因引起的？",
+      "expect": {
+        "tool": [
+          "knowledge_search"
+        ],
+        "answer_any_fragments": [
+          [
+            "保存",
+            "问答",
+            "之前"
+          ]
+        ],
+        "forbid_fragments": [
+          "肯定是"
+        ]
+      },
+      "metrics": {
+        "experience_negative": "answer",
+        "raw_qa_boundary": "answer",
+        "tool_selection": "tool",
+        "epistemic": "answer",
+        "unsupported_claim": "answer"
+      }
+    },
+    {
+      "case_id": "EN02",
+      "family": "experience_negative",
+      "taxonomy": [
+        "C1",
+        "D5"
+      ],
+      "question": "机器人比赛是什么时候？",
+      "expect": {
+        "no_answer_ok": true,
+        "answer_any_fragments": [
+          [
+            "没有",
+            "未",
+            "不足",
+            "无法",
+            "找不到",
+            "保存",
+            "问答"
+          ]
+        ],
+        "forbid_regex": [
+          "\\d+\\s*月\\s*\\d+\\s*[日号]",
+          "\\d{4}\\s*年\\s*\\d+\\s*月"
+        ]
+      },
+      "metrics": {
+        "experience_negative": "answer",
+        "negative_rejection": "answer",
+        "epistemic": "answer",
+        "unsupported_claim": "answer"
+      }
+    },
+    {
+      "case_id": "EN03",
+      "family": "experience_negative",
+      "taxonomy": [
+        "C1"
+      ],
+      "question": "怎么用 Python 把 FastAPI 服务部署到服务器上？",
+      "expect": {
+        "no_answer_ok": true,
+        "answer_any_fragments": [
+          [
+            "没有",
+            "未",
+            "不足",
+            "无法",
+            "找不到"
+          ]
+        ],
+        "memory_forbid_all": true
+      },
+      "metrics": {
+        "experience_negative": "citation",
+        "negative_rejection": "answer"
+      }
+    },
+    {
+      "case_id": "B01",
+      "family": "raw_qa_vs_experience",
+      "taxonomy": [
+        "C4",
+        "G2"
+      ],
+      "question": "上次主轴高负载振荡的根因确定了吗？是什么？",
+      "expect": {
+        "tool": [
+          "knowledge_search"
+        ],
+        "answer_fragments": [
+          "速度环增益"
+        ],
+        "answer_any_fragments": [
+          [
+            "经验",
+            "整理过",
+            "保存",
+            "确认"
+          ]
+        ],
+        "memory_must": [
+          6
+        ]
+      },
+      "metrics": {
+        "raw_qa_boundary": "answer",
+        "experience_positive": "answer",
+        "tool_selection": "tool",
+        "epistemic": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "B02",
+      "family": "raw_qa_vs_experience",
+      "taxonomy": [
+        "C4"
+      ],
+      "question": "PLC 通讯中断怎么排查？我记得之前存过一个相关问答。",
+      "expect": {
+        "tool": [
+          "knowledge_search"
+        ],
+        "answer_any_fragments": [
+          [
+            "保存",
+            "问答",
+            "之前"
+          ]
+        ],
+        "memory_must": [
+          7
+        ]
+      },
+      "metrics": {
+        "raw_qa_boundary": "answer",
+        "experience_negative": "answer",
+        "tool_selection": "tool",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "V01",
+      "family": "version_conflict",
+      "taxonomy": [
+        "A3"
+      ],
+      "question": "泵维护视觉手册_v1.0 里 M8 的标准力矩是多少？",
+      "expect": {
+        "tool": [
+          "page_visual_search",
+          "page_search"
+        ],
+        "answer_fragments": [
+          "25"
+        ],
+        "cite_must": [
+          {
+            "doc": "v1.0",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "version_discrimination": "answer",
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "V02",
+      "family": "version_conflict",
+      "taxonomy": [
+        "A3"
+      ],
+      "question": "泵维护视觉手册_v1.1 里 M8 的标准力矩是多少？",
+      "expect": {
+        "tool": [
+          "page_visual_search",
+          "page_search"
+        ],
+        "answer_fragments": [
+          "28"
+        ],
+        "cite_must": [
+          {
+            "doc": "v1.1",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "version_discrimination": "answer",
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "V03",
+      "family": "version_conflict",
+      "taxonomy": [
+        "A3"
+      ],
+      "question": "泵维护视觉手册_v1.0 里 M8 的最大力矩是多少？",
+      "expect": {
+        "tool": [
+          "page_visual_search",
+          "page_search"
+        ],
+        "answer_fragments": [
+          "30"
+        ],
+        "cite_must": [
+          {
+            "doc": "v1.0",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "version_discrimination": "answer",
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "V04",
+      "family": "version_conflict",
+      "taxonomy": [
+        "A3"
+      ],
+      "question": "泵维护视觉手册_v1.1 里 M8 的最大力矩是多少？",
+      "expect": {
+        "tool": [
+          "page_visual_search",
+          "page_search"
+        ],
+        "answer_fragments": [
+          "32"
+        ],
+        "cite_must": [
+          {
+            "doc": "v1.1",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "version_discrimination": "answer",
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "V05",
+      "family": "version_conflict",
+      "taxonomy": [
+        "A3"
+      ],
+      "question": "泵维护视觉手册的旧版本里 M8 的标准力矩是多少？",
+      "expect": {
+        "tool": [
+          "page_visual_search",
+          "page_search"
+        ],
+        "answer_fragments": [
+          "25"
+        ]
+      },
+      "metrics": {
+        "version_discrimination": "answer",
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "V06",
+      "family": "version_conflict",
+      "taxonomy": [
+        "A3"
+      ],
+      "question": "泵维护视觉手册 2026 年修订版里 M8 的标准力矩是多少？",
+      "expect": {
+        "tool": [
+          "page_visual_search",
+          "page_search"
+        ],
+        "answer_fragments": [
+          "28"
+        ],
+        "cite_must": [
+          {
+            "doc": "v1.1",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "version_discrimination": "answer",
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "V07",
+      "family": "version_conflict",
+      "taxonomy": [
+        "A3"
+      ],
+      "question": "泵维护视觉手册最新版本里 M8 的标准力矩是多少？",
+      "expect": {
+        "tool": [
+          "page_visual_search",
+          "page_search"
+        ],
+        "answer_fragments": [
+          "28"
+        ],
+        "cite_must": [
+          {
+            "doc": "v1.1",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "version_discrimination": "answer",
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "V08",
+      "family": "version_conflict_unspecified",
+      "taxonomy": [
+        "A3",
+        "D4"
+      ],
+      "question": "泵维护视觉手册里 M8 的标准力矩到底是多少？",
+      "expect": {
+        "answer_fragments": [
+          "25",
+          "28"
+        ],
+        "conflict_required": true
+      },
+      "metrics": {
+        "version_discrimination": "answer",
+        "visual_routing": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "V09",
+      "family": "version_conflict",
+      "taxonomy": [
+        "A3"
+      ],
+      "question": "现在的新手册里 M8 地脚螺栓用多大力矩？",
+      "expect": {
+        "tool": [
+          "page_visual_search",
+          "page_search"
+        ],
+        "answer_fragments": [
+          "28"
+        ]
+      },
+      "metrics": {
+        "version_discrimination": "answer",
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "V10",
+      "family": "version_conflict",
+      "taxonomy": [
+        "A3",
+        "D4"
+      ],
+      "question": "泵维护视觉手册不同版本的 M8 力矩数值一样吗？",
+      "expect": {
+        "answer_fragments": [
+          "25",
+          "28"
+        ],
+        "conflict_required": true
+      },
+      "metrics": {
+        "version_discrimination": "answer",
+        "visual_routing": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "C01",
+      "family": "condition_conflict",
+      "taxonomy": [
+        "A5",
+        "C5",
+        "D3"
+      ],
+      "question": "在 DemoSuite 3.3 固件上遇到 HLD-750 电机方向反，可以直接对调 U/V 两相线解决吗？",
+      "expect": {
+        "tool": [
+          "knowledge_search"
+        ],
+        "answer_fragments": [
+          "3.2"
+        ],
+        "answer_any_fragments": [
+          [
+            "未验证",
+            "不确定",
+            "没有验证",
+            "仅在",
+            "只在",
+            "只验证",
+            "不适用",
+            "谨慎"
+          ]
+        ],
+        "memory_must": [
+          4
+        ]
+      },
+      "metrics": {
+        "condition_respect": "answer",
+        "experience_positive": "citation",
+        "tool_selection": "tool",
+        "epistemic": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "C02",
+      "family": "condition_conflict",
+      "taxonomy": [
+        "A5",
+        "D3"
+      ],
+      "question": "空压机在高粉尘车间里维护周期要缩短到多少小时？",
+      "expect": {
+        "tool": [
+          "page_search"
+        ],
+        "forbid_tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "500"
+        ],
+        "forbid_fragments": [
+          "300"
+        ]
+      },
+      "metrics": {
+        "condition_respect": "answer",
+        "tool_selection": "tool",
+        "tool_precision": "tool",
+        "unsupported_claim": "answer"
+      }
+    },
+    {
+      "case_id": "U01",
+      "family": "blur_uncertainty",
+      "taxonomy": [
+        "F4"
+      ],
+      "question": "故障分布模糊分级里第 3 页严重模糊的那张图，占比最大的是哪一类？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "blur_lenient": {
+          "positives": [
+            [
+              "密封失效"
+            ],
+            [
+              "45"
+            ]
+          ],
+          "uncertainty": [
+            "模糊",
+            "无法",
+            "看不清",
+            "不确定",
+            "难以",
+            "不能确定",
+            "无法可靠"
+          ]
+        },
+        "cite_must": [
+          {
+            "doc": "故障分布模糊分级",
+            "page": 3
+          }
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "U02",
+      "family": "blur_uncertainty",
+      "taxonomy": [
+        "F4"
+      ],
+      "question": "故障分布模糊分级里中等模糊的那张图，密封失效占比是多少？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "blur_lenient": {
+          "positives": [
+            [
+              "45"
+            ]
+          ],
+          "uncertainty": [
+            "模糊",
+            "无法",
+            "看不清",
+            "不确定",
+            "难以",
+            "不能确定"
+          ]
+        },
+        "cite_must": [
+          {
+            "doc": "故障分布模糊分级",
+            "page": 2
+          }
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "U03",
+      "family": "blur_uncertainty",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "清晰版故障分布图里占比最低的是哪一类？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_any_fragments": [
+          [
+            "其它",
+            "其他"
+          ],
+          [
+            "10",
+            "十"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "S01",
+      "family": "multi_document",
+      "taxonomy": [
+        "A2",
+        "F5"
+      ],
+      "question": "传动轴手册和泵维护手册里 M10 地脚螺栓的力矩标准一致吗？分别是多少？",
+      "expect": {
+        "answer_fragments": [
+          "46"
+        ],
+        "answer_any_fragments": [
+          [
+            "一致",
+            "相同",
+            "一样"
+          ]
+        ]
+      },
+      "metrics": {
+        "retrieval": "citation",
+        "visual_routing": "tool",
+        "answer": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "TR01",
+      "family": "visual_extreme",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "轴承温度随运行小时的趋势里峰值温度是多少？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "72"
+        ],
+        "cite_must": [
+          {
+            "doc": "冷却水泵性能图表",
+            "page": 2
+          }
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "TR02",
+      "family": "visual_extreme",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "轴承温度趋势里谷值（最低温度）是多少？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "45"
+        ],
+        "answer_any_fragments": [
+          [
+            "0h",
+            "0 小时",
+            "开始",
+            "初始"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "TR03",
+      "family": "visual_trend",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "轴承温度随运行时间整体是怎么变化的？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_any_fragments": [
+          [
+            "上升",
+            "升高",
+            "增加",
+            "递增",
+            "变高"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "TR04",
+      "family": "visual_ranking",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "冷却水泵额定流量排第一的是哪一台？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "P-203"
+        ],
+        "answer_any_fragments": [
+          [
+            "42"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "TR05",
+      "family": "visual_extreme",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "哪台冷却水泵的额定流量最少？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "P-204"
+        ],
+        "answer_any_fragments": [
+          [
+            "29",
+            "二十九"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "TR06",
+      "family": "visual_reasoning_hard",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "45 钢从 200°C 到 600°C 回火，硬度下降最多的温度区间是哪一段？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "300",
+          "400"
+        ],
+        "answer_any_fragments": [
+          [
+            "9",
+            "九"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "TR07",
+      "family": "visual_extreme_paraphrase",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "泵故障分布里哪类问题最常见？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "密封失效"
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "TR08",
+      "family": "visual_extreme",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "泵故障原因分布里哪一类占比最少？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_any_fragments": [
+          [
+            "其它",
+            "其他"
+          ],
+          [
+            "10",
+            "十"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "tool_selection": "tool",
+        "visual_grounding": "answer"
+      }
+    }
+  ],
+  "corpus_ref": "v0.8-frozen-corpus-v1"
+}

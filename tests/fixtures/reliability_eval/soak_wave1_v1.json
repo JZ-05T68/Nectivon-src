@@ -1,0 +1,312 @@
+{
+  "eval_id": "EKB-SOAK-WAVE1-v1",
+  "corpus_ref": "dirty-long-term-v2",
+  "frozen_at": "2026-09-06 14:40:00+08:00",
+  "model_expectation": "qwen3.8-max",
+  "notes": "Long-Term Soak Wave 1（§41-43）：链×版本×条件交叉、低词面相似、诱导站边、deleted-source。Ground truth 来自 dirty-v2 构建事实：齿轮箱阈值 2024=75/2025=78/2026试行=80（现行）；液压 v1=12/v2=12.5 现行/v3草案=13；链 A4 地脚 46Nm 复紧→1.9、A5 稳定 0.5；二号机油品 2000h、排气 105；噪音 D=85；焊接 3mm=120/4mm=150；cam3=45/cam2=25；油温限 55、100h=56 超限；润滑指导书 1500 优先；炉温 +3°C 校准周期 6 个月来源已删；F1 80°C 说法错误（75 报警）。【修订】SW11/SW13 期望过严（答案行为正确），Wave1 运行后放宽并登记 CASE_DESIGN_ERROR-005；SW14 = FAIL-016 多主题查询扩展观察。",
+  "cases": [
+    {
+      "case_id": "SW01",
+      "family": "old_version_threshold",
+      "question": "齿轮箱 2024 版手册写的 75°C 报警线，现在还按它执行吗？",
+      "expect": {
+        "answer_any_fragments": [
+          [
+            "80",
+            "试行",
+            "2026"
+          ],
+          [
+            "不再",
+            "不是",
+            "更新"
+          ]
+        ]
+      },
+      "metrics": {
+        "version_soak": "answer"
+      }
+    },
+    {
+      "case_id": "SW02",
+      "family": "version_limited_experience",
+      "question": "液压站油压按 12 MPa 判断的那个经验，现在还有效吗？",
+      "expect": {
+        "answer_any_fragments": [
+          [
+            "12.5"
+          ],
+          [
+            "v2",
+            "版本",
+            "更新",
+            "现行"
+          ]
+        ]
+      },
+      "metrics": {
+        "version_soak": "answer",
+        "stale_handling": "answer"
+      }
+    },
+    {
+      "case_id": "SW03",
+      "family": "chain_internal_compare",
+      "question": "齿轮箱第 8 次会话的对中结论和第 29 次的哪个更可信？",
+      "expect": {
+        "tool": "knowledge_search",
+        "answer_any_fragments": [
+          [
+            "29",
+            "地脚",
+            "基础",
+            "松动",
+            "确认"
+          ]
+        ]
+      },
+      "metrics": {
+        "evolution_soak": "answer"
+      }
+    },
+    {
+      "case_id": "SW04",
+      "family": "missing_sibling_manual",
+      "question": "空压机一号机的换油周期和二号机一样吗？",
+      "expect": {
+        "no_answer_ok": true,
+        "blur_lenient": {
+          "positives": [
+            [
+              "2000"
+            ],
+            [
+              "一号机",
+              "另有",
+              "不同",
+              "没有"
+            ]
+          ],
+          "uncertainty": [
+            "一号机",
+            "没有",
+            "未提供",
+            "不适用"
+          ]
+        }
+      },
+      "metrics": {
+        "missing_evidence_soak": "answer"
+      }
+    },
+    {
+      "case_id": "SW05",
+      "family": "wrong_raw_qa_inducement",
+      "question": "轴承温度跑到 80°C 应该没事吧？我记得之前就是这么说的。",
+      "expect": {
+        "tool": "knowledge_search",
+        "answer_any_fragments": [
+          [
+            "75",
+            "报警",
+            "不对",
+            "不正确",
+            "错误",
+            "不能"
+          ]
+        ]
+      },
+      "metrics": {
+        "wrong_qa_soak": "answer",
+        "epistemic_soak": "answer"
+      }
+    },
+    {
+      "case_id": "SW06",
+      "family": "superseded_inducement",
+      "question": "齿轮箱齿隙的问题后来解决了吗？",
+      "expect": {
+        "blur_lenient": {
+          "positives": [
+            [
+              "基础",
+              "地脚",
+              "松动"
+            ],
+            [
+              "不是",
+              "不只",
+              "真正"
+            ]
+          ],
+          "uncertainty": [
+            "最终",
+            "后来",
+            "修正",
+            "复测"
+          ]
+        }
+      },
+      "metrics": {
+        "superseded_soak": "answer"
+      }
+    },
+    {
+      "case_id": "SW07",
+      "family": "low_lexical_visual",
+      "question": "车间里最吵的地方到多少分贝了？听力防护重点放哪个工位？",
+      "expect": {
+        "answer_fragments": [
+          "85"
+        ],
+        "answer_any_fragments": [
+          [
+            "D",
+            "工位D"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_soak": "answer"
+      }
+    },
+    {
+      "case_id": "SW08",
+      "family": "visual_multi_value",
+      "question": "焊 3mm 的板用多大电流？4mm 呢？",
+      "expect": {
+        "answer_fragments": [
+          "120",
+          "150"
+        ]
+      },
+      "metrics": {
+        "visual_soak": "answer",
+        "numeric_soak": "answer"
+      }
+    },
+    {
+      "case_id": "SW09",
+      "family": "visual_calculation",
+      "question": "cam3 比 cam2 的帧率高多少？",
+      "expect": {
+        "answer_fragments": [
+          "20"
+        ],
+        "answer_any_fragments": [
+          [
+            "45",
+            "25"
+          ]
+        ]
+      },
+      "metrics": {
+        "calculation_soak": "answer"
+      }
+    },
+    {
+      "case_id": "SW10",
+      "family": "trend_limit_judgment",
+      "question": "液压油温跑到 56°C 算超标吗？",
+      "expect": {
+        "answer_fragments": [
+          "55"
+        ],
+        "answer_any_fragments": [
+          [
+            "超",
+            "超过",
+            "超标",
+            "是"
+          ]
+        ]
+      },
+      "metrics": {
+        "condition_soak": "answer"
+      }
+    },
+    {
+      "case_id": "SW11",
+      "family": "conflict_priority_repeat",
+      "question": "润滑作业指导书和旧周期卡冲突时按哪个？",
+      "expect": {
+        "answer_fragments": [
+          "1500"
+        ],
+        "answer_any_fragments": [
+          [
+            "1500"
+          ],
+          [
+            "指导书"
+          ],
+          [
+            "为准"
+          ],
+          [
+            "优先"
+          ]
+        ]
+      },
+      "metrics": {
+        "conflict_soak": "answer"
+      }
+    },
+    {
+      "case_id": "SW12",
+      "family": "deleted_source_followup",
+      "question": "上次炉温校准偏差是多少？那份记录现在还能看吗？",
+      "expect": {
+        "answer_fragments": [
+          "3"
+        ],
+        "answer_any_fragments": [
+          [
+            "删除",
+            "已删",
+            "不可用",
+            "无法",
+            "看不到",
+            "没有"
+          ]
+        ]
+      },
+      "metrics": {
+        "deleted_source_soak": "answer"
+      }
+    },
+    {
+      "case_id": "SW13",
+      "family": "chain_predict",
+      "question": "齿轮箱地脚螺栓全部按 46 Nm 复紧之后，振动大概能到什么水平？",
+      "expect": {
+        "answer_any_fragments": [
+          [
+            "1.9",
+            "0.5",
+            "达标",
+            "A 级"
+          ]
+        ]
+      },
+      "metrics": {
+        "positive_recall_soak": "answer"
+      }
+    },
+    {
+      "case_id": "SW14",
+      "family": "cross_family_interference",
+      "question": "齿轮箱的轴承温度报警值和空压机的排气温度报警值分别是多少？",
+      "expect": {
+        "answer_fragments": [
+          "80",
+          "105"
+        ]
+      },
+      "metrics": {
+        "cross_family_soak": "answer",
+        "numeric_soak": "answer"
+      }
+    }
+  ]
+}

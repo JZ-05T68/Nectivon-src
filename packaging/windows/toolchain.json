@@ -1,0 +1,14 @@
+{
+  "dotnet_install_script_sha256": "e8b873e18a81e5c4cd8ab69d84dac8fead291d50b3c44633cd7fddad709a13d6",
+  "dotnet_install_script_url": "https://dot.net/v1/dotnet-install.ps1",
+  "dotnet_sdk_archive_sha512": "24b670ad3d923bfcf47df6c3b034152398b42f6dbc388e10d783aee1cfb5e5817d399fc0ae2a12cfa822a55e61d34830ccb15c50ef6efee437ab874bb7c79430",
+  "dotnet_sdk_archive_url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.401/dotnet-sdk-10.0.401-win-x64.zip",
+  "dotnet_sdk_version": "10.0.401",
+  "packaging_pip_version": "26.2.1",
+  "packaging_setuptools_version": "84.0.0",
+  "packaging_wheel_version": "0.48.0",
+  "vc_redist_x64_file_version": "14.51.36247.0",
+  "vc_redist_x64_sha256": "843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c",
+  "vc_redist_x64_url": "https://aka.ms/vc14/vc_redist.x64.exe",
+  "wix_version": "6.0.2"
+}

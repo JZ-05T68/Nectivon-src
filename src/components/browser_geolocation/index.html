@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: "Source Sans Pro", "Microsoft YaHei", sans-serif;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+    }
+    button {
+      width: 100%;
+      min-height: 40px;
+      padding: 0.45rem 0.8rem;
+      border: 1px solid rgba(128, 128, 128, 0.42);
+      border-radius: 0.5rem;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled) {
+      border-color: rgb(255, 75, 75);
+      color: rgb(255, 75, 75);
+    }
+    button:focus-visible {
+      outline: 2px solid rgb(255, 75, 75);
+      outline-offset: 2px;
+    }
+    button:disabled {
+      cursor: wait;
+      opacity: 0.62;
+    }
+  </style>
+</head>
+<body>
+  <button id="locate" type="button">定位当前城市 📍</button>
+  <script>
+    (() => {
+      const button = document.getElementById("locate");
+      let cities = [];
+      let buttonLabel = "定位当前城市 📍";
+      let pendingLabel = "正在定位…";
+
+      const post = (message) => {
+        window.parent.postMessage({isStreamlitMessage: true, ...message}, "*");
+      };
+      const setFrameHeight = () => post({type: "streamlit:setFrameHeight", height: 46});
+      const setValue = (value) => post({
+        type: "streamlit:setComponentValue",
+        value,
+        dataType: "json",
+      });
+      const requestId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+      const nearestCity = (latitude, longitude) => {
+        let best = null;
+        let minDistance = Number.POSITIVE_INFINITY;
+        for (const item of cities) {
+          const lat = Number(item.latitude);
+          const lon = Number(item.longitude);
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+          const dLat = latitude - lat;
+          const dLon = (longitude - lon) * Math.cos((lat * Math.PI) / 180);
+          const distance = dLat * dLat + dLon * dLon;
+          if (distance < minDistance) {
+            minDistance = distance;
+            best = item;
+          }
+        }
+        return best;
+      };
+
+      window.addEventListener("message", (event) => {
+        if (event.data?.type !== "streamlit:render") return;
+        const args = event.data.args || {};
+        cities = Array.isArray(args.cities) ? args.cities : [];
+        buttonLabel = args.button_label || buttonLabel;
+        pendingLabel = args.pending_label || pendingLabel;
+        button.textContent = buttonLabel;
+        button.disabled = Boolean(event.data.disabled);
+        setFrameHeight();
+      });
+
+      button.addEventListener("click", () => {
+        const id = requestId();
+        if (!navigator.geolocation) {
+          setValue({status: "error", request_id: id, message: "当前浏览器不支持定位。"});
+          return;
+        }
+
+        button.disabled = true;
+        button.textContent = pendingLabel;
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            // Coordinates exist only in this callback and are never sent to Python.
+            const match = nearestCity(position.coords.latitude, position.coords.longitude);
+            button.disabled = false;
+            button.textContent = buttonLabel;
+            if (!match) {
+              setValue({status: "error", request_id: id, message: "无法匹配到城市级定位结果。"});
+              return;
+            }
+            setValue({
+              status: "success",
+              request_id: id,
+              province: String(match.province),
+              city: String(match.city),
+            });
+          },
+          (error) => {
+            button.disabled = false;
+            button.textContent = buttonLabel;
+            const messages = {
+              1: "定位权限未授权，请允许浏览器访问位置后重试。",
+              2: "当前无法取得位置，请检查系统定位服务。",
+              3: "定位请求超时，请重试。",
+            };
+            setValue({
+              status: "error",
+              request_id: id,
+              message: messages[error.code] || "定位失败，请重试。",
+            });
+          },
+          {enableHighAccuracy: false, timeout: 10000, maximumAge: 300000},
+        );
+      });
+
+      post({type: "streamlit:componentReady", apiVersion: 1});
+      setFrameHeight();
+    })();
+  </script>
+</body>
+</html>

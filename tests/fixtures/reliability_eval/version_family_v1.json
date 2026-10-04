@@ -1,0 +1,237 @@
+{
+  "eval_id": "EKB-FAIL014-VERSION-FAMILY-v1",
+  "corpus_ref": "dirty-long-term-v1",
+  "frozen_at": "2026-09-06T08:05:00+08:00",
+  "model_expectation": "qwen3.8-max",
+  "notes": "FAIL-014 版本族检索覆盖集（§10 Gate：10-20 case，Positive Recall + Negative Precision 同测）。Ground truth 于 2026-09-06 从 staging 页面原图逐页读取核实：泵维护视觉手册原版(id5,p2)/v1.0(id10,p1) M8 25/30、M6 10/12、M10 46/52；v1.1(id11,p1) M8 28/32；v2.0草案(id16,p1) M8 30/35。冷却水泵性能图表冻结版(id8) P-201 35/P-202 38/P-203 42/P-204 29；同名复测版(id17) P-301 40/P-302 33/P-303 46/P-304 31。空压机完整维护手册文本层 M8 25/30、高粉尘 300h。干扰点：30 既是 v1.0 的 M8 最大力矩又是 v2.0 草案的 M8 标准力矩；25 同时存在于空压机文本与泵 v1.0/原版。【修订记录】VF05 原 forbid_fragments=['35'] 会误杀'正确披露草案数值并拒绝采用'的合规回答（BEFORE 实测 VF05 回答含'其中 M8 最大力矩写为 35 N·m，但...不采用'的诚实披露句）→ 判 CASE_DESIGN_ERROR-002，BEFORE 运行之后、AFTER 运行判定之前放宽为仅 answer_fragments=['32']；BEFORE/AFTER 双侧以存储的原始回答按修订后期望离线重判，保持可比性。",
+  "cases": [
+    {
+      "case_id": "VF01",
+      "family": "vf_two_versions_visual",
+      "question": "泵维护手册 1.0 和 1.1 两个版本里，M8 的标准力矩分别是多少？",
+      "expect": {
+        "tool": ["page_visual_search", "page_search"],
+        "answer_fragments": ["25", "28"],
+        "cite_must": [
+          {"doc": "1.0", "page": 1},
+          {"doc": "1.1", "page": 1}
+        ]
+      },
+      "metrics": {
+        "family_recall": "answer",
+        "version_discrimination": "answer",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "VF02",
+      "family": "vf_three_versions_visual",
+      "question": "泵维护手册 1.0、1.1 和 2.0 草案里，M8 的标准力矩分别是多少？",
+      "expect": {
+        "tool": ["page_visual_search", "page_search"],
+        "answer_fragments": ["25", "28", "30"],
+        "answer_any_fragments": [["草案", "2.0", "未正式"]]
+      },
+      "metrics": {
+        "family_recall": "answer",
+        "version_discrimination": "answer",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "VF03",
+      "family": "vf_same_value_across_versions",
+      "question": "泵手册从 1.0 升到 1.1，M10 的最大力矩有没有变化？",
+      "expect": {
+        "tool": ["page_visual_search", "page_search"],
+        "answer_fragments": ["52"],
+        "answer_any_fragments": [["没变", "未变", "没有变化", "相同", "一致", "一样", "保持"]]
+      },
+      "metrics": {
+        "family_recall": "answer",
+        "version_discrimination": "answer",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "VF04",
+      "family": "vf_different_value_across_versions",
+      "question": "泵手册 1.1 相比 1.0，M8 的标准力矩改成了多少？",
+      "expect": {
+        "tool": ["page_visual_search", "page_search"],
+        "answer_fragments": ["25", "28"],
+        "answer_any_fragments": [["差", "改", "不同", "提高", "调整", "变为", "修订"]]
+      },
+      "metrics": {
+        "family_recall": "answer",
+        "version_discrimination": "answer",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "VF05",
+      "family": "vf_official_vs_draft_max",
+      "question": "只按正式发布的版本来算，泵手册里 M8 的最大力矩是多少？",
+      "expect": {
+        "tool": ["page_visual_search", "page_search"],
+        "answer_fragments": ["32"]
+      },
+      "metrics": {
+        "family_recall": "answer",
+        "version_discrimination": "answer",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "VF06",
+      "family": "vf_abbreviation_bare",
+      "question": "泵手册里 M6 的紧固力矩是多少？",
+      "expect": {
+        "answer_fragments": ["10", "12"]
+      },
+      "metrics": {
+        "family_recall": "answer",
+        "version_discrimination": "answer"
+      }
+    },
+    {
+      "case_id": "VF07",
+      "family": "vf_natural_naming_query",
+      "question": "2026 年修订的那版泵手册，M8 的标准力矩是多少？",
+      "expect": {
+        "tool": ["page_visual_search", "page_search"],
+        "answer_fragments": ["28"],
+        "cite_must": [{"doc": "1.1", "page": 1}]
+      },
+      "metrics": {
+        "family_recall": "answer",
+        "version_discrimination": "answer",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "VF08",
+      "family": "vf_same_name_retest_doc",
+      "question": "二车间复测那份冷却水泵性能图表里，哪台泵的额定流量最大？",
+      "expect": {
+        "answer_fragments": ["46"],
+        "answer_any_fragments": [["P-303", "303"]]
+      },
+      "metrics": {
+        "family_recall": "answer",
+        "version_discrimination": "answer"
+      }
+    },
+    {
+      "case_id": "VF09",
+      "family": "vf_same_name_attribution",
+      "question": "冷却水泵性能图表里 P-203 的额定流量是多少？",
+      "expect": {
+        "answer_fragments": ["42"],
+        "answer_any_fragments": [["P-203", "203"]]
+      },
+      "metrics": {
+        "family_recall": "answer",
+        "version_discrimination": "answer",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "VF10",
+      "family": "vf_same_name_both_docs",
+      "question": "库里那两份冷却水泵性能图表，P-201 和 P-301 的额定流量分别是多少？",
+      "expect": {
+        "answer_fragments": ["35", "40"],
+        "answer_any_fragments": [["P-201", "201"]]
+      },
+      "metrics": {
+        "family_recall": "answer",
+        "version_discrimination": "answer",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "VF11",
+      "family": "vf_text_value_doc",
+      "question": "空压机维护手册里 M8 地脚螺栓的标准力矩和最大力矩是多少？",
+      "expect": {
+        "answer_fragments": ["25", "30"]
+      },
+      "metrics": {
+        "family_recall": "answer",
+        "version_discrimination": "answer"
+      }
+    },
+    {
+      "case_id": "VF12",
+      "family": "vf_cross_doc_version_conflict",
+      "question": "空压机手册和泵手册里 M8 的标准力矩写的一样吗？",
+      "expect": {
+        "blur_lenient": {
+          "positives": [["28"], ["25", "一样"], ["不同", "不一致", "差异"]],
+          "uncertainty": ["版本", "1.1", "草案", "哪一版"]
+        }
+      },
+      "metrics": {
+        "family_recall": "answer",
+        "version_discrimination": "answer",
+        "conflict_handling": "answer"
+      }
+    },
+    {
+      "case_id": "VF13",
+      "family": "vf_precision_non_family_doc",
+      "question": "传动轴振动的排查步骤在资料里是怎么写的？",
+      "expect": {
+        "cite_must": [{"doc": "传动轴", "page": 1}]
+      },
+      "metrics": {
+        "precision_control": "citation"
+      }
+    },
+    {
+      "case_id": "VF14",
+      "family": "vf_precision_single_version",
+      "question": "泵手册 1.1 里 M8 的最大力矩是多少？",
+      "expect": {
+        "tool": ["page_visual_search", "page_search"],
+        "answer_fragments": ["32"],
+        "cite_must": [{"doc": "1.1", "page": 1}]
+      },
+      "metrics": {
+        "precision_control": "answer",
+        "version_discrimination": "answer",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "VF15",
+      "family": "vf_precision_unrelated_topic",
+      "question": "空压机在高粉尘环境下运行的保养周期是多少小时？",
+      "expect": {
+        "answer_fragments": ["300"],
+        "cite_must": [{"doc": "空压机", "page": 4}]
+      },
+      "metrics": {
+        "precision_control": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "VF16",
+      "family": "vf_memory_family_boundary",
+      "question": "冷却水泵流量最大是哪台？我之前整理过结论吗？",
+      "expect": {
+        "tool": ["knowledge_search"],
+        "answer_fragments": ["46"],
+        "answer_any_fragments": [["P-303", "303"]]
+      },
+      "metrics": {
+        "family_recall": "answer",
+        "experience_routing": "tool"
+      }
+    }
+  ]
+}

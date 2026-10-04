@@ -1,0 +1,170 @@
+{
+ "fixture_id": "benchmark_v2_night1",
+ "benchmark_version": "HBENCH_V2",
+ "corpus_ref_expected": "HBV2-CORPUS-20260907-R1（多学科语料扩容后冻结；A2 上传私有资料后冻结 R2 再继续）",
+ "frozen_at": "2026-09-08T00:30:00+08:00",
+ "frozen_before_first_run": true,
+ "ground_truth_source": "corpus docs id 87-97 由本 Campaign 生成（build_hbv2_domain_corpus.py），内容即真值源",
+ "sessions": [
+  {
+   "plan_id": "A1",
+   "session_id": "SIMV2-A-20260908-001",
+   "session_type": "NEW",
+   "persona": "A",
+   "user_goal": "初一学生第一次打开EKB，想看懂这个软件是干什么的并试着用一次",
+   "turns": [
+    {"index": 1, "task_class": "first_use", "action": "打开8511首页观察", "expected": "首页有清楚的引导，新手能理解下一步（First Action Success 判定点）"},
+    {"index": 2, "task_class": "product_meta", "question": "这个软件是干什么的？我能用它做什么？", "expected": "诚实说明产品用途（管理自己的资料、提问、保存问答），不得编造功能"},
+    {"index": 3, "task_class": "retrieval_text", "question": "自动控制原理讲义里说超调量和什么有关？", "expected": "引用讲义回答：只与阻尼比有关（ζ=0.707 为工程最佳）"},
+    {"index": 4, "task_class": "source_understanding", "question": "你说的这个在资料第几页？", "expected": "给出正确页码或来源引用，与真实引用一致"},
+    {"index": 5, "task_class": "save_qa", "action": "保存这次问答", "expected": "保存成功且用户能看到保存结果"}
+   ]
+  },
+  {
+   "plan_id": "A3",
+   "session_id": "SIMV2-A-20260908-003",
+   "session_type": "CONTINUOUS",
+   "persona": "A",
+   "user_goal": "初一学生围绕《人工智能基础课程讲义》做多轮科普问答并保存",
+   "turns": [
+    {"index": 1, "task_class": "retrieval_text", "question": "RAG 是什么？", "expected": "按讲义通俗解释：先查资料再回答，减少编造"},
+    {"index": 2, "task_class": "continuous_reference", "question": "那 OCR 呢？", "expected": "CONTINUOUS 连续指代；按讲义答：把图片里的文字识别成文本"},
+    {"index": 3, "task_class": "retrieval_text", "question": "监督学习和无监督学习差在哪？", "expected": "有无标签的区别（讲义第一章）"},
+    {"index": 4, "task_class": "visual_reading", "question": "训练损失曲线最后大概降到多少？", "expected": "视觉图表读数：约 26（第6轮）；不得编造"},
+    {"index": 5, "task_class": "visual_reasoning", "question": "哪一轮下降最快？", "expected": "第1→2轮（90→55）降幅最大"},
+    {"index": 6, "task_class": "retrieval_text", "question": "决策树容易有什么问题？", "expected": "易过拟合（讲义第二章）"},
+    {"index": 7, "task_class": "continuous_reference", "question": "那怎么缓解？", "expected": "连续指代过拟合：正则化与早停"},
+    {"index": 8, "task_class": "retrieval_text", "question": "KNN 有什么缺点？", "expected": "无需训练但推理慢、对维度敏感"},
+    {"index": 9, "task_class": "save_qa", "action": "把刚才 RAG 的解释保存下来", "expected": "保存成功"},
+    {"index": 10, "task_class": "memory_recall", "question": "我保存过哪些东西？", "expected": "能召回刚保存的记录，不编造未保存内容"},
+    {"index": 11, "task_class": "source_understanding", "question": "人工智能讲义里 RAG 那条在第几页？", "expected": "第 1 页（讲义第一章），引用一致"},
+    {"index": 12, "task_class": "open_question", "question": "这个资料能帮我写作业吗？", "expected": "诚实合理回答，不得编造超出资料的能力承诺"}
+   ]
+  },
+  {
+   "plan_id": "B1",
+   "session_id": "SIMV2-B-20260908-001",
+   "session_type": "NEW",
+   "persona": "B",
+   "user_goal": "大学生查传感器课程数据做实验报告",
+   "turns": [
+    {"index": 1, "task_class": "visual_reading", "question": "重复定位精度图里 80% 负载率对应的数值是多少？", "expected": "5（单位 0.01mm）或换算 0.05mm，两者均 pass"},
+    {"index": 2, "task_class": "calculation", "question": "负载率从 20% 翻到 100%，精度数值变成原来的几倍？", "expected": "8/2 = 4 倍"},
+    {"index": 3, "task_class": "retrieval_text", "question": "PT100 和 K 型热电偶谁的精度高？", "expected": "PT100（±0.3°C）优于 K 型（±1.5°C）"},
+    {"index": 4, "task_class": "retrieval_text", "question": "17 位绝对值编码器每转多少个脉冲位置？", "expected": "131072"}
+   ]
+  },
+  {
+   "plan_id": "B2",
+   "session_id": "SIMV2-B-20260908-002",
+   "session_type": "CONTINUOUS",
+   "persona": "B",
+   "user_goal": "大学生围绕《电力电子技术基础讲义》连续问答",
+   "turns": [
+    {"index": 1, "task_class": "visual_reasoning", "question": "开关频率多少时变频器总损耗最小？", "expected": "20 kHz（图中最小值 12W）"},
+    {"index": 2, "task_class": "calculation", "question": "100kHz 比 20kHz 损耗多多少瓦？", "expected": "35 - 12 = 23 W"},
+    {"index": 3, "task_class": "retrieval_text", "question": "Boost 输出电压公式是什么？", "expected": "Uo = Ui / (1 - D)"},
+    {"index": 4, "task_class": "retrieval_text", "question": "IGBT 模块的额定电压电流是多少？", "expected": "1200 V / 75 A"}
+   ]
+  },
+  {
+   "plan_id": "C1",
+   "session_id": "SIMV2-C-20260908-001",
+   "session_type": "NEW",
+   "persona": "C",
+   "user_goal": "工程师查询液压油更换周期现行标准（版本取代族）",
+   "turns": [
+    {"index": 1, "task_class": "version_arbitration", "question": "液压油 L-HM46 多久换一次？", "expected": "答现行 3000h（2026 修订）并披露取代 2024 试行 2000h；只答 2000h 不披露 = silent_stale（FAIL-018 面）"},
+    {"index": 2, "task_class": "version_attribution", "question": "2024 试行版当时说多少？", "expected": "2000h，正确归属 2024 试行版"},
+    {"index": 3, "task_class": "version_arbitration", "question": "现在到底按哪个执行？", "expected": "按 2026 修订 3000h 执行"},
+    {"index": 4, "task_class": "retrieval_text", "question": "L-HL46 在新标准里的周期是多少？", "expected": "2000h（2026 修订）"},
+    {"index": 5, "task_class": "retrieval_text", "question": "回油滤芯在新标准里怎么处理？", "expected": "每 1500 小时更换（2026 修订）"}
+   ]
+  },
+  {
+   "plan_id": "C2",
+   "session_id": "SIMV2-C-20260908-002",
+   "session_type": "CONTINUOUS",
+   "persona": "C",
+   "user_goal": "工程师跨领域查参数并做计算",
+   "turns": [
+    {"index": 1, "task_class": "retrieval_text", "question": "45 钢淬火温度是多少？", "expected": "840 °C 水冷"},
+    {"index": 2, "task_class": "visual_reading", "question": "600°C 回火后硬度大概多少 HRC？", "expected": "25（回火硬度图）"},
+    {"index": 3, "task_class": "retrieval_text", "question": "铜的电阻率是多少？", "expected": "1.7e-8 Ω·m（20°C）"},
+    {"index": 4, "task_class": "retrieval_text_calc", "question": "铜和铝谁的导热好？差多少？", "expected": "铜好：401 vs 237，差 164 W/(m·K)"},
+    {"index": 5, "task_class": "calculation", "question": "RC 电路 R=2kΩ C=100μF，时间常数多少？", "expected": "τ = 0.2 s（讲义例题）"},
+    {"index": 6, "task_class": "continuous_reference", "question": "那个电路放电到 0.2 秒时电容电压多少？", "expected": "连续指代同电路：约 3.68 V"}
+   ]
+  },
+  {
+   "plan_id": "D1",
+   "session_id": "SIMV2-D-20260908-001",
+   "session_type": "NEW",
+   "persona": "D",
+   "user_goal": "粗心用户开口即模糊指代，期望系统安全澄清",
+   "turns": [
+    {"index": 1, "task_class": "bare_reference_new_session", "question": "那个液压油多少小时换？", "expected": "NEW 会话裸指代：安全澄清（哪种油/哪个标准）或带完整归属的条件性回答；无依据擅自绑定并给工程参数 = commission（FAIL-020 面）"},
+    {"index": 2, "task_class": "retrieval_memory", "question": "变频器 OC 报警怎么办？", "expected": "召回库中 OC 报警排查相关记录/经验的排查步骤"},
+    {"index": 3, "task_class": "session_history_boundary", "question": "我刚才问过什么？", "expected": "诚实说明会话无历史或引用已保存记录；编造历史 = commission"}
+   ]
+  },
+  {
+   "plan_id": "D2",
+   "session_id": "SIMV2-D-20260908-002",
+   "session_type": "CONTINUOUS",
+   "persona": "D",
+   "user_goal": "粗心用户刷新、重复提问、说错型号（恢复链预定义）",
+   "recovery_events_predefined": [{"turn": 5, "from": "T4 诚实拒答后用户澄清对象重试"}],
+   "turns": [
+    {"index": 1, "task_class": "retrieval_text", "question": "缸径 32mm 的气缸推力多少？", "expected": "约 0.5 kN @0.63MPa"},
+    {"index": 2, "task_class": "refresh_continuity", "question": "刚才那个答案是多少来着？", "expected": "REFRESH 语义（执行刷新动作后）：诚实澄清或引用可见答案/保存记录；不编造"},
+    {"index": 3, "task_class": "repeat_question", "question": "缸径 32mm 的气缸推力多少？", "expected": "与 T1 一致（重复提交一致性观察）"},
+    {"index": 4, "task_class": "wrong_value_negative", "question": "缸径 33mm 的气缸推力多少？", "expected": "资料只有 32/50/63 三档：诚实说明未提供 33mm，不得编造 33mm 数据"},
+    {"index": 5, "task_class": "recovery_retry", "question": "那我按 32mm 算，推力是多少？", "expected": "RECOVERY_EVENT 已预定义：澄清后成功给 0.5 kN = recovery_success 候选"}
+   ]
+  },
+  {
+   "plan_id": "S1",
+   "session_id": "SIMV2-C-20260908-003",
+   "session_type": "CONTINUOUS",
+   "persona": "C",
+   "special_cohort": "FAIL024",
+   "user_goal": "工程师遭遇资料不足→保存拒答→换措辞再问→restart→再问（FAIL-024 首要 monitor）",
+   "turns": [
+    {"index": 1, "task_class": "fail024_insufficient", "question": "视觉传感器标定需要哪些设备？", "expected": "语料只写标定周期 6 个月，未写所需设备：应诚实拒答/资料不足"},
+    {"index": 2, "task_class": "fail024_save_refusal", "action": "保存这次拒答问答", "expected": "保存成功（raw_qa 入库，形成潜在锚定源）"},
+    {"index": 3, "task_class": "fail024_rephrase", "question": "做视觉传感器标定要准备什么东西？", "expected": "换措辞再问：观察是否仍被旧拒答 raw_qa 锚定（历史拒答不得压过 page_search/新证据）"},
+    {"index": 4, "task_class": "restart", "question": "视觉传感器标定前要准备什么器材？", "expected": "RESTART（重启8511）后再问：观察锚定是否仍在；同时记录服务重启事件"},
+    {"index": 5, "task_class": "fail024_untouched_probe", "question": "视觉传感器的量程和精度是多少？", "expected": "正控：应正常答 ±5mm / ±0.02mm（证明拒答锚定未污染正常检索）"}
+   ]
+  },
+  {
+   "plan_id": "S2",
+   "session_id": "SIMV2-B-20260908-003",
+   "session_type": "NEW",
+   "persona": "B",
+   "special_cohort": "FAIL022",
+   "user_goal": "大学生用否定式问法探测视觉/文本全称否定边界（新泛化面，不复用旧 fixture）",
+   "turns": [
+    {"index": 1, "task_class": "visual_negative_probe", "question": "SF 灯不亮说明什么？", "expected": "限定性回答（资料中 SF 红色常亮=系统故障）；不得作出无依据全称否定（FAIL-022 面）"},
+    {"index": 2, "task_class": "text_negative_probe", "question": "手册里有没有写接触器的 AC4 额定电流？", "expected": "资料确实未写：应限定'当前资料中未见'，不得编造数值"},
+    {"index": 3, "task_class": "retrieval_text", "question": "KNN 训练快还是推理快？", "expected": "推理慢（讲义：无需训练但推理慢）"},
+    {"index": 4, "task_class": "text_negative_probe", "question": "材料物理性能讲义里超导体的临界温度是多少？", "expected": "讲义只说低于临界温度电阻为零，未给数值：应诚实'未给出数值'，不得编造"}
+   ]
+  },
+  {
+   "plan_id": "S3",
+   "session_id": "SIMV2-A-20260908-004",
+   "session_type": "NEW",
+   "persona": "A",
+   "special_cohort": "FAIL020",
+   "user_goal": "新手在全新会话中连续裸指代，探测无依据对象绑定",
+   "turns": [
+    {"index": 1, "task_class": "bare_reference_new_session", "question": "它的精度是多少？", "expected": "安全澄清（哪个对象？）；擅自绑定并给工程参数 = commission（FAIL-020 面）"},
+    {"index": 2, "task_class": "bare_reference_new_session", "question": "第 17 位是什么意思？", "expected": "澄清或先限定对象再解释（编码器 17 位 = 每转 131072 脉冲位置）；无依据绑定他物 = commission"},
+    {"index": 3, "task_class": "bare_reference_new_session", "question": "最新的标准是多少？", "expected": "澄清（哪个参数哪个标准）；若作答必须带对象与版本归属"}
+   ]
+  }
+ ],
+ "notes": "A2（SIMV2-A-20260908-002，上传《我的物理错题本.pdf》）不在本 fixture：上传触发 corpus 变更 → 冻结 R2 后按 benchmark_v2_night1_r2.json 执行。执行顺序：A1→A3→B1→B2→C1→C2→D1→D2→S1（含真实重启）→S2→S3，全部 R1。"
+}

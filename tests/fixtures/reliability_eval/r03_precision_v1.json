@@ -1,0 +1,117 @@
+{
+  "eval_id": "EKB-R03-TOOL-PRECISION-v1",
+  "corpus_ref": "v0.8-frozen-corpus-v1",
+  "frozen_at": "2026-09-06T06:55:00+08:00",
+  "model_expectation": "qwen3.8-max",
+  "notes": "Tool Precision 专项：PN 族=文本层已明确给出答案，禁止仅因数值/极值语言调用视觉；PV 族=图内值必须走视觉。目标是不牺牲 Visual Recall 的前提下压 over-routing。",
+  "cases": [
+    {
+      "case_id": "PN01",
+      "family": "text_sufficient_negative",
+      "question": "传动轴排查手册里 M10 螺栓的标准力矩写的是多少？",
+      "expect": {
+        "tool": ["page_search"],
+        "forbid_tool": ["page_visual_search"],
+        "answer_fragments": ["46"]
+      },
+      "metrics": {"tool_precision": "tool", "tool_selection": "tool", "answer": "answer"}
+    },
+    {
+      "case_id": "PN02",
+      "family": "text_sufficient_negative",
+      "question": "空压机维护周期和环境有没有关系？按多少小时执行？",
+      "expect": {
+        "tool": ["page_search"],
+        "forbid_tool": ["page_visual_search"],
+        "answer_fragments": ["500"]
+      },
+      "metrics": {"tool_precision": "tool", "tool_selection": "tool", "answer": "answer"}
+    },
+    {
+      "case_id": "PN03",
+      "family": "text_sufficient_negative",
+      "question": "验证标记 EKB-SIM-8841 出自哪份资料第几页？",
+      "expect": {
+        "tool": ["page_search"],
+        "forbid_tool": ["page_visual_search"],
+        "answer_fragments": ["EKB-SIM-8841"],
+        "cite_must": [{"doc": "传动轴振动排查手册", "page": 1}]
+      },
+      "metrics": {"tool_precision": "tool", "tool_selection": "tool", "citation": "citation"}
+    },
+    {
+      "case_id": "PN04",
+      "family": "text_sufficient_negative",
+      "question": "传动轴手册里记录的验证标记和 M10 力矩分别是多少？",
+      "expect": {
+        "tool": ["page_search"],
+        "forbid_tool": ["page_visual_search"],
+        "answer_fragments": ["EKB-SIM-8841", "46"]
+      },
+      "metrics": {"tool_precision": "tool", "tool_selection": "tool", "answer": "answer"}
+    },
+    {
+      "case_id": "PN05",
+      "family": "text_sufficient_negative",
+      "question": "空压机维护周期按多少小时执行？",
+      "expect": {
+        "tool": ["page_search"],
+        "forbid_tool": ["page_visual_search"],
+        "answer_fragments": ["500"]
+      },
+      "metrics": {"tool_precision": "tool", "tool_selection": "tool", "answer": "answer"}
+    },
+    {
+      "case_id": "PV01",
+      "family": "visual_required_positive",
+      "question": "P-204 的额定流量比 P-201 少多少？",
+      "expect": {
+        "tool": ["page_visual_search"],
+        "answer_any_fragments": [["6", "六"]],
+        "cite_must": [{"doc": "冷却水泵性能图表", "page": 1}]
+      },
+      "metrics": {"visual_routing": "tool", "tool_selection": "tool", "visual_grounding": "answer", "citation": "citation"}
+    },
+    {
+      "case_id": "PV02",
+      "family": "visual_required_positive",
+      "question": "四台冷却水泵里流量处于中间位置的是哪两台？",
+      "expect": {
+        "tool": ["page_visual_search"],
+        "answer_fragments": ["P-202", "P-201"]
+      },
+      "metrics": {"visual_routing": "tool", "tool_selection": "tool", "visual_grounding": "answer"}
+    },
+    {
+      "case_id": "PV03",
+      "family": "visual_required_positive",
+      "question": "轴承温度趋势里第 3000 小时和第 5000 小时分别是多少度？",
+      "expect": {
+        "tool": ["page_visual_search"],
+        "answer_fragments": ["63", "72"],
+        "cite_must": [{"doc": "冷却水泵性能图表", "page": 2}]
+      },
+      "metrics": {"visual_routing": "tool", "tool_selection": "tool", "visual_grounding": "answer", "citation": "citation"}
+    },
+    {
+      "case_id": "PV04",
+      "family": "visual_required_positive",
+      "question": "45 钢 400°C 回火后的硬度比 300°C 时低多少 HRC？",
+      "expect": {
+        "tool": ["page_visual_search"],
+        "answer_any_fragments": [["9", "九"]]
+      },
+      "metrics": {"visual_routing": "tool", "tool_selection": "tool", "visual_grounding": "answer"}
+    },
+    {
+      "case_id": "PV05",
+      "family": "visual_required_positive",
+      "question": "泵故障分布里密封失效和轴承磨损合计占比是多少？",
+      "expect": {
+        "tool": ["page_visual_search"],
+        "answer_any_fragments": [["75", "七十五"]]
+      },
+      "metrics": {"visual_routing": "tool", "tool_selection": "tool", "visual_grounding": "answer"}
+    }
+  ]
+}

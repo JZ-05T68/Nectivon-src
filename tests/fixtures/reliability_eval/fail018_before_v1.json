@@ -1,0 +1,27 @@
+{
+  "eval_id": "fail018_before_v1",
+  "corpus_ref": "dirty-long-term-v2",
+  "frozen_at": "2026-09-06T20:55:00+08:00",
+  "model_expectation": "FAIL-018 BEFORE 基线：generic/current-intent 问法不得静默返回旧值；explicit-old 允许 58；comparison 应双披露",
+  "notes": "冻结于 E-1 修复之前。类别：generic x4 / 最新 x2 / 现行 x2 / explicit-new x2 / explicit-old x2 / comparison x2 / 词形变体 x1 / superseded x3。现行值基准：doc 66 二车间2026复测 0h50/1000h57/2000h63/3000h69/4000h75/5000h80；旧值基准：doc 8 一车间 0h45/1000h52/2000h58/3000h63/4000h68/5000h72。",
+  "cases": [
+    {"case_id": "FB01", "family": "generic", "question": "冷却水泵轴承温度趋势里2000小时时是多少度？", "expect": {"answer_fragments": ["63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB02", "family": "generic", "question": "冷却水泵的轴承温度在2000小时时是多少？", "expect": {"answer_fragments": ["63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB03", "family": "generic", "question": "轴承温度趋势图上2000小时对应多少度？", "expect": {"answer_fragments": ["63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB04", "family": "generic", "question": "冷却水泵轴承温度趋势里1000小时时是多少度？", "expect": {"answer_fragments": ["57"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB05", "family": "generic", "question": "冷却水泵轴承温度到5000小时是多少度？", "expect": {"answer_fragments": ["80"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB06", "family": "latest_wording", "question": "按最新复测数据，冷却水泵轴承温度2000小时时是多少度？", "expect": {"answer_fragments": ["63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB07", "family": "latest_wording", "question": "最新的轴承温度趋势里5000小时是多少度？", "expect": {"answer_fragments": ["80"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB08", "family": "current_wording", "question": "现在冷却水泵轴承温度趋势2000小时按多少算？", "expect": {"answer_fragments": ["63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB09", "family": "current_wording", "question": "现行数据里3000小时轴承温度多少？", "expect": {"answer_fragments": ["69"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB10", "family": "explicit_new", "question": "二车间2026年复测的轴承温度趋势里2000小时是多少度？", "expect": {"answer_fragments": ["63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB11", "family": "explicit_new", "question": "二车间复测数据4000小时轴承温度是多少？", "expect": {"answer_fragments": ["75"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB12", "family": "explicit_old", "question": "一车间旧记录里2000小时轴承温度是多少？", "expect": {"answer_fragments": ["58"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB13", "family": "explicit_old", "question": "旧的一车间数据1000小时轴承温度是多少？", "expect": {"answer_fragments": ["52"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB14", "family": "comparison", "question": "冷却水泵轴承温度2000小时，一车间旧记录和二车间复测分别是多少？哪个现行？", "expect": {"answer_fragments": ["58", "63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB15", "family": "comparison", "question": "新旧两份轴承温度趋势5000小时分别是多少？", "expect": {"answer_fragments": ["72", "80"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB16", "family": "token_variant", "question": "冷却水泵轴承温度2000h时是多少度？", "expect": {"answer_fragments": ["63"]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB17", "family": "superseded_which", "question": "冷却水泵轴承温度趋势的新旧两份记录，哪份已经被取代？", "expect": {"answer_any_fragments": [["一车间", "旧"], ["取代", "被"]]}, "metrics": {"answer": "answer"}},
+    {"case_id": "FB18", "family": "which_to_use", "question": "轴承温度2000小时我该按58还是63执行？", "expect": {"answer_fragments": ["63"], "answer_any_fragments": [["取代", "现行", "二车间", "复测"]]}, "metrics": {"answer": "answer"}}
+  ]
+}

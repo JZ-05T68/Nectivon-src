@@ -1,0 +1,31 @@
+{
+  "eval_id": "competition_candidate_soak_w5",
+  "corpus_ref": "dirty-long-term-v2",
+  "frozen_at": "2026-09-06T18:16:00+08:00",
+  "model_expectation": "真实单步 Agent + 硬模型；低清/作废/未定稿诚实处理；自含问题与库外问题的行为边界记录（SW42 探针）；无错误事实",
+  "notes": "COMPETITION CANDIDATE STRESS W5：低清手写/传真、诚实行为、SW42 自含问题边界探针、条件应用推理。HB06-HB08、HB10 为产品边界探针（结果计入 SW42 决策简报，不计产品失败）。",
+  "cases": [
+    {"case_id": "HB01", "family": "fax_unreadable", "question": "传真采购单上买的轴承数量是多少？", "expect": {"no_answer_ok": true}, "metrics": {"honest_refusal": "answer", "low_quality": "answer"}},
+    {"case_id": "HB02", "family": "handwriting_unreadable", "question": "手写点检记录里当天的温度是多少度？", "expect": {"no_answer_ok": true}, "metrics": {"honest_refusal": "answer", "low_quality": "answer"}},
+    {"case_id": "HB03", "family": "visual_quality_disclosure", "question": "故障分布模糊分级第2页的图能看清吗？", "expect": {"answer_any_fragments": [["模糊", "中等", "不清", "困难"]]}, "metrics": {"visual_only": "answer", "honest_disclosure": "answer"}},
+    {"case_id": "HB04", "family": "draft_not_published", "question": "液压站13 MPa的油压草案正式发布了吗？", "expect": {"answer_any_fragments": [["没有", "未", "草案", "不是"]]}, "metrics": {"draft_disclosure": "answer"}},
+    {"case_id": "HB05", "family": "trial_not_final", "question": "齿轮箱80°C的试行阈值最终定稿了吗？", "expect": {"answer_any_fragments": [["没有", "未", "试行", "草案", "未最终"]]}, "metrics": {"draft_disclosure": "answer"}},
+    {"case_id": "HB06", "family": "sw42_selfcontained_arith", "question": "12.5比12大多少？", "expect": {"answer_fragments": ["0.5"]}, "metrics": {"sw42_probe": "answer"}},
+    {"case_id": "HB07", "family": "sw42_selfcontained_arith", "question": "3加4等于几？", "expect": {"answer_fragments": ["7"]}, "metrics": {"sw42_probe": "answer"}},
+    {"case_id": "HB08", "family": "sw42_general_knowledge", "question": "标准大气压下水的沸点是多少摄氏度？", "expect": {"answer_fragments": ["100"]}, "metrics": {"sw42_probe": "answer"}},
+    {"case_id": "HB09", "family": "conditional_apply", "question": "我们车间粉尘浓度12 mg/m³，空压机维护应该按多少小时执行？", "expect": {"answer_fragments": ["300"]}, "metrics": {"conditional": "answer"}},
+    {"case_id": "HB10", "family": "conditional_apply_limit", "question": "液压站油压表现读数13 MPa，现行额定是12.5 MPa，这个读数算偏高吗？", "expect": {"answer_any_fragments": [["偏高", "超", "高"]]}, "metrics": {"conditional": "answer"}},
+    {"case_id": "HB11", "family": "plan_reasoning", "question": "2026年1月安排了大修吗？", "expect": {}, "metrics": {"manual_review": "answer", "conditional": "answer"}},
+    {"case_id": "HB12", "family": "version_current_choice", "question": "泵维护视觉手册现在应该按哪个版本执行？v2.0草案能直接用吗？", "expect": {"answer_any_fragments": [["1.1", "v1.1"], ["不能", "草案", "未", "不"]]}, "metrics": {"version_soak": "answer", "draft_disclosure": "answer"}},
+    {"case_id": "HB13", "family": "why_question_k10", "question": "传动轴地脚螺栓力矩标准是46Nm，泵手册M8最大力矩是30Nm，为什么两个数不一样？", "expect": {"answer_fragments": ["46", "30"]}, "metrics": {"manual_review": "answer", "why_boundary": "answer"}},
+    {"case_id": "HB14", "family": "why_question_k10", "question": "为什么齿轮箱2026版把温度阈值从78°C提高到80°C？", "expect": {}, "metrics": {"manual_review": "answer", "why_boundary": "answer"}},
+    {"case_id": "HB15", "family": "limit_breach_next_step", "question": "液压油温在100小时到56°C了，超过了55°C限值，下一步该怎么处理？", "expect": {}, "metrics": {"manual_review": "answer"}},
+    {"case_id": "HB16", "family": "appendix_codes", "question": "空压机手册附录里E01、E02、E03分别是什么故障？", "expect": {"answer_fragments": ["排气高温", "油压低", "过载"]}, "metrics": {"multi_topic": "answer"}},
+    {"case_id": "HB17", "family": "manual_scope", "question": "二号机手册能直接用在一号机上吗？", "expect": {"answer_any_fragments": [["不能", "不行", "仅", "另有", "专用", "不"]]}, "metrics": {"conditional": "answer"}},
+    {"case_id": "HB18", "family": "idle_turning", "question": "空压机长期停机后多久盘车一次？停机多长时间算长期停机？", "expect": {"answer_any_fragments": [["两周"], ["30", "三十"]]}, "metrics": {"multi_topic": "answer"}},
+    {"case_id": "HB19", "family": "seal_broken", "question": "安全阀铅封损坏了还能继续用吗？", "expect": {"answer_any_fragments": [["停用", "不能", "停止", "立即"]]}, "metrics": {"conditional": "answer"}},
+    {"case_id": "HB20", "family": "hot_season_oil", "question": "高温季节空压机换油周期缩短到多少小时？", "expect": {"answer_fragments": ["1500"]}, "metrics": {"conditional": "answer"}},
+    {"case_id": "HB21", "family": "backup_naming", "question": "变频器参数备份的文件名有什么要求？", "expect": {"answer_any_fragments": [["日期", "改名", "带"]]}, "metrics": {"experience_authority": "answer"}},
+    {"case_id": "HB22", "family": "eod_coverage", "question": "EOD培训覆盖了几个班组？", "expect": {"answer_fragments": ["3"]}, "metrics": {"experience_authority": "answer"}}
+  ]
+}

@@ -1,0 +1,383 @@
+{
+  "eval_id": "EKB-RELIABILITY-HOLDOUT-v1",
+  "frozen_at": "2026-09-06T01:30:00+08:00",
+  "model_expectation": "qwen3.8-max",
+  "notes": "泛化验证专用。修复开发期间禁止依据本集调整实现；只允许在 BEFORE_FIX 与 AFTER_FIX 各运行一次并对照。",
+  "cases": [
+    {
+      "case_id": "H01",
+      "family": "holdout_visual_ranking",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "四台冷却水泵谁的流量排第一？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "P-203"
+        ],
+        "answer_any_fragments": [
+          [
+            "42"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "H02",
+      "family": "holdout_visual_extreme",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "这几台泵里流量最小的是哪台？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "P-204"
+        ],
+        "answer_any_fragments": [
+          [
+            "29",
+            "二十九"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "H03",
+      "family": "holdout_visual_extreme",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "泵的故障原因里哪个占大头？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "密封失效"
+        ],
+        "answer_any_fragments": [
+          [
+            "45",
+            "四十五"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "H04",
+      "family": "holdout_visual_extreme",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "故障原因分布里最突出的一项是什么？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "密封失效"
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "H05",
+      "family": "holdout_visual_trend",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "轴承温度曲线哪一段最高？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "72"
+        ],
+        "answer_any_fragments": [
+          [
+            "5000",
+            "五千"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "H06",
+      "family": "holdout_visual_extreme",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "轴承温度从头到尾最低到多少度？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "45"
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "H07",
+      "family": "holdout_visual_reasoning",
+      "taxonomy": [
+        "B3",
+        "F3"
+      ],
+      "question": "哪一段温度涨得最快？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "answer_any_fragments": [
+          [
+            "0",
+            "1000",
+            "1000h",
+            "0h"
+          ],
+          [
+            "7",
+            "七"
+          ]
+        ]
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "H08",
+      "family": "holdout_negative_control",
+      "taxonomy": [
+        "B4"
+      ],
+      "question": "资料里写的空压机最长保养间隔是几个小时？",
+      "expect": {
+        "tool": [
+          "page_search"
+        ],
+        "forbid_tool": [
+          "page_visual_search"
+        ],
+        "answer_fragments": [
+          "500"
+        ]
+      },
+      "metrics": {
+        "tool_selection": "tool",
+        "tool_precision": "tool",
+        "answer": "answer"
+      }
+    },
+    {
+      "case_id": "H09",
+      "family": "holdout_version",
+      "taxonomy": [
+        "A3"
+      ],
+      "question": "去年那版泵手册里 M8 螺栓该拧多大力矩？",
+      "expect": {
+        "tool": [
+          "page_visual_search",
+          "page_search"
+        ],
+        "answer_fragments": [
+          "25"
+        ]
+      },
+      "metrics": {
+        "version_discrimination": "answer",
+        "visual_grounding": "answer"
+      }
+    },
+    {
+      "case_id": "H10",
+      "family": "holdout_version",
+      "taxonomy": [
+        "A3"
+      ],
+      "question": "按今年修订的泵维护手册，M8 的标准力矩是多少？",
+      "expect": {
+        "tool": [
+          "page_visual_search",
+          "page_search"
+        ],
+        "answer_fragments": [
+          "28"
+        ],
+        "cite_must": [
+          {
+            "doc": "v1.1",
+            "page": 1
+          }
+        ]
+      },
+      "metrics": {
+        "version_discrimination": "answer",
+        "visual_grounding": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "H11",
+      "family": "holdout_version_unspecified",
+      "taxonomy": [
+        "A3",
+        "D4"
+      ],
+      "question": "M8 螺栓到底按 25 还是 28 拧？",
+      "expect": {
+        "answer_fragments": [
+          "25",
+          "28"
+        ],
+        "conflict_required": true
+      },
+      "metrics": {
+        "version_discrimination": "answer"
+      }
+    },
+    {
+      "case_id": "H12",
+      "family": "holdout_experience",
+      "taxonomy": [
+        "C2"
+      ],
+      "question": "以前遇到伺服电机转反的情况，我记下来的处理办法是什么？",
+      "expect": {
+        "tool": [
+          "knowledge_search"
+        ],
+        "answer_any_fragments": [
+          [
+            "对调",
+            "U/V",
+            "调换",
+            "DIR_INV"
+          ]
+        ],
+        "memory_must_any": [
+          4,
+          16
+        ]
+      },
+      "metrics": {
+        "experience_positive": "answer",
+        "tool_selection": "tool",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "H13",
+      "family": "holdout_experience_condition",
+      "taxonomy": [
+        "A5",
+        "C5"
+      ],
+      "question": "3.3 版本的驱动器也能照搬之前那个对调相线的经验吗？",
+      "expect": {
+        "tool": [
+          "knowledge_search"
+        ],
+        "answer_fragments": [
+          "3.2"
+        ],
+        "answer_any_fragments": [
+          [
+            "未验证",
+            "不确定",
+            "没有验证",
+            "仅在",
+            "只在",
+            "只验证",
+            "不适用",
+            "谨慎"
+          ]
+        ],
+        "memory_must_any": [
+          4
+        ]
+      },
+      "metrics": {
+        "condition_respect": "answer",
+        "experience_positive": "citation",
+        "epistemic": "answer",
+        "citation": "citation"
+      }
+    },
+    {
+      "case_id": "H14",
+      "family": "holdout_blur",
+      "taxonomy": [
+        "F4"
+      ],
+      "question": "最后那张糊得最厉害的故障分布图，能看出哪类最多吗？",
+      "expect": {
+        "tool": [
+          "page_visual_search"
+        ],
+        "blur_lenient": {
+          "positives": [
+            [
+              "密封失效"
+            ],
+            [
+              "45"
+            ]
+          ],
+          "uncertainty": [
+            "模糊",
+            "无法",
+            "看不清",
+            "不确定",
+            "难以",
+            "不能确定"
+          ]
+        }
+      },
+      "metrics": {
+        "visual_routing": "tool",
+        "visual_grounding": "answer"
+      }
+    }
+  ],
+  "corpus_ref": "v0.8-frozen-corpus-v1"
+}

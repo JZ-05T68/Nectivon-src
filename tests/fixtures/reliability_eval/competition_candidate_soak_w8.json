@@ -1,0 +1,88 @@
+{
+  "eval_id": "competition_candidate_soak_w8",
+  "corpus_ref": "dirty-long-term-v2",
+  "frozen_at": "2026-09-06T19:05:00+08:00",
+  "model_expectation": "VN15 值-标签错位复现稳定性：同题与变体",
+  "notes": "W8 = VN15 错误事实复现波。90=2mm/120=3mm/150=4mm（文本层与图一致）。",
+  "cases": [
+    {
+      "case_id": "FV01",
+      "family": "weld_pair_repeat",
+      "question": "2mm板焊接电流多少安？",
+      "expect": {
+        "answer_fragments": [
+          "90"
+        ]
+      },
+      "metrics": {
+        "answer": "answer"
+      }
+    },
+    {
+      "case_id": "FV02",
+      "family": "weld_pair_repeat",
+      "question": "2mm板的焊接电流是多少？",
+      "expect": {
+        "answer_fragments": [
+          "90"
+        ]
+      },
+      "metrics": {
+        "answer": "answer"
+      }
+    },
+    {
+      "case_id": "FV03",
+      "family": "weld_pair_repeat",
+      "question": "焊2mm厚的板用多大电流？",
+      "expect": {
+        "answer_fragments": [
+          "90"
+        ]
+      },
+      "metrics": {
+        "answer": "answer"
+      }
+    },
+    {
+      "case_id": "FV04",
+      "family": "weld_pair_variant",
+      "question": "3mm板焊接电流多少安？",
+      "expect": {
+        "answer_fragments": [
+          "120"
+        ]
+      },
+      "metrics": {
+        "answer": "answer"
+      }
+    },
+    {
+      "case_id": "FV05",
+      "family": "weld_pair_variant",
+      "question": "4mm板焊接电流多少安？",
+      "expect": {
+        "answer_fragments": [
+          "150"
+        ]
+      },
+      "metrics": {
+        "answer": "answer"
+      }
+    },
+    {
+      "case_id": "FV06",
+      "family": "weld_pair_visual",
+      "question": "焊接电流对照图里最矮的那根柱子是多少安？对应多厚的板？",
+      "expect": {
+        "answer_fragments": [
+          "90",
+          "2"
+        ]
+      },
+      "metrics": {
+        "answer": "answer"
+      }
+    }
+  ]
+}

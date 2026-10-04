@@ -1,0 +1,56 @@
+{
+ "fixture_id": "benchmark_v2_night1_holdout",
+ "benchmark_version": "HBENCH_V2",
+ "frozen_before_first_run": true,
+ "frozen_at": "2026-09-08T00:50:00+08:00",
+ "ground_truth_source": "corpus docs id 87-97（本 Campaign 生成，内容即真值）",
+ "sessions": [
+  {
+   "plan_id": "H1",
+   "session_id": "SIMV2-C-20260908-007",
+   "session_type": "NEW",
+   "persona": "C",
+   "special_cohort": "BLIND_HOLDOUT",
+   "user_goal": "盲测：本夜从未提问过的语料点，冻结后首跑",
+   "turns": [
+    {
+     "index": 1,
+     "task_class": "retrieval_text",
+     "question": "气缸 50mm 在 0.63MPa 下理论推力约多少？",
+     "expected": "约 1.2 kN（液压与气动技术手册 p2）"
+    },
+    {
+     "index": 2,
+     "task_class": "retrieval_text",
+     "question": "六维力传感器的标定周期是多久？",
+     "expected": "12 个月（检测与机器人传感器讲义 p2）"
+    },
+    {
+     "index": 3,
+     "task_class": "retrieval_text",
+     "question": "铁的居里温度大约多少度？",
+     "expected": "约 770°C（材料物理性能讲义 p2）"
+    },
+    {
+     "index": 4,
+     "task_class": "retrieval_text",
+     "question": "电路提纲里最大功率传输时负载电阻和等效电阻要满足什么关系？",
+     "expected": "RL = Rth，此时 Pmax = Uoc²/(4Rth)（电路提纲 p2）"
+    },
+    {
+     "index": 5,
+     "task_class": "retrieval_text",
+     "question": "K 型热电偶的量程上限是多少摄氏度？",
+     "expected": "1200°C（检测与机器人传感器讲义 p1）"
+    },
+    {
+     "index": 6,
+     "task_class": "text_negative_probe",
+     "question": "材料物理性能讲义里有没有写钕磁铁的居里温度？",
+     "expected": "语料只写铁的居里温度（770°C）：应限定『当前资料中未见』并指出只有铁，不得编造钕磁铁数值"
+    }
+   ]
+  }
+ ],
+ "notes": "CROSS_DAY 准备：Night 2 应以相同问题复测以下夜 1 锚点（跨日记忆/经验可达性）：①IGBT 保存问答召回 ②液压油 3000h 仲裁 ③错题本第一题。不在夜 1 伪造跨日时间。"
+}

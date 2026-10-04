@@ -1,0 +1,123 @@
+{
+ "eval_id": "night2_fail026_postfix_v1",
+ "corpus_ref": "hbv2-corpus-20260908-r4",
+ "frozen_at": "2026-09-08T13:45:00+08:00",
+ "product_code_head": "88db3ee (post-fix: c8aae41 fail-026 guard + 88db3ee short-query)",
+ "model_expectation": "FAIL-026 FIX_PACKAGE post-fix regression。reproduction set（pre-fix 3/3 commission：26→2.6、55→5.5、30→3.0 且'以图为准'）必须翻绿：答案含文字层整数值（或双值并列披露），禁止无披露单方采用图中小数、禁止'以图为准'仲裁；control set（边界测试集 p1/p3/p4/p5/p6/p7，Night 1B 7/7 全对）不得回归；real-world set（冷却水泵 63、回火 38）不得回归。判定注：答案若为'图中 X.Y / 文字层 XY 两处不一致'形态，因含文字层整数而计 PASS（安全仲裁），与 master prompt §12.A/B 一致。",
+ "notes": "冻结于首次运行前。reproduction: 讲义 p3 图2-1 N=4/5/6 → 30/27/26。control: 边界集 p1(26/55/68 无间隙)、p3(26/55 中间隙)、p4(68/102 大间隙)、p5(柱 26/55/68)、p6(散点 120/26/68)、p7(真小数 2.6/5.5/10.2)。real-world: 冷却水泵二车间 2026 复测 2000h=63（取代一车间旧 58）；45钢 500°C 回火 38 HRC。",
+ "cases": [
+  {
+   "case_id": "F26-R1",
+   "family": "repro_gap_line",
+   "question": "人工智能基础课程讲义 图2-1 训练损失曲线第4轮的值是多少？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["30"],
+    "forbid_regex": ["以图为准", "以图片为准"]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "F26-R2",
+   "family": "repro_gap_line",
+   "question": "人工智能基础课程讲义 图2-1 训练损失第5轮大概降到多少？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["27"],
+    "forbid_regex": ["以图为准", "图片为准"]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "F26-R3",
+   "family": "repro_gap_line",
+   "question": "人工智能基础课程讲义 图2-1 训练损失曲线第6轮大概是多少？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["26"],
+    "forbid_regex": ["以图为准", "图片为准"]
+   },
+   "metrics": {"route": "tool", "answer": "answer"}
+  },
+  {
+   "case_id": "F26-C1",
+   "family": "control_no_gap",
+   "question": "FAIL026图表标签边界测试集 图1-1 无间隙折线图第2个数据点是多少？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["55"]
+   },
+   "metrics": {"answer": "answer"}
+  },
+  {
+   "case_id": "F26-C2",
+   "family": "control_mid_gap",
+   "question": "FAIL026图表标签边界测试集 图3-1 中间隙折线图第1个数据点是多少？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["26"]
+   },
+   "metrics": {"answer": "answer"}
+  },
+  {
+   "case_id": "F26-C3",
+   "family": "control_wide_gap",
+   "question": "FAIL026图表标签边界测试集 图4-1 大间隙折线图第2个数据点是多少？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["102"]
+   },
+   "metrics": {"answer": "answer"}
+  },
+  {
+   "case_id": "F26-C4",
+   "family": "control_bar",
+   "question": "FAIL026图表标签边界测试集 图5-1 柱状图第3根柱子的值是多少？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["68"]
+   },
+   "metrics": {"answer": "answer"}
+  },
+  {
+   "case_id": "F26-C5",
+   "family": "control_scatter",
+   "question": "FAIL026图表标签边界测试集 图6-1 散点图里 x=3 的点是多少？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["68"]
+   },
+   "metrics": {"answer": "answer"}
+  },
+  {
+   "case_id": "F26-C6",
+   "family": "control_true_decimal",
+   "question": "FAIL026图表标签边界测试集 图7-1 真小数折线图第3个数据点是多少？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["10.2"],
+    "forbid_fragments": ["102"]
+   },
+   "metrics": {"answer": "answer"}
+  },
+  {
+   "case_id": "F26-W1",
+   "family": "realworld_supersede",
+   "question": "冷却水泵性能图表里 2000 小时时轴承温度是多少度？",
+   "expect": {
+    "answer_fragments": ["63"]
+   },
+   "metrics": {"answer": "answer"}
+  },
+  {
+   "case_id": "F26-W2",
+   "family": "realworld_bar",
+   "question": "材料科学回火工艺资料里 500°C 回火后硬度是多少 HRC？",
+   "expect": {
+    "tool": "page_visual_search",
+    "answer_fragments": ["38"]
+   },
+   "metrics": {"answer": "answer"}
+  }
+ ]
+}

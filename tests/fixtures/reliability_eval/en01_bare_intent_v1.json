@@ -1,0 +1,149 @@
+{
+  "eval_id": "EKB-EN01-BARE-INTENT-v1",
+  "corpus_ref": "v0.8-frozen-corpus-v1",
+  "frozen_at": "2026-09-06T08:25:00+08:00",
+  "model_expectation": "qwen3.8-max",
+  "notes": "FAIL-011 裸问法终收 holdout（§11：先盲建 10-20 paraphrases，不能先看答案再写规则）。盲建纪律：case 与期望按语义类第一性推导（根因认定/排查结论/教训/处理结论=经验优先；规格/定义/文档指称=文档优先），写定期后冻结；修复前只跑一次 BEFORE，修复规则不得针对本集措辞做 keyword patch。Ground truth 于 2026-09-06 从冻结语料逐条核实：raw_qa 9=OC 报警（已过时的错误判断：电容老化论）；经验 6=主轴振荡降速度环增益（confirmed）；经验 16=DIR_INV=1（confirmed）；经验 11/12=M8 25/最大 30 速查；经验 14=对中 0.35mm；空压机维护说明（冻结版）=500 小时且'与环境无关'；冷却水泵冻结版 P-202=38；传动轴手册 p1 地脚螺栓力矩标准 46 Nm。",
+  "cases": [
+    {
+      "case_id": "B01",
+      "family": "bare_experience_cause",
+      "question": "变频器 OC 报警一般是什么原因引起的？",
+      "expect": {
+        "tool": "knowledge_search",
+        "blur_lenient": {
+          "positives": [["电容"]],
+          "uncertainty": ["过时", "错误", "旧", "不正确", "不再", "当时", "未确认", "不成立"]
+        }
+      },
+      "metrics": {
+        "experience_routing": "tool",
+        "epistemic_boundary": "answer"
+      }
+    },
+    {
+      "case_id": "B02",
+      "family": "bare_experience_root_cause",
+      "question": "伺服电机方向反的真正根因是什么？",
+      "expect": {
+        "tool": "knowledge_search",
+        "answer_any_fragments": [["DIR_INV", "配置", "参数"]]
+      },
+      "metrics": {
+        "experience_routing": "tool"
+      }
+    },
+    {
+      "case_id": "B03",
+      "family": "bare_experience_handling",
+      "question": "主轴电机高负载振荡怎么处理？",
+      "expect": {
+        "tool": "knowledge_search",
+        "answer_any_fragments": [["速度环", "增益"]]
+      },
+      "metrics": {
+        "experience_routing": "tool"
+      }
+    },
+    {
+      "case_id": "B04",
+      "family": "bare_experience_lesson",
+      "question": "主轴振荡这个问题有什么教训？",
+      "expect": {
+        "tool": "knowledge_search",
+        "answer_any_fragments": [["速度环", "增益", "教训"]]
+      },
+      "metrics": {
+        "experience_routing": "tool"
+      }
+    },
+    {
+      "case_id": "B05",
+      "family": "bare_experience_resolution",
+      "question": "传动轴振动最后是怎么解决的？",
+      "expect": {
+        "tool": "knowledge_search",
+        "answer_any_fragments": [["对中", "0.35", "力矩", "螺栓", "重新"]]
+      },
+      "metrics": {
+        "experience_routing": "tool"
+      }
+    },
+    {
+      "case_id": "B06",
+      "family": "bare_experience_thin_record",
+      "question": "PLC 通讯中断的排查思路是什么？",
+      "expect": {
+        "tool": "knowledge_search",
+        "no_answer_ok": true
+      },
+      "metrics": {
+        "experience_routing": "tool"
+      }
+    },
+    {
+      "case_id": "B07",
+      "family": "bare_decision_support",
+      "question": "地脚螺栓的力矩我该按哪个值来拧？",
+      "expect": {
+        "tool": "knowledge_search",
+        "answer_any_fragments": [["25", "30", "对照表", "速查"]]
+      },
+      "metrics": {
+        "experience_routing": "tool"
+      }
+    },
+    {
+      "case_id": "B08",
+      "family": "bare_document_negative_spec",
+      "question": "空压机维护周期是多少小时？",
+      "expect": {
+        "tool": "page_search",
+        "answer_fragments": ["500"]
+      },
+      "metrics": {
+        "experience_routing": "tool",
+        "precision_control": "answer"
+      }
+    },
+    {
+      "case_id": "B09",
+      "family": "bare_document_negative_named",
+      "question": "泵手册里 M8 的标准力矩是多少？",
+      "expect": {
+        "tool": ["page_visual_search", "page_search"],
+        "answer_any_fragments": [["25", "28"]]
+      },
+      "metrics": {
+        "experience_routing": "tool",
+        "precision_control": "answer"
+      }
+    },
+    {
+      "case_id": "B10",
+      "family": "bare_document_negative_referential",
+      "question": "传动轴手册里写的地脚螺栓力矩标准是多少？",
+      "expect": {
+        "tool": "page_search",
+        "answer_any_fragments": [["46"]]
+      },
+      "metrics": {
+        "experience_routing": "tool",
+        "precision_control": "answer"
+      }
+    },
+    {
+      "case_id": "B11",
+      "family": "bare_document_negative_visual",
+      "question": "冷却水泵 P-202 的额定流量是多少？",
+      "expect": {
+        "tool": ["page_visual_search", "page_search"],
+        "answer_fragments": ["38"]
+      },
+      "metrics": {
+        "experience_routing": "tool",
+        "precision_control": "answer"
+      }
+    }
+  ]
+}

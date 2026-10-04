@@ -1,0 +1,62 @@
+{
+  "eval_id": "competition_candidate_soak_w7",
+  "corpus_ref": "dirty-long-term-v2",
+  "frozen_at": "2026-09-06T18:50:00+08:00",
+  "model_expectation": "真实单步 Agent + 硬模型；CW25 复现族边界刻画：同名字被取代图表的新值可达性；零编造",
+  "notes": "W7 = FAIL-018（静默旧值）边界刻画波：同名字图表对的版本可达性与披露行为。",
+  "cases": [
+    {
+      "case_id": "FQ01",
+      "family": "same_name_trend_current",
+      "question": "冷却水泵轴承温度趋势按最新复测数据，2000小时时是多少度？",
+      "expect": {
+        "answer_fragments": [
+          "63"
+        ]
+      },
+      "metrics": {
+        "answer": "answer"
+      }
+    },
+    {
+      "case_id": "FQ02",
+      "family": "same_name_trend_workshop",
+      "question": "二车间2026年复测的冷却水泵轴承温度趋势里，5000小时时是多少度？",
+      "expect": {
+        "answer_fragments": [
+          "80"
+        ]
+      },
+      "metrics": {
+        "answer": "answer"
+      }
+    },
+    {
+      "case_id": "FQ03",
+      "family": "same_name_trend_disclosure",
+      "question": "冷却水泵轴承温度趋势的数据，一车间旧记录和二车间2026复测分别是多少（2000小时）？哪个是现行的？",
+      "expect": {
+        "answer_fragments": [
+          "58",
+          "63"
+        ]
+      },
+      "metrics": {
+        "answer": "answer"
+      }
+    },
+    {
+      "case_id": "FQ04",
+      "family": "same_name_flow_authority",
+      "question": "冷却水泵额定流量对比图里P-303的流量是多少？这是哪个车间的数据？",
+      "expect": {
+        "answer_fragments": [
+          "46"
+        ]
+      },
+      "metrics": {
+        "answer": "answer"
+      }
+    }
+  ]
+}
