@@ -638,6 +638,7 @@ class AuditedAIProvider:
         *,
         model: str | None = None,
         max_completion_tokens: int | None = None,
+        json_output: bool = False,
         source_feature: str | None = None,
         target_refs: Sequence[str] | None = None,
     ) -> CompletionResult:
@@ -666,11 +667,15 @@ class AuditedAIProvider:
         self._ensure_allowed("vision", base)
         started = time.monotonic()
         try:
+            vision_options: dict[str, object] = {
+                "model": model, "max_completion_tokens": max_completion_tokens,
+            }
+            if json_output:
+                vision_options["json_output"] = True
             result = self._wrapped.complete_vision(  # type: ignore[attr-defined]
                 prompt,
                 image_png_base64,
-                model=model,
-                max_completion_tokens=max_completion_tokens,
+                **vision_options,
             )
         except AIUnavailableError:
             self._record(

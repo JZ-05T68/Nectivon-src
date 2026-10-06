@@ -9,6 +9,7 @@ network anywhere.
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -126,9 +127,7 @@ def test_layer1_search_finds_organized_stems(database: Database) -> None:
 
 def test_layer1_evidence_link_uses_v29_page_reference(database: Database) -> None:
     service = QuestionService(database)
-    question = service.create_question_item(
-        document_id=1, page_id=1, question_kind="error"
-    )
+    question = service.create_question_item(document_id=1, page_id=1, question_kind="error")
     link_id = service.link_evidence(
         question.id,
         evidence_item_id=None,
@@ -199,9 +198,7 @@ def test_layer2_family_matching_assignment_and_revision(database: Database) -> N
 def test_layer3_mastery_tracks_can_do_and_can_explain_separately(database: Database) -> None:
     questions = QuestionService(database)
     mastery = MasteryService(database)
-    question = questions.create_question_item(
-        document_id=1, page_id=1, question_kind="error"
-    )
+    question = questions.create_question_item(document_id=1, page_id=1, question_kind="error")
 
     mastery.record_practice(question.id, outcome="correct", can_explain=False)
     mastery.record_explanation(question.id, can_explain=True)
@@ -374,9 +371,7 @@ def test_two_wings_boundary_counterexample_wing(database: Database) -> None:
 
 def test_two_wings_family_attachment_and_filtering(database: Database) -> None:
     organization = QuestionOrganizationService(database)
-    family_id = organization.create_family(
-        family_kind="conclusion", title="对数不等式结论"
-    )
+    family_id = organization.create_family(family_kind="conclusion", title="对数不等式结论")
     wings = TwoWingsService(database)
 
     trigger_id = wings.create_entry(
@@ -441,6 +436,7 @@ def test_two_wings_evidence_binding_and_target_validation(database: Database) ->
 
 
 # ------------------------------------------------- V086-R1 redteam fixes
+
 
 def test_content_change_helper_distinguishes_blank_save(database: Database) -> None:
     """V086-R1 FIX-1: user_edited means "user really changed content"."""
@@ -559,10 +555,7 @@ def test_question_subject_is_owned_by_question_and_scoped_to_document(
         import_status="completed",
     )
     second_image = (
-        database.database_path.parent.parent
-        / "pages"
-        / str(second_document.id)
-        / "page-1.png"
+        database.database_path.parent.parent / "pages" / str(second_document.id) / "page-1.png"
     )
     second_image.parent.mkdir(parents=True)
     second_image.write_bytes(b"png")
@@ -589,3 +582,85 @@ def test_question_subject_is_owned_by_question_and_scoped_to_document(
     assert updated_count == 1
     assert service.get_question_item(math_question.id).subject == "物理"
     assert service.get_question_item(history_question.id).subject == "历史"
+
+
+def test_new_image_stem_refresh_preserves_human_changes_and_learning_notes(
+    database: Database,
+) -> None:
+    from src.question_candidate_service import QuestionCandidate
+
+    service = QuestionService(database)
+    unchanged = service.create_question_item(
+        document_id=1,
+        page_id=1,
+        question_kind="error",
+        question_number="7",
+        stem_text="AI old x2023",
+        student_answer="my answer",
+        correction_note="my note",
+        ai_draft={
+            "origin": "ai_question_candidate_split",
+            "candidate": {"stem": "AI old x2023", "user_edited": False},
+        },
+    )
+    service.update_question_item(unchanged.id, status="organized")
+    corrected = service.create_question_item(
+        document_id=1,
+        page_id=1,
+        question_kind="error",
+        question_number="8",
+        stem_text="human correction",
+        student_answer="human answer",
+        ai_draft={
+            "origin": "ai_question_candidate_split",
+            "candidate": {"stem": "AI wrong", "user_edited": False},
+        },
+    )
+    assert (
+        service.sync_image_recognized_stems(
+            1,
+            [
+                QuestionCandidate("7", "$x^{2023}$", "complete"),
+                QuestionCandidate("8", "$y^{2}$", "complete"),
+            ],
+        )
+        == 1
+    )
+    refreshed = service.get_question_item(unchanged.id)
+    human = service.get_question_item(corrected.id)
+    assert refreshed.stem_text == "$x^{2023}$"
+    assert refreshed.student_answer == "my answer" and refreshed.correction_note == "my note"
+    assert refreshed.status == "organized" and refreshed.user_edited
+    assert refreshed.ai_draft["previous_ai_stems"][0]["stem"] == "AI old x2023"
+    assert human.stem_text == "human correction" and human.student_answer == "human answer"
+    assert human.ai_draft["image_recognized_original"]["human_stem_preserved"]
+    # Draft JSON remains valid and the fresh text is searchable.
+    json.dumps(refreshed.ai_draft)
+    assert service.search_questions("2023")
+
+
+def test_image_recognition_refreshes_shared_context_without_touching_human_stem(database):
+    from src.question_candidate_service import QuestionCandidate
+    from src.question_structure_service import link_atomic_question, materialize_candidate_tree
+
+    service = QuestionService(database)
+    question = service.create_question_item(
+        document_id=1, page_id=1, question_kind="error", question_number="7(1)",
+        stem_text="人工题干", correction_note="人工笔记",
+    )
+    old = QuestionCandidate("7", "旧AI误用第一小问", "complete", question_kind="composite",
+                            children=[QuestionCandidate("7(1)", "旧题干", "complete")])
+    mapping = materialize_candidate_tree(database, document_id=1, source_page_id=1,
+                                         root_candidate=old)
+    link_atomic_question(database, node_id=mapping["0.0"], question_item_id=question.id)
+    fresh = QuestionCandidate("7", "", "complete", question_kind="composite",
+                              children=[QuestionCandidate("7(1)", "$x^{2}$", "complete")],
+                              has_shared_stem=False)
+    service.sync_image_recognized_stems(1, [fresh])
+    refreshed = service.get_question_item(question.id)
+    assert refreshed.shared_context == ""
+    assert refreshed.stem_text == "人工题干" and refreshed.correction_note == "人工笔记"
+    fresh.has_shared_stem = True
+    fresh.stem = "已知 $x=2$。"
+    service.sync_image_recognized_stems(1, [fresh])
+    assert service.get_question_item(question.id).shared_context == "7\n已知 $x=2$。"

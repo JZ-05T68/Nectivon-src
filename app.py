@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
 
 import streamlit as st
 
@@ -13,6 +12,7 @@ from src.runtime import (
     application_settings,
     application_startup_reconciliation,
 )
+from src.time_display import beijing_now
 from src.workspace_ui import empty_panel, render_workspace, section_heading
 
 LOGGER = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ if stats.documents == 0:
     _render_footer()
     st.stop()
 
-today = date.today()
+today = beijing_now().date()
 weekday = "一二三四五六日"[today.weekday()]
 st.markdown(
     '<div class="ekb-intro"><div><h1>你的知识，正在成为可以反复调用的资产。</h1>'

@@ -6,9 +6,8 @@ Official documentation verified 2026-09-21:
 * Per-model parameters: https://platform.kimi.com/docs/api/models-overview.md
 * K3 reasoning effort: https://platform.kimi.com/docs/guide/use-reasoning-effort.md
 
-This phase deliberately exposes only non-streaming text completion.  Native
-tools, web search, code runners, memory and multimodal flows remain out of the
-business contract, and ``reasoning_content`` is validated but never returned.
+Non-streaming text and image completion share the vendor-neutral boundary.
+Native tools remain out of scope; ``reasoning_content`` is never returned.
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from src.ai.credential_store import SecretCredential
+from src.ai.image_message import image_user_content
 from src.ai.model_registry import CapabilitySupport, ProviderId, get_model_preset
 from src.ai.openai_compatible import (
     OpenAICompatibleClient,
@@ -76,6 +76,7 @@ class KimiAdapter:
         else:
             self._credential = SecretCredential(api_key) if api_key.strip() else None
         self._model = normalized_model
+        self._timeout_seconds = timeout_seconds
         self._client = OpenAICompatibleClient(
             base_url=base_url,
             timeout_seconds=timeout_seconds,
@@ -96,23 +97,39 @@ class KimiAdapter:
     ) -> CompletionResult:
         """Return final content while keeping Kimi reasoning internal."""
 
+        return self._complete_content(
+            prompt,
+            model=model,
+            max_completion_tokens=max_completion_tokens,
+        )
+
+    def _complete_content(
+        self,
+        content: str | list[dict[str, Any]],
+        *,
+        model: str | None,
+        max_completion_tokens: int | None,
+        json_output: bool = False,
+    ) -> CompletionResult:
+        """Share transport, token policy and final-content parsing across inputs."""
+
         credential = self._require_credential()
         chosen_model = (model or self._model).strip()
         if not chosen_model:
             raise ValueError("Model ID 不能为空")
         payload = build_chat_completion_payload(
             model=chosen_model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": content}],
         )
         if max_completion_tokens is not None:
             if max_completion_tokens <= 0:
                 raise ValueError("max_completion_tokens 必须为正数")
             # K2.6 documents ``max_tokens`` while K3 uses the newer field.
-            token_field = (
-                "max_tokens" if chosen_model == "kimi-k2.6" else "max_completion_tokens"
-            )
+            token_field = "max_tokens" if chosen_model == "kimi-k2.6" else "max_completion_tokens"
             payload[token_field] = max_completion_tokens
         payload.update(self._reasoning_parameters(chosen_model))
+        if json_output:
+            payload["response_format"] = {"type": "json_object"}
         try:
             response, retry_count = self._client.post(
                 "/chat/completions",
@@ -120,11 +137,12 @@ class KimiAdapter:
                 credential=credential,
                 provider_id=ProviderId.KIMI.value,
                 error_mapper=_kimi_error_detail,
+                timeout_seconds=max(self._timeout_seconds, 120.0)
+                if isinstance(content, list)
+                else None,
             )
             self._validate_reasoning_content(response)
-            return parse_chat_completion(
-                response, chosen_model, retry_count=retry_count
-            )
+            return parse_chat_completion(response, chosen_model, retry_count=retry_count)
         except ProviderCallError as exc:
             if exc.detail.code in {
                 ProviderErrorCode.INVALID_RESPONSE,
@@ -146,9 +164,20 @@ class KimiAdapter:
         *,
         model: str | None = None,
         max_completion_tokens: int | None = None,
+        json_output: bool = False,
     ) -> CompletionResult:
-        del prompt, image_png_base64, model, max_completion_tokens
-        raise self._unsupported_capability()
+        """Read supplied pixels using a documented visual model in one request."""
+
+        chosen_model = (model or self._model).strip()
+        preset = get_model_preset(ProviderId.KIMI, chosen_model)
+        if preset is None or preset.capabilities.vision is not CapabilitySupport.SUPPORTED:
+            raise self._unsupported_capability()
+        return self._complete_content(
+            image_user_content(prompt, image_png_base64),
+            model=chosen_model,
+            max_completion_tokens=max_completion_tokens,
+            json_output=json_output,
+        )
 
     def embed(
         self,
@@ -179,10 +208,7 @@ class KimiAdapter:
     @staticmethod
     def _reasoning_parameters(model_id: str) -> dict[str, Any]:
         preset = get_model_preset(ProviderId.KIMI, model_id)
-        if (
-            preset is None
-            or preset.capabilities.reasoning is not CapabilitySupport.SUPPORTED
-        ):
+        if preset is None or preset.capabilities.reasoning is not CapabilitySupport.SUPPORTED:
             # Custom models are unknown: never infer a vendor field from a name.
             return {}
         if model_id == "kimi-k3":

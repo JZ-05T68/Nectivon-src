@@ -92,7 +92,7 @@ def render_training_profile_page(service: TrainingProfileService) -> None:
     # ==========================================================================
     header_col, status_col = st.columns([4, 1.5], vertical_alignment="center")
     with header_col:
-        st.subheader("针对训练 · 个人信息配置")
+        st.subheader("训练配置")
         st.caption("配置所在地区、教学阶段与年级。学科在待核对资料时单独确认；所有信息仅存储在本机。")
     with status_col:
         if is_editing:

@@ -116,7 +116,7 @@ def test_preset_ids_match_official_documentation() -> None:
     preset_flash = get_model_preset(ProviderId.GLM, "glm-5.3-flash")
     assert preset_53 is not None and preset_53.display_name == "GLM-5.3"
     assert preset_53.recommended is True
-    assert preset_flash is not None and preset_flash.display_name == "GLM-5.3flash"
+    assert preset_flash is not None and preset_flash.display_name == "GLM-5.3 Flash"
 
 
 def test_flash_preset_uses_exact_official_model_id() -> None:

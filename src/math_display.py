@@ -22,6 +22,9 @@ import re
 
 import streamlit as st
 
+from src.question_recognition_rules import LATEX_SYMBOLS
+from src.recognition_json import normalize_latex_command_escapes
+
 _SUBSCRIPT_TRANSLATION = str.maketrans("0123456789+-", "₀₁₂₃₄₅₆₇₈₉₊₋")
 _SUPERSCRIPT_TRANSLATION = str.maketrans("0123456789+-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻")
 _MHCHEM_COMMAND = re.compile(r"\\ce\s*\{")
@@ -37,12 +40,13 @@ _PLAIN_SCHOOL_MATH = re.compile(
     r"|(?P<fraction>(?<![A-Za-z0-9_/])[+-]?\d+/[+-]?\d+(?![A-Za-z0-9_/]))"
     r"|(?P<power>(?:\([^()\n]+\)|[A-Za-z]|[+-]?\d+)\^(?:\{[+-]?\d+\}|[+-]?\d+))"
 )
-_CHOICE_LABEL = re.compile(r"(?<![A-Za-z0-9])([A-D])[.．][ \t]*")
+_CHOICE_LABEL = re.compile(r"(?<![A-Za-z0-9\\.])([A-D])[.．、:：)）][ \t]*")
 _QUESTION_EXPRESSION = re.compile(
     r"(?<![A-Za-z0-9])"
-    r"(?:\|[^|\n]{1,24}\||[+\-]?\([A-Za-z0-9+\-*/×÷]{1,60}\)|[A-Za-z]{1,4}|[+\-]?\d+[A-Za-z]?)"
+    r"(?:\|[^|\n]{1,24}\||[+\-]?\([A-Za-z0-9+\-*/×÷^{}]{1,60}\)|[A-Za-z]{1,4}|[+\-]?\d+[A-Za-z]?)"
     r"(?:[ \t]*[+\-×÷*/=≤≥<>^][ \t]*"
-    r"(?:\|[^|\n]{1,24}\||[+\-]?\([A-Za-z0-9+\-*/×÷]{1,60}\)|[+\-]?[A-Za-z]{1,4}|[+\-]?\d+[A-Za-z]?))+"
+    r"(?:\|[^|\n]{1,24}\||[+\-]?\([A-Za-z0-9+\-*/×÷^{}]{1,60}\)|"
+    r"[+\-]?[A-Za-z]{1,4}|[+\-]?\d+[A-Za-z]?|\{[A-Za-z0-9+\-*/ ]{1,60}\}))+"
 )
 _QUESTION_ABSOLUTE = re.compile(r"\|[A-Za-z0-9+\-]{1,24}\|")
 _QUESTION_COMPLEX_ABSOLUTE = re.compile(
@@ -53,16 +57,111 @@ _QUESTION_MONOMIAL = re.compile(r"(?<![A-Za-z0-9])[+\-]?\d+(?:\.\d+)?[A-Za-z]{1,
 _QUESTION_LETTER = re.compile(r"(?<![A-Za-z\\])([A-Za-z]{1,3})(?![A-Za-z.])")
 _ABSOLUTE_FRACTION = re.compile(r"\|([A-Za-z][A-Za-z0-9]*)\|/([A-Za-z][A-Za-z0-9]*)")
 _PAREN_FRACTION = re.compile(r"\(([^()]{1,60})\)[÷/]([A-Za-z0-9]{1,12})")
+_GROUPED_FRACTION = re.compile(
+    r"\(([^()\n]{1,120})\)\s*[/÷]\s*\(([^()\n]{1,120})\)"
+)
+_GROUPED_DENOMINATOR = re.compile(
+    r"(?<![A-Za-z0-9\\}])([A-Za-z]|[+\-]?\d+(?:\.\d+)?)\s*[/÷]\s*\(([^()\n]{1,120})\)"
+)
 _LETTER_FRACTION = re.compile(r"(?<![A-Za-z0-9])([A-Za-z])/([A-Za-z0-9]{1,12})")
 _NUMERIC_FRACTION = re.compile(r"(?<![A-Za-z0-9])([+\-]?\d+)[÷/]([+\-]?\d+)")
 _QUESTION_NUMBER = re.compile(r"(?<![A-Za-z0-9])([+\-]?\d+(?:\.\d+)?)(?![A-Za-z0-9])")
+_EXPLICIT_EXPONENT = re.compile(r"\^[ \t]*(?:\(([A-Za-z0-9+\-*/ ]+)\)|([+\-]?\d+|[A-Za-z]))")
+_EXPLICIT_MATH_SUBSCRIPT = re.compile(
+    r"_[ \t]*(?:\(([A-Za-z0-9=+\-*/ ]+)\)|([+\-]?\d+|[A-Za-z]))"
+)
+_MATH_FUNCTIONS = r"sin|cos|tan|cot|sec|csc|arcsin|arccos|arctan|sinh|cosh|tanh|log|ln|exp|lim"
+_ADVANCED_SYMBOLS = "".join(symbol for symbol in LATEX_SYMBOLS if symbol not in "×÷≤≥")
+_ADVANCED_MATH_RUN = re.compile(
+    rf"(?<![A-Za-z\\])(?:[{_ADVANCED_SYMBOLS}]|"
+    rf"\\(?:{_MATH_FUNCTIONS}|int|iint|iiint|oint|sum|prod|alpha|beta|theta|sigma|pi)\b|"
+    rf"(?:{_MATH_FUNCTIONS})(?![A-Za-z]))"
+    rf"(?:\\[A-Za-z]+|[A-Za-z]{{1,3}}(?![A-Za-z])|"
+    rf"[{''.join(LATEX_SYMBOLS)}0-9_{{}}()\[\]^+*/=<>≤≥×÷|. \t\-])*"
+)
+
+
+def _advanced_math_to_latex(text: str) -> str:
+    """Typeset explicit calculus/functions/Greek notation without solving it."""
+
+    value = "".join(LATEX_SYMBOLS.get(character, character) + (
+        " " if character in LATEX_SYMBOLS else ""
+    ) for character in _brace_explicit_exponents(text.strip()))
+    value = re.sub(
+        rf"(?<![A-Za-z\\])({_MATH_FUNCTIONS})(?![A-Za-z])",
+        lambda match: "\\" + match.group(1) + " ", value,
+    )
+    return value.strip()
+
+
+def _protect_explicit_latex(text: str, save_math) -> str:
+    r"""Keep arbitrary typed LaTeX commands and balanced arguments in one formula.
+
+    This includes matrices, vectors and commands beyond a school-specific list.
+    Existing delimited formulas are handled separately; ordinary prose remains text.
+    """
+
+    def environment_end(start: int) -> int | None:
+        environment = re.match(r"\\begin\{([A-Za-z*]+)\}", text[start:])
+        if environment:
+            closing = re.search(r"\\end\{" + re.escape(environment[1]) + r"\}",
+                                text[start + environment.end():])
+            if closing:
+                return start + environment.end() + closing.end()
+        return None
+
+    output, cursor = [], 0
+    while match := re.search(r"\\[A-Za-z]+", text[cursor:]):
+        start = cursor + match.start()
+        end = environment_end(start) or start
+        if end == start:
+            while end < len(text):
+                if env_end := environment_end(end):
+                    end = env_end
+                    continue
+                token = re.match(r"\\(?:[A-Za-z]+|[,;!: ])|[A-Za-z]{1,3}(?![A-Za-z])|"
+                                 r"[0-9]+|[+*/=<>_\^()\[\]|., \t\-]", text[end:])
+                if text[end] == "{":
+                    argument = _balanced_argument(text, end)
+                    if argument is None:
+                        break
+                    end = argument[1]
+                elif token:
+                    end += token.end()
+                elif text[end] in LATEX_SYMBOLS:
+                    end += 1
+                else:
+                    break
+        if end == start:
+            # Never loop on a damaged command.
+            end = start + len(match.group(0))
+        formula = text[start:end].rstrip()
+        output.extend((text[cursor:start], save_math(formula)))
+        cursor = start + len(formula)
+    output.append(text[cursor:])
+    return "".join(output)
+
+
+def _brace_explicit_exponents(text: str) -> str:
+    """Recognise a typed caret as an exponent, retaining its full operand."""
+
+    text = _EXPLICIT_MATH_SUBSCRIPT.sub(
+        lambda match: "_{" + (match.group(1) or match.group(2)).strip() + "}", text
+    )
+    return _EXPLICIT_EXPONENT.sub(
+        lambda match: "^{" + (match.group(1) or match.group(2)).strip() + "}", text
+    )
 
 
 def format_multiple_choice_lines(text: str) -> str:
     """Put a real A–D option set on separate lines without editing stored OCR."""
 
     source = str(text or "")
-    matches = list(_CHOICE_LABEL.finditer(source))
+    math_ranges = [match.span() for match in _EXISTING_MATH_BLOCK.finditer(source)]
+    matches = [
+        match for match in _CHOICE_LABEL.finditer(source)
+        if not any(start <= match.start() < end for start, end in math_ranges)
+    ]
     if len(matches) < 2 or matches[0].group(1) != "A":
         return source
     # Require ordered labels so an incidental abbreviation in prose is not split.
@@ -80,7 +179,8 @@ def format_multiple_choice_lines(text: str) -> str:
 def _question_expression_to_latex(value: str) -> str:
     """Apply notation-only rewrites; never infer a value or change an operator."""
 
-    normalized = re.sub(r"\s+", "", value)
+    normalized = re.sub(r"\s+", "", _brace_explicit_exponents(value))
+    normalized = _typeset_grouped_fractions(normalized)
     normalized = _ABSOLUTE_FRACTION.sub(
         lambda match: f"\\dfrac{{|{match.group(1)}|}}{{{match.group(2)}}}",
         normalized,
@@ -107,11 +207,24 @@ def _question_expression_to_latex(value: str) -> str:
     return normalized
 
 
+def _typeset_grouped_fractions(value: str) -> str:
+    """Retain explicitly grouped numerator/denominator precedence in fractions."""
+
+    for pattern in (_GROUPED_FRACTION, _GROUPED_DENOMINATOR):
+        value = pattern.sub(
+            lambda match: f"\\dfrac{{{match[1]}}}{{{match[2]}}}", value,
+        )
+    return value
+
+
 def _normalize_existing_question_math(block: str) -> str:
     """Typeset unambiguous divisions inside already delimited math spans."""
 
     delimiter = "$$" if block.startswith("$$") else "$"
-    value = block[len(delimiter) : -len(delimiter)].replace(r"\frac", r"\dfrac")
+    value = _brace_explicit_exponents(
+        block[len(delimiter) : -len(delimiter)].replace(r"\frac", r"\dfrac")
+    )
+    value = _typeset_grouped_fractions(value)
     value = re.sub(
         r"\(([^()]{1,60})\)\s*\\div\s*([A-Za-z0-9]{1,12})",
         lambda match: f"\\dfrac{{{match.group(1)}}}{{{match.group(2)}}}",
@@ -123,6 +236,24 @@ def _normalize_existing_question_math(block: str) -> str:
         value,
     )
     return f"{delimiter}{value}{delimiter}"
+
+
+def _unicode_script_notation(text: str) -> str:
+    """Translate explicit Unicode super/subscripts without inferring missing powers."""
+
+    greek = "αβγδεζηθικλμνξπρστυφχψωΓΔΘΛΞΠΣΥΦΨΩϵϑϕϱς"
+    text = re.sub(
+        rf"(?<=[A-Za-z0-9)）}}{greek}])[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+",
+        lambda match: "^{" + match.group(0).translate(
+            str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻", "0123456789+-")
+        ) + "}", text,
+    )
+    return re.sub(
+        rf"(?<=[A-Za-z0-9)）}}{greek}])[₀₁₂₃₄₅₆₇₈₉₊₋ₙₓₐₑₒₚᵢⱼ]+",
+        lambda match: "_{" + match.group(0).translate(
+            str.maketrans("₀₁₂₃₄₅₆₇₈₉₊₋ₙₓₐₑₒₚᵢⱼ", "0123456789+-nxaeopij")
+        ) + "}", text,
+    )
 
 
 def normalize_question_math(text: str) -> str:
@@ -139,6 +270,29 @@ def normalize_question_math(text: str) -> str:
             protected.append(f"${latex}$")
             return chr(0xE000 + len(protected) - 1)
 
+        chunk = _protect_explicit_latex(chunk, save_math)
+
+        # Unicode superscripts are mathematical notation, not OCR guesses.
+        # Convert them before finding expressions so (a+1)² stays one formula.
+        chunk = _unicode_script_notation(chunk)
+        chunk = re.sub(
+            r"（([A-Za-z0-9+\-*/×÷|^{}\s]+)）", r"(\1)", chunk
+        )
+        chunk = _brace_explicit_exponents(chunk)
+        chunk = _ADVANCED_MATH_RUN.sub(
+            lambda match: save_math(_advanced_math_to_latex(match.group(0))), chunk
+        )
+        chunk = re.sub(
+            r"(?<![A-Za-z0-9])([A-Za-z]|[+\-]?\d+)\^\{([A-Za-z0-9+\-*/ ]{1,60})\}",
+            lambda match: save_math(f"{match.group(1)}^{{{match.group(2)}}}"),
+            chunk,
+        )
+        chunk = re.sub(
+            r"√(?:\(([^()\n]+)\)|([A-Za-z0-9]+))",
+            lambda match: save_math(f"\\sqrt{{{match.group(1) or match.group(2)}}}"),
+            chunk,
+        )
+        chunk = chunk.replace("π", save_math(r"\pi")) if "π" in chunk else chunk
         chunk = re.sub(
             r"△([A-Z]{3})",
             lambda match: save_math(f"\\triangle {match.group(1)}"),
@@ -172,12 +326,14 @@ def normalize_question_math(text: str) -> str:
         )
         for index, math in enumerate(protected):
             chunk = chunk.replace(chr(0xE000 + index), math)
-        return chunk.replace("$$", "")
+        # Adjacent derived spans can share math mode.  Keep a separator so
+        # a command followed by a letter (e.g. \pi + r) cannot become \pir.
+        return chunk.replace("$$", " ")
 
     # A malformed AI/user fragment such as ``-2$$c &#x20;`` is not a display
     # equation.  Remove only this exact impossible in-word delimiter and the
     # observed encoded space; preserve the editable source unchanged.
-    display_source = str(text or "").replace("&#x20;", " ")
+    display_source = normalize_math_delimiters(text).replace("&#x20;", " ")
     display_source = re.sub(r"(?<=[0-9])\$\$(?=[A-Za-z])", "", display_source)
     choices = format_multiple_choice_lines(display_source)
     parts = _EXISTING_MATH_BLOCK.split(choices)
@@ -353,5 +509,36 @@ def render_math_markdown(text: str) -> None:
     Never use for editable fields.
     """
 
-    chemistry_safe = normalize_chemistry_markdown(text)
+    chemistry_safe = normalize_chemistry_markdown(normalize_math_delimiters(text))
     st.markdown(normalize_plain_school_math(chemistry_safe))
+
+
+def normalize_math_delimiters(text: str) -> str:
+    """Accept standard LaTeX delimiters on every KaTeX reading surface."""
+
+    value = str(text or "")
+    value = re.sub(r"\\\((.*?)\\\)", lambda match: "$" + match[1] + "$", value, flags=re.DOTALL)
+    value = re.sub(
+        r"\\\[(.*?)\\\]", lambda match: "\n\n$$" + match[1] + "$$\n\n",
+        value, flags=re.DOTALL,
+    )
+    # Two adjacent inline formulas have a closing and opening dollar next to
+    # each other. Separate them before looking for display-math delimiters.
+    value = re.sub(r"(?<!\$)(\$[^$\n]+\$)(?=\$[^$\n]+\$(?!\$))", r"\1 ", value)
+
+    def normalized(match: re.Match) -> str:
+        block = normalize_latex_command_escapes(match[0])
+        if block.startswith("$$") and len(block) > 4:
+            # Earlier AI JSON transport repairs could retain bare \n at a
+            # display block's edges. Repair only those layout escapes, never
+            # commands such as \nu or matrix row separators in the formula.
+            body = re.sub(r"^(?:\s|\\n(?![A-Za-z]))+|(?:\s|(?<!\\)\\n)+$", "", block[2:-2])
+            block = "$$" + body + "$$"
+            before = "" if value[:match.start()].endswith("\n\n") else "\n\n"
+            after = "" if value[match.end():].startswith("\n\n") else "\n\n"
+            return before + block + after
+        return block
+
+    return _EXISTING_MATH_BLOCK.sub(
+        normalized, value,
+    )

@@ -58,7 +58,14 @@ def _unique(values: Iterable[Any]) -> list[Any]:
 
 
 _FIRST_SUBQUESTION_MARKER = re.compile(
-    r"(?m)(?:^|\n)\s*[（(]\s*[0-9一二三四五六七八九十]+\s*[）)]"
+    r"(?m)(?:^|\n|(?<=[：:]))\s*"
+    r"(?:\d{1,3}\s*[.．、:：]?\s*)?"
+    r"(?:[（(]\s*\d+(?:\.\d+)?\s*分\s*[）)]\s*)?"
+    r"[（(]\s*[0-9一二三四五六七八九十]+\s*[）)]"
+)
+_QUESTION_METADATA_ONLY = re.compile(
+    r"(?:\d{1,3}\s*[.．、:：]?\s*)?"
+    r"(?:[（(]\s*\d+(?:\.\d+)?\s*分\s*[）)]\s*)?"
 )
 
 
@@ -74,9 +81,10 @@ def _shared_parent_prompt(prompt: str) -> str:
 
     clean_prompt = str(prompt or "").strip()
     marker = _FIRST_SUBQUESTION_MARKER.search(clean_prompt)
-    if marker is None:
-        return clean_prompt
-    return clean_prompt[: marker.start()].strip()
+    shared = clean_prompt if marker is None else clean_prompt[: marker.start()].strip()
+    # A question number/score is metadata, never a shared condition.  The
+    # first child may follow it on the same line (e.g. 23.(8分)(1)若...).
+    return "" if _QUESTION_METADATA_ONLY.fullmatch(shared) else shared
 
 
 def _labelled_parent_prompt(label: str, prompt: str) -> str:
@@ -101,7 +109,7 @@ def _labelled_parent_prompt(label: str, prompt: str) -> str:
 def _candidate_payload(candidate: object) -> dict[str, object]:
     """Return stable, source-derived fields used by persistence/fingerprint."""
 
-    return {
+    payload = {
         "label": str(getattr(candidate, "number", "") or "").strip(),
         "prompt": str(getattr(candidate, "stem", "") or "").strip(),
         "kind": str(getattr(candidate, "question_kind", "atomic") or "atomic"),
@@ -122,6 +130,10 @@ def _candidate_payload(candidate: object) -> dict[str, object]:
             for child in (getattr(candidate, "children", []) or [])
         ],
     }
+    decision = getattr(candidate, "has_shared_stem", None)
+    if type(decision) is bool:
+        payload["has_shared_stem"] = decision
+    return payload
 
 
 def tree_fingerprint(candidate: object) -> str:
@@ -201,9 +213,9 @@ def materialize_candidate_tree(
                     question_label, question_level, question_kind,
                     local_prompt, shared_context_refs, page_refs, image_refs,
                     answer_refs, display_order, is_leaf, split_source,
-                    split_confidence, status, created_at, updated_at
+                    split_confidence, has_shared_stem, status, created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                          ?, ?, 'ai_draft', datetime('now'), datetime('now'))
+                          ?, ?, ?, 'ai_draft', datetime('now'), datetime('now'))
                 """,
                 (
                     document_id,
@@ -236,6 +248,7 @@ def materialize_candidate_tree(
                     1 if is_leaf else 0,
                     split_source,
                     split_confidence,
+                    getattr(candidate, "has_shared_stem", None),
                 ),
             )
             node_id = int(cursor.lastrowid)
@@ -312,15 +325,15 @@ def context_for_question_item(
             """
             WITH RECURSIVE ancestry(id, parent_question_id, question_level,
                                     question_kind, question_label, local_prompt,
-                                    page_refs, image_refs, answer_refs) AS (
+                                    page_refs, image_refs, answer_refs, has_shared_stem) AS (
                 SELECT id, parent_question_id, question_level, question_kind,
                        question_label, local_prompt, page_refs, image_refs,
-                       answer_refs
+                       answer_refs, has_shared_stem
                 FROM question_nodes WHERE id = ?
                 UNION ALL
                 SELECT n.id, n.parent_question_id, n.question_level,
                        n.question_kind, n.question_label, n.local_prompt,
-                       n.page_refs, n.image_refs, n.answer_refs
+                       n.page_refs, n.image_refs, n.answer_refs, n.has_shared_stem
                 FROM question_nodes n JOIN ancestry a
                   ON n.id = a.parent_question_id
             )
@@ -333,7 +346,11 @@ def context_for_question_item(
     for row in parent_rows:
         prompt = str(row["local_prompt"] or "").strip()
         if str(row["question_kind"]) == "composite":
-            prompt = _shared_parent_prompt(prompt)
+            decision = row["has_shared_stem"]
+            if decision == 0:
+                prompt = ""
+            elif decision is None:
+                prompt = _shared_parent_prompt(prompt)
         if prompt:
             label = str(row["question_label"] or "").strip()
             text_parts.append(_labelled_parent_prompt(label, prompt))

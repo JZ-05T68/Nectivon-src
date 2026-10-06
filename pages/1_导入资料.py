@@ -11,7 +11,7 @@ processing starts, so navigating away can pause a batch but can never
 silently erase it.  Returning to the page shows the persisted batch state
 (总数 / 已完成 / 进行中 / 等待 / 失败), interrupted files are marked
 honestly, and the remaining files can be resumed with one click.  Files
-are isolated: one file's import/OCR/reading failure is recorded on its own
+are isolated: one file's import/image-reading failure is recorded on its own
 row and never swallows the rest of the batch (V086-301 §6.4).
 """
 
@@ -31,11 +31,11 @@ from src.import_queue_service import (
     ImportQueueService,
     new_run_id,
 )
-from src.ocr_engine import OcrUnavailable
 from src.runtime import (
     application_ai_provider,
     application_database,
     application_document_service,
+    application_page_image_reader,
     application_settings,
 )
 from src.workspace_ui import render_workspace
@@ -76,6 +76,7 @@ def _local_agent_client() -> LocalDocumentAgentClient:
         database=application_database(),
         provider=provider,
         readings=AgentReadingStore(settings.agent_readings_dir),
+        page_image_reader=application_page_image_reader(),
         model=provider.default_model if provider is not None else "",
     )
 
@@ -108,13 +109,13 @@ def _read_one_document(document_id: int, page_count: int) -> tuple[bool, str]:
     return True, ""
 
 
-def _import_ocr_one_file(
+def _import_one_file(
     entry: ImportQueueEntry, file_content: bytes
 ) -> tuple[int | None, bool]:
-    """Import one file and run per-page OCR.
+    """Import and render all pages; recognition is performed by the image reader.
 
     Returns ``(document_id, duplicate)``. Import failures raise; per-page
-    OCR failures are isolated so one broken page never blocks the file
+    Image reading failures are isolated so one broken page never blocks later pages
     (and one broken file never blocks the batch).
     """
 
@@ -123,20 +124,6 @@ def _import_ocr_one_file(
         file_content=file_content,
         filename=entry.filename,
     )
-    if not result.duplicate:
-        for page in result.pages:
-            try:
-                document_service.run_page_ocr(page.id)
-            except OcrUnavailable:
-                # Text pages remain readable without OCR. A page with no
-                # usable text is reported honestly by the reading step.
-                pass
-            except Exception:  # noqa: BLE001 - OCR failure is page-local
-                LOGGER.exception(
-                    "单页 OCR 失败（不影响后续处理）：entry=%s page_id=%s",
-                    entry.id,
-                    page.id,
-                )
     return result.document.id, bool(result.duplicate)
 
 
@@ -163,7 +150,7 @@ def _process_queue_entries(
             queue.mark_failed(entry.id, message="导入失败：文件内容不可用（请重新选择文件）。")
             continue
         try:
-            document_id, duplicate = _import_ocr_one_file(entry, upload.getvalue())
+            document_id, duplicate = _import_one_file(entry, upload.getvalue())
         except Exception as exc:
             LOGGER.exception("资料导入失败：filename=%s", entry.filename)
             queue.mark_failed(entry.id, message=f"导入失败：{exc}")

@@ -64,7 +64,12 @@ class PreparedPageImage:
     downscaled: bool
 
 
-def prepare_page_image(png_bytes: bytes) -> PreparedPageImage:
+def prepare_page_image(
+    png_bytes: bytes, *, max_long_edge: int = MAX_LONG_EDGE_PX,
+    jpeg_quality: int = BASE_JPEG_QUALITY,
+    max_base64_chars: int = MAX_IMAGE_BASE64_CHARS,
+    preserve_dimensions: bool = False,
+) -> PreparedPageImage:
     """Encode a page image within the visual input budget.
 
     Raises :class:`VisualInputBudgetError` when the image cannot be decoded
@@ -83,12 +88,12 @@ def prepare_page_image(png_bytes: bytes) -> PreparedPageImage:
     if source_width <= 0 or source_height <= 0:
         raise VisualInputBudgetError("页面图片尺寸无效。")
 
-    long_edge = min(MAX_LONG_EDGE_PX, max(source_width, source_height))
-    quality = BASE_JPEG_QUALITY
+    long_edge = min(max_long_edge, max(source_width, source_height))
+    quality = jpeg_quality
     for attempt in range(MAX_PREPARE_ATTEMPTS):
         encoded = _encode_jpeg(rgb, long_edge, quality)
         base64_chars = len(base64.b64encode(encoded))
-        if base64_chars <= MAX_IMAGE_BASE64_CHARS:
+        if base64_chars <= max_base64_chars:
             data_url = f"data:image/jpeg;base64,{base64.b64encode(encoded).decode('ascii')}"
             prepared = PreparedPageImage(
                 data_url=data_url,
@@ -122,7 +127,7 @@ def prepare_page_image(png_bytes: bytes) -> PreparedPageImage:
             return prepared
         # Still over budget: shrink the readable side stepwise first, then
         # degrade quality, never below the legibility floor.
-        if long_edge > MIN_LONG_EDGE_PX:
+        if not preserve_dimensions and long_edge > MIN_LONG_EDGE_PX:
             long_edge = max(MIN_LONG_EDGE_PX, int(long_edge * 0.75))
         elif quality > MIN_JPEG_QUALITY:
             quality = max(MIN_JPEG_QUALITY, quality - 8)

@@ -9,6 +9,7 @@ and readability of the freshly indexed rows by ``PersistentVectorRecallSource``.
 from __future__ import annotations
 
 import hashlib
+import json
 import socket
 import sqlite3
 from pathlib import Path
@@ -142,6 +143,43 @@ def _embedding_count(database: Database) -> int:
 def test_prepare_page_text_skips_empty_and_whitespace() -> None:
     assert prepare_page_text("") is None
     assert prepare_page_text("   \n\t  ") is None
+
+
+def test_indexing_and_fingerprints_never_use_legacy_ocr(tmp_path: Path) -> None:
+    database, ids = _library(tmp_path, {"native": "原生文字层", "scan": ""})
+    for page_id in ids.values():
+        database.update_page(page_id, ocr_text="历史 OCR 错误内容")
+    provider = FakeEmbeddingProvider()
+    report = _indexer(database, provider).index_pages()
+    assert report.indexed == 1
+    assert report.skipped_empty == 1
+    assert provider.embedded_texts == ("原生文字层",)
+    fingerprints = SearchableContentFingerprintSource(database)
+    assert fingerprints.current_source_sha256(ids["scan"]) is None
+    assert fingerprints.current_source_sha256(ids["native"]) == hashlib.sha256(
+        "原生文字层".encode()
+    ).hexdigest()
+
+
+def test_indexer_and_recall_share_current_image_transcript(tmp_path: Path) -> None:
+    database, ids = _library(tmp_path, {"A": "旧文字层"})
+    page = database.get_page(ids["A"])
+    page.image_path.write_bytes(b"original page pixels")
+    database.update_page(page.id, ocr_text="历史 OCR 错误", markdown_content="人工修正")
+    reading_path = database.image_readings_dir / "pages" / f"page_{page.id}.json"
+    reading_path.parent.mkdir(parents=True)
+    reading_path.write_text(json.dumps({
+        "page_id": page.id,
+        "source_text_kind": "page-image-v4-pixel-rulers",
+        "source_image_sha256": hashlib.sha256(page.image_path.read_bytes()).hexdigest(),
+        "transcript": "直接读图转录",
+    }), encoding="utf-8")
+    provider = FakeEmbeddingProvider()
+    assert _indexer(database, provider).index_pages().indexed == 1
+    assert provider.embedded_texts == ("直接读图转录\n\n【人工修正】\n人工修正",)
+    assert _indexer(database, provider).plan_indexing().reused == 1
+    fingerprint = SearchableContentFingerprintSource(database).current_source_sha256(page.id)
+    assert fingerprint == hashlib.sha256(provider.embedded_texts[0].encode()).hexdigest()
 
 
 def test_prepare_page_text_is_deterministic() -> None:

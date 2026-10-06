@@ -81,7 +81,7 @@ _VISION_PROMPT = (
     "6. 数字标签读取规则：中文字体渲染的图表标签里，同一个数字内部可能因"
     "字形宽度出现明显间隙（例如“2 6”其实是整数 26，不是小数 2.6）。"
     "只有看到明确的小数点“.”才读作小数；只有间隙时必须把各数位合并读成"
-    "一个整数，并与下方文字层交叉核对；仍无法确定时按规则 3 如实说明，"
+    "一个整数；若有用户保存的人工修正，可与其交叉核对。仍无法确定时按规则 3 如实说明，"
     "禁止猜测。\n"
 )
 MAX_SOURCE_TEXT_CHARS = 3000
@@ -275,15 +275,19 @@ class PageVisualAdapter:
         for hit in hits:
             try:
                 source_text = build_agent_page_text(
-                    extracted_text=hit.extracted_text,
-                    ocr_text=hit.ocr_text,
+                    extracted_text="",
+                    ocr_text="",
                     manual_text=hit.markdown_content,
                 )[0]
                 visual_text = self._read_page_image(
                     hit.image_path, source_text=source_text
                 )
-            except Exception:
-                failures.append(f"第 {hit.page_number} 页图片读取失败")
+            except Exception as error:
+                from src.page_image_reader import image_reading_failure
+
+                failures.append(
+                    f"第 {hit.page_number} 页图片读取失败：{image_reading_failure(error)}"
+                )
                 LOGGER.warning(
                     "视觉读取失败：page_id=%s", hit.page_id, exc_info=True
                 )
@@ -297,7 +301,7 @@ class PageVisualAdapter:
             numeric_note: str | None = None
             if source_excerpt:
                 combined_content += (
-                    "\n\n同页原始文字（用于与图片交叉核对）：\n" + source_excerpt
+                    "\n\n同页人工修正（用于与图片交叉核对）：\n" + source_excerpt
                 )
                 numeric_note = numeric_conflict_note(source_text, visual_content)
             if numeric_note:
@@ -335,7 +339,7 @@ class PageVisualAdapter:
                         "results": [],
                         "notes": failures,
                         "note": (
-                            "图片内容无法可靠读取；如需回答请提供更清晰的资料。"
+                            "本次图片读取未成功，请按上方提示检查网络、模型配置或原图。"
                         ),
                     },
                     warnings=tuple(failures),
@@ -375,10 +379,9 @@ class PageVisualAdapter:
         if source_text.strip():
             bounded_source = source_text.strip()[:MAX_SOURCE_TEXT_CHARS]
             prompt += (
-                "7. 下方是从同一原始页面直接提取的文字层，仅用于与图片交叉核对精确的"
-                "型号、标签和数值，不是视觉索引摘要。图片中文字重叠或字形易混淆时，"
-                "优先用文字层确认；若两者确有冲突，必须明确披露，禁止静默猜测。\n"
-                f"同页原始文字(JSON 字符串)：{json.dumps(bounded_source, ensure_ascii=False)}\n"
+                "7. 下方仅是用户已经保存的人工修正；自动提取文字与 OCR 不作为读图输入。"
+                "图片与人工修正确有冲突时，必须明确披露。\n"
+                f"同页人工修正(JSON 字符串)：{json.dumps(bounded_source, ensure_ascii=False)}\n"
             )
         result = wrapper(
             prompt,

@@ -15,10 +15,14 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from src.ai.model_registry import (
+    CapabilitySupport,
+    ModelPurpose,
     ProviderId,
+    get_capability_profile,
     get_model_preset,
     get_provider_definition,
     is_hunyuan_model_id,
+    list_model_presets,
 )
 from src.config import runtime_private_root
 
@@ -29,12 +33,15 @@ __all__ = [
     "ProviderConfigStore",
     "ProviderSettings",
     "default_provider_config_path",
+    "image_provider_settings",
 ]
 
 AI_PROVIDER_CONFIG_VERSION = 1
 _FORBIDDEN_SECRET_KEYS = frozenset(
     {"api_key", "apikey", "credential", "credentials", "secret", "token"}
 )
+
+
 class ModelSelectionKind(StrEnum):
     """Whether a model id came from the curated registry or manual input."""
 
@@ -101,6 +108,7 @@ class AIProviderConfig:
     providers: tuple[ProviderSettings, ...] = ()
     active_provider_id: ProviderId | None = None
     config_version: int = AI_PROVIDER_CONFIG_VERSION
+    image_settings: ProviderSettings | None = None
 
     def __post_init__(self) -> None:
         if self.config_version != AI_PROVIDER_CONFIG_VERSION:
@@ -108,19 +116,23 @@ class AIProviderConfig:
         provider_ids = [settings.provider_id for settings in self.providers]
         if len(provider_ids) != len(set(provider_ids)):
             raise ValueError("AI Provider 配置中存在重复 provider_id")
-        if (
-            self.active_provider_id is not None
-            and self.active_provider_id not in provider_ids
-        ):
+        if self.active_provider_id is not None and self.active_provider_id not in provider_ids:
             raise ValueError("active_provider_id 必须指向已配置 Provider")
+        if (
+            self.image_settings is not None
+            and get_capability_profile(
+                self.image_settings.provider_id,
+                self.image_settings.model_id,
+            ).effective.vision
+            is not CapabilitySupport.SUPPORTED
+        ):
+            raise ValueError("读图模型必须支持图片输入且已接入图片接口")
 
     def get(self, provider_id: ProviderId | str) -> ProviderSettings | None:
         """Return settings for one provider without exposing credentials."""
 
         normalized = ProviderId(provider_id)
-        return next(
-            (item for item in self.providers if item.provider_id is normalized), None
-        )
+        return next((item for item in self.providers if item.provider_id is normalized), None)
 
     def with_provider(
         self, settings: ProviderSettings, *, make_active: bool = False
@@ -146,13 +158,42 @@ class AIProviderConfig:
         normalized = ProviderId(provider_id)
         return replace(
             self,
-            providers=tuple(
-                item for item in self.providers if item.provider_id is not normalized
-            ),
+            providers=tuple(item for item in self.providers if item.provider_id is not normalized),
             active_provider_id=(
                 None if self.active_provider_id is normalized else self.active_provider_id
             ),
+            image_settings=(
+                None
+                if self.image_settings is not None and self.image_settings.provider_id is normalized
+                else self.image_settings
+            ),
         )
+
+    def with_image_provider(self, settings: ProviderSettings) -> AIProviderConfig:
+        """Select image reading independently of text settings and credentials."""
+
+        return replace(self, image_settings=settings)
+
+
+def image_provider_settings(config: AIProviderConfig) -> ProviderSettings | None:
+    """Preserve legacy Qwen-first image routing until an explicit image choice."""
+
+    if config.image_settings is not None:
+        return config.image_settings
+    if config.active_provider_id is None:
+        return None
+    for provider_id in dict.fromkeys((ProviderId.QWEN, config.active_provider_id)):
+        configured = config.get(provider_id)
+        presets = list_model_presets(provider_id, purpose=ModelPurpose.IMAGE)
+        if configured is None or not presets:
+            continue
+        model_id = (
+            configured.model_id
+            if any(preset.model_id == configured.model_id for preset in presets)
+            else presets[0].model_id
+        )
+        return replace(configured, model_id=model_id, model_selection=ModelSelectionKind.PRESET)
+    return None
 
 
 def default_provider_config_path() -> Path:
@@ -187,16 +228,17 @@ class ProviderConfigStore:
 
         payload = _encode_document(config)
         _assert_no_secret_fields(payload)
-        serialized = json.dumps(
-            payload,
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-        ) + "\n"
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self._path.with_name(
-            f".{self._path.name}.{uuid.uuid4().hex}.tmp"
+        serialized = (
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
         )
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self._path.with_name(f".{self._path.name}.{uuid.uuid4().hex}.tmp")
         try:
             with temporary.open("x", encoding="utf-8", newline="\n") as stream:
                 stream.write(serialized)
@@ -228,6 +270,16 @@ def _encode_document(config: AIProviderConfig) -> dict[str, object]:
         "active_provider_id": (
             config.active_provider_id.value if config.active_provider_id else None
         ),
+        "image_settings": (
+            {
+                "provider_id": config.image_settings.provider_id.value,
+                "base_url": config.image_settings.base_url,
+                "model_id": config.image_settings.model_id,
+                "model_selection": config.image_settings.model_selection.value,
+            }
+            if config.image_settings is not None
+            else None
+        ),
         "providers": {
             settings.provider_id.value: {
                 "base_url": settings.base_url,
@@ -256,10 +308,10 @@ def _decode_document(raw: object) -> AIProviderConfig:
             provider_id = ProviderId(provider_raw)
             model_id = str(settings_raw["model_id"])
             model_selection = ModelSelectionKind(settings_raw["model_selection"])
-            if (
-                provider_id is ProviderId.DEEPSEEK
-                and model_id in {"deepseek-flash", "deepseek-v4-pro"}
-            ):
+            if provider_id is ProviderId.DEEPSEEK and model_id in {
+                "deepseek-flash",
+                "deepseek-v4-pro",
+            }:
                 # v0.8.5: both ids are now official registry presets.  Historical
                 # entries must map onto the preset (never be dropped), and a
                 # stored CUSTOM selection for a registered id is normalized to
@@ -281,16 +333,28 @@ def _decode_document(raw: object) -> AIProviderConfig:
             raise ValueError(f"AI Provider 配置条目无效：{provider_raw}") from exc
         providers.append(settings)
     try:
-        active = (
-            ProviderId(active_raw) if active_raw is not None else None
-        )
+        active = ProviderId(active_raw) if active_raw is not None else None
         return AIProviderConfig(
             providers=tuple(providers),
             active_provider_id=active,
             config_version=version,
+            image_settings=_decode_image_settings(raw.get("image_settings")),
         )
-    except (TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("AI Provider active_provider_id 无效") from exc
+
+
+def _decode_image_settings(raw: object) -> ProviderSettings | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("读图模型配置必须为对象")
+    return ProviderSettings(
+        provider_id=ProviderId(raw["provider_id"]),
+        base_url=raw["base_url"],
+        model_id=raw["model_id"],
+        model_selection=ModelSelectionKind(raw["model_selection"]),
+    )
 
 
 def _assert_no_secret_fields(value: object) -> None:

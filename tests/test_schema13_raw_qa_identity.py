@@ -141,8 +141,8 @@ def _seed_legacy_memory_rows(database_path: Path) -> dict[str, int]:
 def test_fresh_database_migrates_to_v14(tmp_path: Path) -> None:
     database = Database(tmp_path / "knowledge.db")
 
-    assert SCHEMA_VERSION == 33
-    assert database.SCHEMA_VERSION == 33
+    assert SCHEMA_VERSION == 34
+    assert database.SCHEMA_VERSION == 34
     with sqlite3.connect(database.database_path) as connection:
         versions = [
             row[0]

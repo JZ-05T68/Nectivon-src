@@ -34,6 +34,7 @@ class LocalDocumentAgentClient:
         vision_provider: object | None = None,
         vision_model: str | None = None,
         pages_dir: Path | None = None,
+        page_image_reader: object | None = None,
     ) -> None:
         self._agent = LocalDocumentAgent(
             database=database,
@@ -43,6 +44,7 @@ class LocalDocumentAgentClient:
             vision_provider=vision_provider,
             vision_model=vision_model,
             pages_dir=pages_dir,
+            page_image_reader=page_image_reader,
         )
         self._sources = SourceMetadataService(
             kb_uuid=database.get_knowledge_base_uuid(),

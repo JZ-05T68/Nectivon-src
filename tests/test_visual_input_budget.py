@@ -91,3 +91,24 @@ def test_invalid_image_raises_budget_error() -> None:
         prepare_page_image(b"not-an-image")
     with pytest.raises(VisualInputBudgetError):
         prepare_page_image(b"")
+
+
+def test_coordinate_frame_keeps_dimensions_when_budget_requires_lower_quality(monkeypatch):
+    from src import visual_input_budget
+
+    calls = []
+
+    def encoder(image, long_edge, quality):
+        calls.append((long_edge, quality))
+        return b"j" * (1200 if quality > 78 else 600)
+
+    monkeypatch.setattr(visual_input_budget, "_encode_jpeg", encoder)
+    result = prepare_page_image(
+        _png_bytes(1200, 2000),
+        max_long_edge=3000,
+        jpeg_quality=94,
+        max_base64_chars=1000,
+        preserve_dimensions=True,
+    )
+    assert (result.width, result.height) == (1200, 2000)
+    assert all(edge == 2000 for edge, _ in calls)

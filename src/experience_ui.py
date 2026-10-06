@@ -38,6 +38,7 @@ from src.models import (
     KnowledgeMemoryStatus,
     build_stable_id,
 )
+from src.time_display import format_beijing_time
 
 LOGGER = logging.getLogger(__name__)
 EXPERIENCE_TASK_KEY = "experience_task"
@@ -218,7 +219,7 @@ def render_experience_section(database: Database) -> None:
             st.warning("；".join(output.warnings))
     st.caption(
         f"provider：{output.provider}｜model：{output.model}｜"
-        f"生成时间：{output.generated_at}"
+        f"生成时间：{format_beijing_time(output.generated_at)}"
     )
     st.code(
         json.dumps(

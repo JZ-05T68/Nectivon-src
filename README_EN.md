@@ -5,6 +5,41 @@
 **Nectivon** (formerly **Engineering Knowledge Base / EKB**) is a local-first personal knowledge and experience system
 for accumulating, organizing, verifying, and recalling long-term personal knowledge assets.
 
+## Using v0.8.6
+
+On Windows 10/11 with Python 3.11+, run `check_environment.bat` and install missing dependencies:
+
+```powershell
+python -m pip install -r requirements\requirements.txt
+```
+
+Start the local application with `启动正式版.bat` at `127.0.0.1:8501`; stop it with `stop_release.bat`.
+The source also provides isolated development launchers for ports 8511 and 8512. `run_all_tests.bat`
+runs Ruff and the Python regression suite. No API key is required to start or use offline features.
+
+### Separate image-reading and explanation settings
+
+Configure providers in System Settings → AI / Model Services. Image reading / question splitting
+and explanations / knowledge Q&A save their models and credentials independently. Image reading
+can be enabled by itself; existing configurations remain compatible. Saving settings does not call AI.
+Keys use Windows Credential Manager or a DPAPI-encrypted fallback and are excluded from this repository.
+
+PDFs, Word, PowerPoint, and images share direct reading of original page images; Office files are
+converted locally first. Supported image presets use Qwen, DeepSeek, Kimi, or GLM. The reading flow
+does not send OCR, extracted text layers, or old summaries to the image model. Connection failures
+are reported explicitly. Original files, notes, search, and backups remain local.
+
+### Source crops and manual image revisions
+
+Question candidates, learning organization, explanations, and practice share source-image crops and
+math rendering. Compare the original scan with a manually revised display image using drawing,
+text, color sampling, shapes, local restoration, zoom, undo, and redo. Changes take effect only after
+Save; local display copies and revision history preserve the original scan. AI continues to read the original.
+
+The 2026-10-06 source update also aligns learning subjects with training profiles and fixes font
+preferences, storage-path compatibility, and GMT+8 time display. The existing v0.8.6 tag and release
+retain the earlier release snapshot; `main` contains these subsequent revisions.
+
 ## Product Positioning
 
 Nectivon began with engineering knowledge management, but it is more than a PDF question-answering

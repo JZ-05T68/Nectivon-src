@@ -8,11 +8,9 @@ Official documentation verified 2026-09-25:
 * China-mainland endpoint: https://open.bigmodel.cn/api/paas/v4 with an
   OpenAI-compatible ``/chat/completions`` shape.
 
-The adapter is completion-only in this phase.  It does not expose native
-tool calling, vision, streaming, or reasoning content to Agent/RAG
-contracts, and it sends no vendor-specific capability fields: preset
-capabilities stay UNKNOWN until a real smoke re-verifies them (same policy
-as the DeepSeek presets).
+Image completion is supported for GLM-5.3-Flash (official documentation
+verified 2026-10-05). Text-only models are rejected before a vision request.
+Hidden reasoning, native tools and streaming stay outside the contract.
 """
 
 from __future__ import annotations
@@ -21,7 +19,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from src.ai.credential_store import SecretCredential
-from src.ai.model_registry import ProviderId
+from src.ai.image_message import image_user_content
+from src.ai.model_registry import CapabilitySupport, ProviderId, get_model_preset
 from src.ai.openai_compatible import (
     OpenAICompatibleClient,
     OpenAICompatibleTransportError,
@@ -80,6 +79,7 @@ class GlmAdapter:
         else:
             self._credential = SecretCredential(api_key) if api_key.strip() else None
         self._model = normalized_model
+        self._timeout_seconds = timeout_seconds
         self._client = OpenAICompatibleClient(
             base_url=base_url,
             timeout_seconds=timeout_seconds,
@@ -100,18 +100,41 @@ class GlmAdapter:
     ) -> CompletionResult:
         """Return final content; reasoning content stays internal."""
 
+        return self._complete_content(
+            prompt,
+            model=model,
+            max_completion_tokens=max_completion_tokens,
+        )
+
+    def _complete_content(
+        self,
+        content: str | list[dict[str, Any]],
+        *,
+        model: str | None,
+        max_completion_tokens: int | None,
+        json_output: bool = False,
+    ) -> CompletionResult:
+        """Share transport, token policy and final-content parsing across inputs."""
+
         credential = self._require_credential()
         chosen_model = (model or self._model).strip()
         if not chosen_model:
             raise ValueError("Model ID 不能为空")
         payload = build_chat_completion_payload(
             model=chosen_model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": content}],
         )
+        if isinstance(content, list) and chosen_model == "glm-5.3-flash":
+            # Flash has forced thinking; documented ``low`` bounds the hidden
+            # reasoning so the original transcription fits the output cap.
+            payload["thinking"] = {"type": "enabled"}
+            payload["reasoning_effort"] = "low"
         if max_completion_tokens is not None:
             if max_completion_tokens <= 0:
                 raise ValueError("max_completion_tokens 必须为正数")
             payload["max_tokens"] = max_completion_tokens
+        if json_output:
+            payload["response_format"] = {"type": "json_object"}
         try:
             response, retry_count = self._client.post(
                 "/chat/completions",
@@ -119,11 +142,12 @@ class GlmAdapter:
                 credential=credential,
                 provider_id=ProviderId.GLM.value,
                 error_mapper=_glm_error_detail,
+                timeout_seconds=max(self._timeout_seconds, 120.0)
+                if isinstance(content, list)
+                else None,
             )
             self._validate_reasoning_content(response)
-            return parse_chat_completion(
-                response, chosen_model, retry_count=retry_count
-            )
+            return parse_chat_completion(response, chosen_model, retry_count=retry_count)
         except ProviderCallError as exc:
             if exc.detail.code in {
                 ProviderErrorCode.INVALID_RESPONSE,
@@ -145,9 +169,20 @@ class GlmAdapter:
         *,
         model: str | None = None,
         max_completion_tokens: int | None = None,
+        json_output: bool = False,
     ) -> CompletionResult:
-        del prompt, image_png_base64, model, max_completion_tokens
-        raise self._unsupported_capability()
+        """Read supplied pixels using a documented visual model in one request."""
+
+        chosen_model = (model or self._model).strip()
+        preset = get_model_preset(ProviderId.GLM, chosen_model)
+        if preset is None or preset.capabilities.vision is not CapabilitySupport.SUPPORTED:
+            raise self._unsupported_capability()
+        return self._complete_content(
+            image_user_content(prompt, image_png_base64),
+            model=chosen_model,
+            max_completion_tokens=max_completion_tokens,
+            json_output=json_output,
+        )
 
     def embed(
         self,
@@ -201,9 +236,7 @@ class GlmAdapter:
         )
 
 
-def _glm_error_detail(
-    error: OpenAICompatibleTransportError, provider_id: str
-) -> SafeProviderError:
+def _glm_error_detail(error: OpenAICompatibleTransportError, provider_id: str) -> SafeProviderError:
     status = error.status_code
     if error.kind is TransportFailureKind.TIMEOUT:
         code, retryable = ProviderErrorCode.TIMEOUT, True

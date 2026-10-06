@@ -21,6 +21,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from src.page_visual_service import PageVisualService
+from src.time_display import format_beijing_time
 
 #: Human-readable labels for the recorded detection methods.
 METHOD_LABELS: Mapping[str, str] = {
@@ -87,7 +88,7 @@ def visual_detection_provenance_fields(
         fields["检测方式"] = "检测失败"
     else:
         fields["检测方式"] = visual_detection_method_label(method)
-    fields["检测时间"] = detected_at[:19].replace("T", " ") if detected_at else "—"
+    fields["检测时间"] = format_beijing_time(detected_at, fmt="%Y-%m-%d %H:%M:%S")
     return fields
 
 

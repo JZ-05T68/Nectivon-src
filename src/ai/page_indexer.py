@@ -6,9 +6,10 @@ missing/stale pages to the injected ``EmbeddingProvider`` in bounded
 batches. The provider is vendor-neutral; tests use fakes and this module
 never touches Qwen, HTTP, or an API key itself.
 
-Text preparation policy (``config_version = 1``, PROTOTYPE, page-level):
+Text preparation policy (``config_version = 2``, PROTOTYPE, page-level):
 
-- source: ``Page.searchable_content`` (reviewed Markdown → OCR → extracted);
+- source: image transcription plus human corrections, or human/native text;
+- legacy OCR content is excluded, including from embedding-provider inputs;
 - empty / whitespace-only pages are skipped, never embedded;
 - the text is truncated to ``MAX_SOURCE_TEXT_CHARS`` characters — an
   explicit, recorded prototype limit, **not** a validated production
@@ -41,6 +42,7 @@ from typing import Final
 from src.ai.provider import AIError, AIUnavailableError, EmbeddingProvider
 from src.database import Database
 from src.models import Page
+from src.page_image_text import page_ai_text
 
 __all__ = [
     "DEFAULT_BATCH_SIZE",
@@ -59,7 +61,7 @@ __all__ = [
 LOGGER = logging.getLogger(__name__)
 
 #: Prototype text-preparation version; bump on any policy change.
-EMBEDDING_CONFIG_VERSION: Final = 1
+EMBEDDING_CONFIG_VERSION: Final = 2
 
 #: Current persisted embedding dimensions contract — the canonical internal
 #: single source of truth. This is **not** a user-settable "default": every
@@ -342,7 +344,7 @@ class PageEmbeddingIndexer:
 
         work: list[_PageWork] = []
         for page in self._iter_pages():
-            prepared = prepare_page_text(page.searchable_content)
+            prepared = prepare_page_text(page_ai_text(page, self._database.image_readings_dir))
             if prepared is None:
                 work.append(
                     _PageWork(page_id=page.id, status=PageIndexStatus.SKIPPED_EMPTY, prepared=None)

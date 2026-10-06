@@ -1,4 +1,4 @@
-"""Read-only v32 demo structure validation; never proof of public-content consent."""
+"""Read-only v34 demo structure validation; never proof of public-content consent."""
 
 from __future__ import annotations
 
@@ -129,7 +129,8 @@ V16_COLUMNS = {
         "id document_id source_page_id question_item_id parent_question_id "
         "root_question_id tree_fingerprint node_path question_label question_level "
         "question_kind local_prompt shared_context_refs page_refs image_refs answer_refs "
-        "display_order is_leaf split_source split_confidence status created_at updated_at"
+        "display_order is_leaf split_source split_confidence status created_at updated_at "
+        "has_shared_stem"
     ).split(),
     "conclusion_revisions": (
         "id family_id trigger_question_id revision_kind note created_at"
@@ -358,13 +359,13 @@ def validate_identity(connection: sqlite3.Connection, expected_uuid: str) -> Non
     # v0.8.6: the hosted demo seed tracks the local schema. Bumping this pin
     # requires rebuilding the
     # demo artifact; the pin itself exists to detect silent seed drift.
-    if SCHEMA_VERSION != 33:
+    if SCHEMA_VERSION != 34:
         raise HostedStorageError(StorageFailure.SCHEMA)
     versions = tuple(
         row[0]
         for row in connection.execute("SELECT version FROM schema_migrations ORDER BY version")
     )
-    if versions != tuple(range(1, 34)) or any(type(value) is not int for value in versions):
+    if versions != tuple(range(1, 35)) or any(type(value) is not int for value in versions):
         raise HostedStorageError(StorageFailure.SCHEMA)
     rows = connection.execute("SELECT id, kb_uuid FROM knowledge_base_meta").fetchall()
     if rows != [(1, expected_uuid)] or str(UUID(expected_uuid)) != expected_uuid:

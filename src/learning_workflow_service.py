@@ -30,6 +30,7 @@ without touching callers.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -348,6 +349,57 @@ class QuestionService:
             )
         return self.get_question_item(question_id)
 
+    def save_ai_reference(self, question_id: int, reference: dict) -> QuestionItem:
+        """Fill empty reference fields atomically; preserve human content and its provenance."""
+
+        fields = {"correction_note": "correction", "analysis_note": "analysis",
+                  "method_tags": "method_tags", "solution_method": "solution_method"}
+        with self._database._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM question_items WHERE id = ?", (question_id,),
+            ).fetchone()
+            _require(row is not None, "题目不存在。")
+            draft = _optional_json_object(row["ai_draft"]) or {}
+            if draft.get("learning_reference"):
+                return self.get_question_item(question_id)
+            applied = []
+            values = []
+            for column, field in fields.items():
+                current = row[column]
+                empty = not (
+                    _load_tags(current) if column == "method_tags" else str(current).strip()
+                )
+                value = reference.get(field)
+                if empty and value:
+                    current = _dump_tags(value) if column == "method_tags" else str(value)
+                    applied.append(column)
+                values.append(current)
+            draft["learning_reference"] = {
+                "origin": "AI_REFERENCE", "status": "pending_review", "generated_at": _utc_now(),
+                "applied_fields": applied,
+                "content": {field: reference.get(field) for field in fields.values()},
+                "original_response": reference.get("original_reference"),
+            }
+            connection.execute(
+                "UPDATE question_items SET correction_note=?, analysis_note=?, method_tags=?, "
+                "solution_method=?, ai_draft=?, math_display_json='', updated_at=? WHERE id=?",
+                (*values, json.dumps(draft, ensure_ascii=False), _utc_now(), question_id),
+            )
+        return self.get_question_item(question_id)
+
+    def record_reference_failure(self, question_id: int, message: str, reference: dict) -> None:
+        """Retain a rejected model draft for inspection without applying its contents."""
+
+        existing = self.get_question_item(question_id)
+        draft = dict(existing.ai_draft or {})
+        draft["learning_reference_attempt"] = {
+            "status": "rejected", "message": message, "content": reference,
+            "generated_at": _utc_now(),
+        }
+        with self._database._connection() as connection:
+            connection.execute("UPDATE question_items SET ai_draft=? WHERE id=?",
+                               (json.dumps(draft, ensure_ascii=False), question_id))
+
     def update_subject_for_document(self, document_id: int, subject: str) -> int:
         """Apply one explicit human subject choice to this document's questions."""
 
@@ -429,9 +481,67 @@ class QuestionService:
             "binding_confirmed": False,
             "binding_provenance": "AI BINDING DRAFT（存量回填，未经你确认）",
             "source_page_id": existing.page_id,
+            "regions": list(candidate.visual_regions),
         }
         self.update_visual_material(question_id, block)
         return {"status": "backfilled", "visual_material": block}
+
+    def sync_visual_regions_from_candidates(self, page_id: int, candidates: list) -> int:
+        """Sync new image references without rewriting human question content.
+
+        Only unique printed numbers on the same source page can match. User
+        overrides that disable a visual dependency are respected. A new crop
+        remains an AI proposal even when the page binding was confirmed.
+        """
+
+        from src.question_candidate_service import canonical_question_number, iter_atomic_leaves
+        from src.question_visual_regions import normalize_regions
+
+        entries: dict[str, list[dict]] = {}
+        duplicates: set[str] = set()
+        for _, candidate, _, ancestors in iter_atomic_leaves(candidates):
+            number = canonical_question_number(candidate.number)
+            if not number or number in duplicates:
+                continue
+            if number in entries:
+                entries.pop(number)
+                duplicates.add(number)
+                continue
+            regions = list(candidate.visual_regions)
+            regions.extend(
+                {**region, "role": "shared"}
+                for ancestor in ancestors for region in ancestor.visual_regions
+                if region.get("role") in ("stem", "shared")
+            )
+            entries[number] = [r for r in normalize_regions(regions)
+                               if r.get("page_id") == page_id]
+        count = 0
+        for question in self.list_question_items():
+            if question.page_id != page_id:
+                continue
+            regions = entries.get(canonical_question_number(question.question_number), [])
+            if not regions:
+                continue
+            draft = question.ai_draft or {}
+            old = draft.get("visual_material", {})
+            if not isinstance(old, dict):
+                continue
+            if old.get("dependency") == "none" and str(
+                old.get("binding_provenance", ""),
+            ).startswith("USER OVERRIDE"):
+                continue
+            if old.get("regions") == regions:
+                continue
+            block = {
+                "binding_confirmed": False,
+                "binding_provenance": "AI BINDING DRAFT（原图裁切，位置待核对）",
+                **old, "dependency": "required", "regions": regions,
+                "source_page_id": page_id,
+                "region_provenance": "AI_IMAGE_REGIONS_DRAFT",
+            }
+            self.update_visual_material(question.id, block)
+            count += 1
+        return count
 
     def get_question_item(self, question_id: int) -> QuestionItem:
         with self._database._connection() as connection:
@@ -441,6 +551,82 @@ class QuestionService:
         if row is None:
             raise LearningWorkflowError(f"找不到整理题目：{question_id}")
         return self._from_row(row)
+
+    def sync_image_recognized_stems(self, page_id: int, candidates: list) -> int:
+        """Refresh unchanged AI stems; preserve actual human edits and notes.
+
+        Some historical records have a user_edited flag from a status-only
+        save. Exact equality to the original AI snapshot identifies those
+        unchanged stems without trusting that old flag. Replaced AI wording
+        stays in the draft history for review.
+        """
+
+        from src.question_candidate_service import canonical_question_number, iter_atomic_leaves
+
+        fresh = {}
+        duplicates = set()
+        for _, candidate, _, ancestors in iter_atomic_leaves(candidates):
+            number = canonical_question_number(candidate.number)
+            if number in fresh:
+                duplicates.add(number)
+            fresh[number] = (candidate, ancestors)
+        refreshed = 0
+        for question in self.list_question_items():
+            number = canonical_question_number(question.question_number)
+            if question.page_id != page_id or number not in fresh or number in duplicates:
+                continue
+            candidate, ancestors = fresh[number]
+            draft = dict(question.ai_draft or {})
+            if all(not parent.user_edited and parent.split_source != "manual"
+                   for parent in ancestors):
+                page = self._database.get_page(page_id)
+                if page is not None and page.image_path.is_file():
+                    draft["image_recognized_shared_context"] = {
+                        "text": "\n\n".join(
+                            f"{parent.number}\n{parent.stem}"
+                            for parent in ancestors
+                            if parent.has_shared_stem is not False and parent.stem.strip()
+                        ),
+                        "source_page_id": page_id,
+                        "source_image_sha256": hashlib.sha256(
+                            page.image_path.read_bytes(),
+                        ).hexdigest(),
+                    }
+            original = draft.get("candidate", {})
+            if not isinstance(original, dict):
+                original = {}
+            ai_owned = (
+                draft.get("origin") == "ai_question_candidate_split"
+                and not original.get("user_edited")
+                and question.stem_text == original.get("stem")
+            )
+            draft["image_recognized_original"] = {
+                "stem": candidate.stem, "read_at": candidate.extracted_at,
+                "source": "page_image", "human_stem_preserved": not ai_owned,
+            }
+            if ai_owned and candidate.stem != question.stem_text:
+                history = list(draft.get("previous_ai_stems", []))
+                history.append({"stem": question.stem_text, "replaced_at": _utc_now()})
+                draft["previous_ai_stems"] = history[-20:]
+                draft["candidate"] = {**original, "stem": candidate.stem,
+                                      "recognition_source": "page_image"}
+                # Stale formatting caches must not override the fresh source.
+                draft.pop("math_display", None)
+                with self._database._connection() as connection:
+                    connection.execute(
+                        "UPDATE question_items SET stem_text=?, search_stem_text=?, "
+                        "ai_draft=?, math_display_json='', updated_at=? WHERE id=?",
+                        (candidate.stem, _tokenize_for_fts(candidate.stem),
+                         json.dumps(draft, ensure_ascii=False), _utc_now(), question.id),
+                    )
+                refreshed += 1
+            else:
+                with self._database._connection() as connection:
+                    connection.execute(
+                        "UPDATE question_items SET ai_draft=? WHERE id=?",
+                        (json.dumps(draft, ensure_ascii=False), question.id),
+                    )
+        return refreshed
 
     def delete_question_item(self, question_id: int) -> None:
         """Remove one question item from the learning library (V086-R1 FIX-3).
@@ -676,6 +862,16 @@ class QuestionService:
                 shared_answer_refs = context.answer_refs
         except Exception:  # noqa: BLE001 - legacy rows must remain readable
             LOGGER.debug("题目共享上下文解析失败", exc_info=True)
+        draft = _optional_json_object(row["ai_draft"]) or {}
+        image_context = draft.get("image_recognized_shared_context", {})
+        if isinstance(image_context, dict) and "text" in image_context:
+            page = self._database.get_page(int(row["page_id"])) if row["page_id"] else None
+            if (page is not None and page.image_path.is_file()
+                    and image_context.get("source_page_id") == page.id
+                    and image_context.get("source_image_sha256")
+                    == hashlib.sha256(page.image_path.read_bytes()).hexdigest()):
+                shared_context = str(image_context["text"])
+                shared_page_refs = tuple(dict.fromkeys((*shared_page_refs, page.id)))
         return QuestionItem(
             id=int(row["id"]),
             document_id=int(row["document_id"]) if row["document_id"] is not None else None,

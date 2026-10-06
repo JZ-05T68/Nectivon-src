@@ -18,7 +18,7 @@ def test_approved_query_frozen() -> None:
 def test_model_and_dimensions_frozen() -> None:
     assert probe.QUERY_MODEL == "qwen3.7-text-embedding"
     assert probe.QUERY_DIMENSIONS == 1024
-    assert probe.QUERY_CONFIG_VERSION == 1
+    assert probe.QUERY_CONFIG_VERSION == 2  # Image/manual text index excludes legacy OCR.
     assert probe.RRF_K == 60
 
 

@@ -29,7 +29,9 @@ from src.page_visual_service import (
     PageVisualError,
     PageVisualService,
 )
+from src.question_recognition_rules import MATH_NOTATION_RULES
 from src.runtime import application_ai_provider, application_page_visual_service
+from src.time_display import format_beijing_time
 from src.visual_input_budget import (
     VisualInputBudgetError,
     prepare_page_image,
@@ -65,6 +67,7 @@ _READ_HANDWRITING_PROMPT = (
     "印刷体的题干和选项不属于手写转录范围：不要整段复制印刷题干；"
     "如确需上下文锚点，用一行【印刷上下文】简短标注即可。"
     "禁止编造不存在的手写内容；看不清就写看不清，不要猜。"
+    + MATH_NOTATION_RULES
 )
 _INTERPRET_VISUAL_PROMPT = (
     "请描述这张页面上的图片/图表/示意图的结构与标注内容。"
@@ -84,6 +87,8 @@ _INTERPRET_VISUAL_PROMPT = (
     "高压线：禁止凭领域常识或教材套路补线、猜连接、猜正负号；"
     "看不清引出点、箭头、正负号、器件身份时，必须明确写「不确定，需核对原图」。"
     "不要把推测写成「确实可见」。\n"
+    + MATH_NOTATION_RULES
+    + "数学排版要求只适用于本次可见标注，不要扩大到转录全部印刷题干。\n"
     "描述完后，你的回复最后一行必须原样输出以下三种之一"
     "（表示你在这张图中是否看到手写内容/人工书写标注）：\n"
     "HANDWRITING_PRESENCE_SEEN: none\n"
@@ -164,7 +169,7 @@ def render_visual_reading_section(page: Page) -> None:
         )
         user_edited = bool(reading.get("user_edited"))
         edited_badge = " · 你已修改" if user_edited else ""
-        created_at_text = str(reading.get("created_at") or "")[:16].replace("T", " ")
+        created_at_text = format_beijing_time(reading.get("created_at"), empty="")
         time_badge = f" · {created_at_text}" if created_at_text else ""
         is_newest = (
             latest_reading_id is not None

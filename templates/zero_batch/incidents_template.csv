@@ -1,0 +1,2 @@
+incident_id,session_id,task_id,severity,error_type,summary,evidence_path,reported_to_owner,follow_up
+ZBINC-{YYYYMMDD}-{SEQ},ZB-{TRACK}-{YYYYMMDD}-{SEQ},G01|...|Uxx,P0|P1|P2|P3,COMMISSION|FABRICATION|SILENT_STALE|VERSION_CONDITION_OBJECT|EVIDENCE|EXPERIENCE_AUTHORITY|HONEST_OMISSION|UI|MENTAL_MODEL|OTHER,一句话摘要（匿名）,templates/zero_batch/incident_template.md 填后的本地路径,yes|no,处置动作或决策链接

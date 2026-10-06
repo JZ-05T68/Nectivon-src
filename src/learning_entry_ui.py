@@ -13,9 +13,9 @@ explicit "待切分" state, so the user confirms/splits the stem in the first
 layer instead of finding an unusable row later.  Content priority:
 
 1. 用户人工确认文本（``pages.markdown_content``）
-2. Stage 2 视觉结构化草稿（HANDWRITING_VISION interpretations）
-3. Agent 页面阅读结果
-4. OCR / 页面文本
+2. 人工确认保存的历史读图文字
+3. 当前有效的 AI 直接读图结果
+4. 原文件文本层（仅供本地阅读，自动切题仍使用原图）
 
 A fingerprint-based duplicate guard (V086-209 §5.3) stops repeated clicks
 from producing identical shells: the second click reports the existing
@@ -44,14 +44,23 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.learning_workflow_service import LearningWorkflowError, QuestionService
-from src.math_display import render_math_markdown
+from src.learning_subject_policy import (
+    ADVANCED_SUBJECT,
+    normalize_subject_name,
+    subject_selection_policy,
+)
+from src.learning_workflow_service import LearningWorkflowError, QuestionItem, QuestionService
+from src.math_display import render_question_math_markdown
+from src.math_formatting_service import candidate_display_stem, schedule_candidate_math
 from src.models import Page
 from src.question_candidate_service import (
+    QuestionCandidate,
+    QuestionCandidateStore,
     iter_atomic_leaves,
     iter_question_nodes,
     stem_confidence_for,
 )
+from src.question_content_ui import render_question_content, render_region_images
 from src.question_group_service import (
     QuestionGroupError,
     add_group_material,
@@ -62,6 +71,7 @@ from src.question_group_service import (
     normalize_candidate_number,
 )
 from src.text_utils import ui_plaintext_digest
+from src.training_profile_models import LearnerProfile
 
 LOGGER = logging.getLogger(__name__)
 
@@ -70,25 +80,6 @@ _KIND_LABELS = (
     ("good", "好题"),
     ("typical", "典型题"),
     ("method", "方法题"),
-)
-
-_SUBJECT_OPTIONS = (
-    "请选择学科",
-    "语文",
-    "数学",
-    "英语",
-    "物理",
-    "化学",
-    "生物",
-    "道德与法治",
-    "思想政治",
-    "历史",
-    "地理",
-    "科学",
-    "信息科技",
-    "工学",
-    "医学",
-    "其他（手动填写）",
 )
 
 _MAX_SOURCE_CHARS = 4000
@@ -109,99 +100,54 @@ def _resolve_page_source(
 
     manual_text = (page.markdown_content or "").strip()
     if manual_text:
-        return manual_text[:_MAX_SOURCE_CHARS], "人工校对文字", {
-            "origin": "user_manual_text",
-        }
+        return (
+            manual_text[:_MAX_SOURCE_CHARS],
+            "人工校对文字",
+            {
+                "origin": "user_manual_text",
+            },
+        )
+    # A user-saved historical image transcription is an authoritative note.
+    # Unconfirmed AI drafts and OCR never become recognition input.
+    if visual_service is not None:
+        for item in visual_service.get_page_visual_state(page.id).get("interpretations", []):
+            if (item.get("status") == "confirmed"
+                    and str(item.get("content", "")).strip()):
+                return (
+                    str(item["content"])[:_MAX_SOURCE_CHARS],
+                    "人工核对的读图文字（已保存确认）",
+                    {
+                        "origin": "stage2_visual_draft",
+                        "user_confirmed": True,
+                        "interpretation_id": item.get("id"),
+                    },
+                )
     try:
-        if visual_service is None:
-            from src.runtime import application_page_visual_service
-
-            visual_service = application_page_visual_service()
-        state = visual_service.get_page_visual_state(page.id)
-        drafts = [
-            reading
-            for reading in state.get("interpretations", [])
-            if reading.get("provenance") == "HANDWRITING_VISION"
-            and str(reading.get("content", "")).strip()
-        ]
-        # Presence gate (fix round §18/§24): a handwriting reading may only
-        # feed the learning source when the model itself declared handwriting
-        # present (confirmed) or the user saved/confirmed the reading.  A
-        # "none" reading (or an undeclared/possible one) must NOT become the
-        # page source — that exact path funneled hallucinated handwriting
-        # into a printed-only page's question draft (human review 2026-09-27).
-        import json as _json
-
-        for reading in reversed(drafts):
-            presence = None
-            raw_region = reading.get("region_json")
-            if raw_region:
-                try:
-                    region = (
-                        _json.loads(raw_region)
-                        if isinstance(raw_region, str)
-                        else raw_region
-                    )
-                    if isinstance(region, dict):
-                        presence = region.get("handwriting_presence")
-                except (TypeError, ValueError):
-                    presence = None
-            user_edited = bool(reading.get("user_edited"))
-            if user_edited:
-                label = "AI 视觉识别草稿（你已保存确认）"
-            elif presence == "confirmed":
-                label = "AI 视觉识别草稿（已判定存在手写，待核对）"
-            else:
-                # none / possible / undeclared → skip this reading entirely.
-                continue
-            return (
-                str(reading["content"]).strip()[:_MAX_SOURCE_CHARS],
-                label,
-                {
-                    "origin": "stage2_visual_draft",
-                    "interpretation_id": int(reading["id"]),
-                    "handwriting_presence": presence or "undeclared",
-                    "user_confirmed": user_edited,
-                },
-            )
-    except Exception:  # noqa: BLE001 - source lookup must never break review
-        LOGGER.debug("读取视觉草稿失败（跳过该来源）", exc_info=True)
-    try:
-        from src.agent_document_reader import AgentReadingStore
+        from src.page_image_ui import current_image_reading
         from src.runtime import application_settings
 
-        store = AgentReadingStore(application_settings().agent_readings_dir)
-        reading = store.page_reading(page.id)
-        ocr_or_extracted = (page.ocr_text or "").strip() or (
-            page.extracted_text or ""
-        ).strip()
-        if reading is not None and reading.summary.strip():
-            summary = reading.summary.strip()
-            # Geography G1 fix (scan-heavy corpus): an Agent summary is a
-            # condensed paraphrase.  When the verbatim page text (OCR / PDF
-            # text layer) is at least comparably complete, the verbatim text
-            # wins so candidate stems stay faithful quotes instead of AI
-            # paraphrases with missing options.  The Agent reading itself is
-            # never lost — it stays in its own store and surface.
-            if not ocr_or_extracted or len(summary) >= len(ocr_or_extracted) * 0.8:
-                return (
-                    summary[:_MAX_SOURCE_CHARS],
-                    "Agent 阅读结果",
-                    {"origin": "agent_page_reading"},
-                )
-    except Exception:  # noqa: BLE001 - source lookup must never break review
-        LOGGER.debug("读取 Agent 阅读结果失败（跳过该来源）", exc_info=True)
-    ocr_text = (page.ocr_text or "").strip()
-    if ocr_text:
-        return ocr_text[:_MAX_SOURCE_CHARS], "系统识别出的文字", {
-            "origin": "page_ocr_text"
-        }
+        reading = current_image_reading(page, application_settings().agent_readings_dir)
+        if reading is not None and reading.transcript.strip():
+            return (
+                reading.transcript[:_MAX_SOURCE_CHARS],
+                "AI 直接读图文字",
+                {
+                    "origin": "page_image_reading",
+                    "model": reading.model,
+                },
+            )
+    except Exception:  # noqa: BLE001 - keep manual review usable
+        LOGGER.warning("读取页面读图结果失败：page_id=%s", page.id, exc_info=True)
     extracted_text = (page.extracted_text or "").strip()
     if extracted_text:
-        return extracted_text[:_MAX_SOURCE_CHARS], "页面文本", {
-            "origin": "page_extracted_text",
-        }
-    return "", "（无可用来源）", {"origin": "none"}
+        return (
+            extracted_text[:_MAX_SOURCE_CHARS],
+            "原文件文本层",
+            {
+                "origin": "page_extracted_text",
+            },
+        )
+    return "", "请直接读图并切分本页", {"origin": "none"}
 
 
 def _render_answer_assessment_banner(page: Page) -> None:
@@ -222,28 +168,30 @@ def _render_answer_assessment_banner(page: Page) -> None:
         if document is None:
             return
         title_line = (
-            getattr(document, "title", "") or ""
-        ) + " " + (getattr(document, "filename", "") or "")
+            (getattr(document, "title", "") or "") + " " + (getattr(document, "filename", "") or "")
+        )
         if not any(k in title_line for k in ("答案", "评分", "答题卡")):
             return
-        text = page.ocr_text or page.extracted_text or ""
+        text = page.extracted_text or ""
         if len(text.strip()) < 20:
             return
-        assessment = assess_answer_document(
-            text, title=getattr(document, "title", "") or ""
-        )
+        assessment = assess_answer_document(text, title=getattr(document, "title", "") or "")
         if assessment.suggested_relation_kind == "unknown":
             st.info(
                 "🧾 文档性质评估（F5）：无法可靠判断这份材料是参考答案还是"
-                "评分标准——" + (assessment.warnings or ["请人工核对。"])[0]
-                + "　评分能力：" + assessment.rubric_capability + "。"
+                "评分标准——"
+                + (assessment.warnings or ["请人工核对。"])[0]
+                + "　评分能力："
+                + assessment.rubric_capability
+                + "。"
             )
             return
         if assessment.suggested_relation_kind == "reference_answer":
             st.info(
                 "🧾 文档性质评估（F5）：这份材料更像是【参考答案】。"
                 + (assessment.warnings[0] if assessment.warnings else "")
-                + "　评分能力：" + assessment.rubric_capability
+                + "　评分能力："
+                + assessment.rubric_capability
                 + "（系统不会把它当作正式评分标准使用；关系类型由你在确认时决定）。"
             )
         else:
@@ -274,13 +222,11 @@ def _render_source_conflict_banner(page: Page) -> None:
         document = database.get_document(page.document_id)
         if document is None:
             return
-        ocr_text = page.ocr_text or page.extracted_text or ""
+        ocr_text = page.extracted_text or ""
         paper_title = paper_title_from_ocr(ocr_text)
         if not paper_title:
             return
-        conflict = detect_source_conflict(
-            getattr(document, "filename", "") or "", paper_title
-        )
+        conflict = detect_source_conflict(getattr(document, "filename", "") or "", paper_title)
         if conflict is not None:
             st.warning(f"⚠️ 来源核对：{conflict.message}")
     except Exception:  # noqa: BLE001 - banner must never break review
@@ -290,10 +236,8 @@ def _render_source_conflict_banner(page: Page) -> None:
 def render_join_learning_section(page: Page) -> None:
     """Register one draft question of the chosen kind against this page.
 
-    Fix round §37-42: on a multi-question page the primary surface is the
-    per-question candidate card list; the whole-page entry is demoted to a
-    secondary action because "加入学习整理" no longer forces the user to
-    guess whether one click adds the entire page or one question.
+    Only atomic question candidates can join the learning workflow.  A page
+    must first be split or have individual questions supplied manually.
 
     Geography G1 (2026-09-28): this section IS the page-level workflow —
     the page review surface renders it as 「本页识别出的内容」 with an
@@ -303,6 +247,9 @@ def render_join_learning_section(page: Page) -> None:
 
     _render_source_conflict_banner(page)
     _render_answer_assessment_banner(page)
+    reference_flash = st.session_state.pop("learning_reference_flash", None)
+    if reference_flash:
+        st.info(reference_flash)
     st.markdown("**加入学习整理**")
     try:
         question_service = QuestionService(_database())
@@ -310,22 +257,11 @@ def render_join_learning_section(page: Page) -> None:
         LOGGER.debug("加入学习整理不可用", exc_info=True)
         return
 
-    subject_choice = st.selectbox(
-        "本次整理学科（人工选择）",
-        options=_SUBJECT_OPTIONS,
-        key=f"join_learning_subject_{page.document_id}",
-        help="学科跟随这份资料里的题目保存，不写入个人训练配置。",
-    )
-    selected_subject = "" if subject_choice == "请选择学科" else subject_choice
-    if subject_choice == "其他（手动填写）":
-        selected_subject = st.text_input(
-            "填写学科名称",
-            key=f"join_learning_subject_custom_{page.document_id}",
-        ).strip()
+    existing_document_questions = question_service.list_questions_for_document(page.document_id)
+    selected_subject = _render_subject_picker(page.document_id, existing_document_questions)
     st.caption("学科由你在待核对时确认；同一平台可以分别整理不同学科。")
-    existing_document_questions = question_service.list_questions_for_document(
-        page.document_id
-    )
+    if not selected_subject:
+        st.info("请先选择学科；需要人工填写时，填写并确认后即可加入学习整理。")
     if existing_document_questions:
         if st.button(
             "把所选学科应用到这份资料已加入的题目",
@@ -375,15 +311,20 @@ def render_join_learning_section(page: Page) -> None:
             summary_bits.append(f"页面图表/图像 {figure_count} 处")
         st.markdown(f"**本页识别出的内容**：{'　·　'.join(summary_bits)}。")
         if pending:
-            st.caption(
-                "题干为 AI 识别摘录，公式可能有识别错误；加入后可在题目库中修改。"
-            )
-            try:
-                _src_text, split_source_label, _src_extra = _resolve_page_source(
-                    page
+            st.caption("请对照原图核对题干和公式；发现错误可展开「修改这道题」，保存后再加入。")
+            source_labels = {
+                "page_image": "AI 直接识别原页图片",
+                "user_corrected_text": "人工校对文字（AI 按原文拆分）",
+                "source_text": "提供的页面文字",
+            }
+            split_source_label = "、".join(
+                dict.fromkeys(
+                    "人工补录/修订"
+                    if candidate.user_edited
+                    else source_labels.get(candidate.recognition_source, "历史识别结果")
+                    for candidate in pending
                 )
-            except Exception:  # noqa: BLE001 - provenance hint must never break review
-                split_source_label = "系统识别出的原始文字"
+            )
             st.caption(f"候选题干的文字来源：{split_source_label}。")
             if _page_has_unconfirmed_visual_draft(page):
                 st.caption(
@@ -403,7 +344,6 @@ def render_join_learning_section(page: Page) -> None:
                 question_service,
                 store,
             )
-        _render_manual_add(page, store, candidates)
         if added:
             st.caption(
                 "已加入学习整理的候选："
@@ -411,9 +351,7 @@ def render_join_learning_section(page: Page) -> None:
                 + "。可在「学习整理」页继续整理。"
             )
         if skipped:
-            with st.expander(
-                f"已暂不整理（{len(skipped)} 条）—— 点「恢复」回到待处理"
-            ):
+            with st.expander(f"已暂不整理（{len(skipped)} 条）—— 点「恢复」回到待处理"):
                 for _root, skipped_candidate, skipped_path, _ancestors in skipped_entries:
                     restore_col, preview_col = st.columns([1, 5])
                     if restore_col.button(
@@ -431,16 +369,109 @@ def render_join_learning_section(page: Page) -> None:
     # when this page has no candidate record at all (a handwritten answer
     # sheet that was never split into candidates is exactly the case where
     # region-level identity work matters).
-    _render_handwriting_region_section(page)
 
-    _render_whole_page_entry(
-        page,
-        selected_kind,
-        selected_subject,
-        question_service,
-        store,
-        candidates,
-    )
+    if store is not None:
+        _render_manual_add(page, store, candidates)
+    _render_candidate_split_section(page, candidates)
+
+
+def _render_subject_picker(
+    document_id: int,
+    existing_questions: list[QuestionItem],
+    *,
+    profile: LearnerProfile | None = None,
+) -> str:
+    """Use saved training choices while surviving widget cleanup/navigation."""
+
+    if profile is None:
+        try:
+            from src.runtime import application_training_profile_service
+
+            profile = application_training_profile_service().get_profile(check_grade_upgrade=False)
+        except Exception:  # noqa: BLE001 - offline organizing must stay available
+            LOGGER.exception("读取训练配置的学科范围失败")
+            st.warning("训练配置暂时无法读取，可先人工填写并确认学科。")
+    policy = subject_selection_policy(profile)
+    st.caption(f"学科范围跟随已保存的训练配置：{policy.label}。")
+
+    durable_key = f"learning_subject_choice_{document_id}"
+    widget_key = f"join_learning_subject_{document_id}"
+    custom_key = f"join_learning_subject_custom_{document_id}"
+    subjects = {normalize_subject_name(q.subject) for q in existing_questions if q.subject.strip()}
+    existing_subject = next(iter(subjects)) if len(subjects) == 1 else ""
+    remembered = dict(st.session_state.get(durable_key) or {})
+    if not remembered:
+        remembered = {
+            "choice": existing_subject
+            if existing_subject in policy.subjects
+            else (ADVANCED_SUBJECT if policy.allows_advanced and existing_subject else ""),
+            "custom": existing_subject
+            if policy.manual_only
+            or (policy.allows_advanced and existing_subject not in policy.subjects)
+            else "",
+            "confirmed": "",
+        }
+    if remembered.get("policy") != policy.signature:
+        remembered["confirmed"] = ""
+        remembered["manual_mode"] = ""
+        remembered["policy"] = policy.signature
+    if not policy.manual_only and remembered.get("choice") not in policy.choices:
+        remembered["choice"] = existing_subject if existing_subject in policy.subjects else ""
+    remembered.setdefault("custom", "")
+    st.session_state[durable_key] = remembered
+    choice = ""
+    if not policy.manual_only:
+        st.session_state[widget_key] = remembered["choice"] or None
+        choice = (
+            st.selectbox(
+                "本次整理学科（人工选择）",
+                options=policy.choices,
+                key=widget_key,
+                index=None,
+                placeholder="请选择学科",
+                help="选项跟随训练配置；所选学科只保存到本次整理的题目。",
+                on_change=_remember_subject_value,
+                args=(document_id, "choice", widget_key),
+            )
+            or ""
+        )
+    if policy.manual_only or choice == ADVANCED_SUBJECT:
+        manual_mode = policy.label if policy.manual_only else ADVANCED_SUBJECT
+        if remembered.get("manual_mode") != manual_mode:
+            remembered["confirmed"] = ""
+            remembered["manual_mode"] = manual_mode
+        st.session_state[custom_key] = remembered["custom"]
+        custom = st.text_input(
+            "本次整理学科（人工填写）" if policy.manual_only else "填写强基/竞赛学科或方向",
+            key=custom_key,
+            placeholder=(
+                "例如：高等数学、理论力学" if policy.manual_only else "例如：数学竞赛、物理强基"
+            ),
+            on_change=_remember_subject_value,
+            args=(document_id, "custom", custom_key),
+        ).strip()
+        remembered["custom"] = custom
+        if st.button("确认学科", key=f"join_subject_confirm_{document_id}", disabled=not custom):
+            remembered["confirmed"] = custom
+            st.toast(f"已确认学科：{custom}")
+        confirmed = bool(custom) and remembered.get("confirmed") == custom
+        st.caption(f"已确认本次整理学科：{custom}。" if confirmed else "填写后请点击「确认学科」。")
+        result = custom if confirmed else ""
+    else:
+        result = choice
+    remembered["choice"] = choice
+    st.session_state[durable_key] = remembered
+    return result
+
+
+def _remember_subject_value(document_id: int, field: str, widget_key: str) -> None:
+    """Capture user input before the rerun or widget cleanup can discard it."""
+
+    durable_key = f"learning_subject_choice_{document_id}"
+    remembered = dict(st.session_state[durable_key])
+    remembered[field] = st.session_state[widget_key] or ""
+    remembered["confirmed"] = ""
+    st.session_state[durable_key] = remembered
 
 
 def _page_visual_figure_count(page: Page) -> int:
@@ -453,8 +484,7 @@ def _page_visual_figure_count(page: Page) -> int:
         return sum(
             1
             for reading in state.get("interpretations", [])
-            if reading.get("provenance")
-            in ("IMAGE_REGION", "DIAGRAM_INTERPRETATION")
+            if reading.get("provenance") in ("IMAGE_REGION", "DIAGRAM_INTERPRETATION")
             and str(reading.get("content", "")).strip()
         )
     except Exception:  # noqa: BLE001 - summary must never break review
@@ -492,14 +522,13 @@ def _render_manual_add(page: Page, store, candidates) -> None:
                     LOGGER.exception("手动补录候选失败")
                     st.error("补录失败，请稍后重试。")
             else:
+                _format_candidate_after_save(page, store, manual_stem.strip())
                 st.toast("已补入候选列表（标记为你手动补录）。")
                 st.rerun()
         st.caption("补录的候选会明确标记「手动补录」，不会冒充 AI 识别结果。")
 
 
-def _page_has_unconfirmed_visual_draft(
-    page: Page, visual_service: object | None = None
-) -> bool:
+def _page_has_unconfirmed_visual_draft(page: Page, visual_service: object | None = None) -> bool:
     """True when a handwriting draft exists but the presence gate skipped it.
 
     Mirrors the gate in :func:`_resolve_page_source`: the page has a
@@ -526,11 +555,7 @@ def _page_has_unconfirmed_visual_draft(
         raw_region = reading.get("region_json")
         if raw_region:
             try:
-                region = (
-                    json.loads(raw_region)
-                    if isinstance(raw_region, str)
-                    else raw_region
-                )
+                region = json.loads(raw_region) if isinstance(raw_region, str) else raw_region
                 if isinstance(region, dict):
                     presence = region.get("handwriting_presence")
             except (TypeError, ValueError):
@@ -567,11 +592,7 @@ def _handwriting_region_source_text(page: Page) -> str | None:
         raw_region = reading.get("region_json")
         if raw_region:
             try:
-                region = (
-                    json.loads(raw_region)
-                    if isinstance(raw_region, str)
-                    else raw_region
-                )
+                region = json.loads(raw_region) if isinstance(raw_region, str) else raw_region
                 if isinstance(region, dict):
                     presence = region.get("handwriting_presence")
             except (TypeError, ValueError):
@@ -613,16 +634,10 @@ def _render_handwriting_region_section(page: Page) -> None:
             "把页级手写草稿拆分成区域（按行）",
             key=f"hw_split_{page.id}",
         ):
-            lines = [
-                line.strip()
-                for line in source_text.splitlines()
-                if line.strip()
-            ]
+            lines = [line.strip() for line in source_text.splitlines() if line.strip()]
             created = 0
             for line in lines:
-                add_handwriting_region(
-                    _database(), page_id=page.id, text=line
-                )
+                add_handwriting_region(_database(), page_id=page.id, text=line)
                 created += 1
             if created:
                 st.toast(f"已拆分出 {created} 个手写区域，身份均为「未确认」。")
@@ -632,9 +647,7 @@ def _render_handwriting_region_section(page: Page) -> None:
             return
         try:
             question_service = QuestionService(_database())
-            doc_questions = question_service.list_questions_for_document(
-                page.document_id
-            )
+            doc_questions = question_service.list_questions_for_document(page.document_id)
         except Exception:  # noqa: BLE001 - binding stays optional
             doc_questions = []
         question_options = {0: "（暂不对应某一问）"}
@@ -674,13 +687,9 @@ def _render_handwriting_region_section(page: Page) -> None:
                     key=f"hw_identity_{region_id}",
                 )
                 if picked_identity in ("student", "teacher"):
-                    if id_col.button(
-                        "确认身份", key=f"hw_id_save_{region_id}"
-                    ):
+                    if id_col.button("确认身份", key=f"hw_id_save_{region_id}"):
                         try:
-                            set_region_identity(
-                                _database(), region_id, picked_identity
-                            )
+                            set_region_identity(_database(), region_id, picked_identity)
                         except QuestionGroupError as exc:
                             st.error(f"身份确认失败：{exc}")
                         else:
@@ -689,15 +698,11 @@ def _render_handwriting_region_section(page: Page) -> None:
                 picked_target = tgt_col.selectbox(
                     "对应哪一问？",
                     options=list(question_options),
-                    format_func=lambda value: question_options.get(
-                        value, str(value)
-                    ),
+                    format_func=lambda value: question_options.get(value, str(value)),
                     index=0,
                     key=f"hw_target_{region_id}",
                 )
-                if tgt_col.button(
-                    "保存对应关系", key=f"hw_tgt_save_{region_id}"
-                ):
+                if tgt_col.button("保存对应关系", key=f"hw_tgt_save_{region_id}"):
                     try:
                         set_region_target(
                             _database(),
@@ -712,15 +717,9 @@ def _render_handwriting_region_section(page: Page) -> None:
 
 
 def _candidate_status_line(candidate) -> str:
-    """Three-dimension Chinese status for a candidate card (G2-A-01).
+    """Show actionable figure dependencies without repeating completeness."""
 
-    「需结合图表」 is NEVER rendered as 「题干不完整」 — a geography question
-    with complete text plus a required map is a COMPLETE question.
-    """
-
-    if candidate.completeness == "incomplete":
-        return "题干可能缺失 · 待核对"
-    parts = ["题干完整"]
+    parts = []
     if candidate.visual_dependency == "required":
         parts.append("需结合图表")
     elif candidate.visual_dependency == "uncertain":
@@ -742,7 +741,7 @@ def _render_choice_group_section(page: Page, pending: list) -> None:
     try:
         from src.choice_group_detector import detect_choice_groups
 
-        drafts = detect_choice_groups(pending, page.ocr_text or "")
+        drafts = detect_choice_groups(pending, page.extracted_text or "")
     except Exception:  # noqa: BLE001 - detection must never break review
         LOGGER.debug("选择题组检测失败", exc_info=True)
         return
@@ -758,9 +757,7 @@ def _render_choice_group_section(page: Page, pending: list) -> None:
             )
             st.caption("检测依据：" + "；".join(draft.signals) + "。")
             if already_confirmed:
-                st.success(
-                    "✓ 本页已有确认的题组。下面新加入的小题会自动归入。"
-                )
+                st.success("✓ 本页已有确认的题组。下面新加入的小题会自动归入。")
             with st.expander("共享材料（全组共用，只显示/存一份）", expanded=True):
                 st.text(draft.shared_text)
             st.markdown(f"**小题列表（{len(draft.member_numbers)} 题）**")
@@ -773,9 +770,7 @@ def _render_choice_group_section(page: Page, pending: list) -> None:
                 # pointer instead of noise.  The STORED stem keeps the
                 # verbatim source either way (F3: no fabricated cuts).
                 display = draft.display_unique_stems.get(number, "").strip()
-                original_len = len(next(
-                    (c.stem for c in pending if c.number == number), ""
-                )) or 1
+                original_len = len(next((c.stem for c in pending if c.number == number), "")) or 1
                 readable = (
                     display
                     and not _re.search(r"[ABCD][.．、]", display)
@@ -858,33 +853,21 @@ def _render_cross_page_group_section(page: Page, pending: list) -> None:
             database.list_pages(page.document_id),
             key=lambda item: item.page_number,
         )
-        window = [
-            item
-            for item in document_pages
-            if abs(item.page_number - page.page_number) <= 3
-        ]
+        window = [item for item in document_pages if abs(item.page_number - page.page_number) <= 3]
         candidates_by_page: dict[int, list] = {}
         page_texts: dict[int, str] = {}
         page_id_by_number: dict[int, int] = {}
         for item in window:
             item_candidates = store.page_candidates(item.id) or []
-            pending_items = [
-                c for c in item_candidates if c.status == "pending"
-            ]
+            pending_items = [c for c in item_candidates if c.status == "pending"]
             if pending_items:
                 candidates_by_page[item.page_number] = pending_items
-            page_texts[item.page_number] = (
-                item.extracted_text or item.ocr_text or ""
-            )
+            page_texts[item.page_number] = item.extracted_text or ""
             page_id_by_number[item.page_number] = item.id
         if len(candidates_by_page) < 2:
             return
         drafts = detect_cross_page_groups(candidates_by_page, page_texts)
-        relevant = [
-            draft
-            for draft in drafts
-            if page.page_number in draft.page_numbers
-        ]
+        relevant = [draft for draft in drafts if page.page_number in draft.page_numbers]
         if not relevant:
             return
         already_confirmed = bool(latest_group_for_page(_database(), page.id))
@@ -897,13 +880,9 @@ def _render_cross_page_group_section(page: Page, pending: list) -> None:
                 )
                 st.caption("检测依据：" + "；".join(draft.signals) + "。")
                 if already_confirmed:
-                    st.success(
-                        "✓ 本页已有确认的题组。下面新加入的小题会自动归入。"
-                    )
+                    st.success("✓ 本页已有确认的题组。下面新加入的小题会自动归入。")
                 if draft.shared_text:
-                    with st.expander(
-                        "共享材料（全组共用，只显示/存一份）", expanded=True
-                    ):
+                    with st.expander("共享材料（全组共用，只显示/存一份）", expanded=True):
                         st.text(draft.shared_text)
                 member_page_bits = []
                 for number in draft.member_numbers:
@@ -911,17 +890,12 @@ def _render_cross_page_group_section(page: Page, pending: list) -> None:
                         (
                             pn
                             for pn in draft.page_numbers
-                            if any(
-                                c.number == number
-                                for c in candidates_by_page.get(pn, [])
-                            )
+                            if any(c.number == number for c in candidates_by_page.get(pn, []))
                         ),
                         draft.page_numbers[0],
                     )
                     member_page_bits.append(f"第 {number} 题（第 {owner_page} 页）")
-                st.markdown(
-                    "**小题与所在页**：" + "；".join(member_page_bits)
-                )
+                st.markdown("**小题与所在页**：" + "；".join(member_page_bits))
                 col_confirm, col_ignore = st.columns([2, 2])
                 confirm_key = f"cross_page_confirm_{page.id}_{index}"
                 if col_confirm.button(
@@ -951,10 +925,7 @@ def _render_cross_page_group_section(page: Page, pending: list) -> None:
                                 label = f"{draft.group_number}共享材料"
                                 content = draft.shared_text
                             else:
-                                label = (
-                                    f"{draft.group_number}共享材料"
-                                    f"（第 {pn} 页延续）"
-                                )
+                                label = f"{draft.group_number}共享材料（第 {pn} 页延续）"
                                 content = ""
                             add_group_material(
                                 database2,
@@ -967,10 +938,7 @@ def _render_cross_page_group_section(page: Page, pending: list) -> None:
                         from src.question_group_service import confirm_group
 
                         confirm_group(database2, group_id)
-                        st.toast(
-                            "已确认为跨页题组：来源页已逐页登记，"
-                            "小题独立加入。"
-                        )
+                        st.toast("已确认为跨页题组：来源页已逐页登记，小题独立加入。")
                     except QuestionGroupError as exc:
                         st.error(f"跨页题组确认失败：{exc}")
                     except Exception:  # noqa: BLE001 - user-facing failure
@@ -982,9 +950,7 @@ def _render_cross_page_group_section(page: Page, pending: list) -> None:
                     "不按跨页题组处理（保持独立候选）",
                     key=f"cross_page_ignore_{page.id}_{index}",
                 ):
-                    st.session_state[
-                        f"cross_page_dismissed_{page.id}_{index}"
-                    ] = True
+                    st.session_state[f"cross_page_dismissed_{page.id}_{index}"] = True
                     st.rerun()
     except Exception:  # noqa: BLE001 - detection must never break review
         LOGGER.debug("跨页题组检测不可用", exc_info=True)
@@ -1028,9 +994,7 @@ def _render_group_draft_section(page: Page, pending: list) -> None:
         return
     try:
         document = _database().get_document(page.document_id)
-        document_title = (
-            getattr(document, "title", "") or f"文档#{page.document_id}"
-        )
+        document_title = getattr(document, "title", "") or f"文档#{page.document_id}"
     except Exception:  # noqa: BLE001 - display fallback only
         document_title = f"文档#{page.document_id}"
     group_number_guess = f"第{page.page_number}页综合题"
@@ -1060,11 +1024,7 @@ def _render_group_draft_section(page: Page, pending: list) -> None:
                     subquestion_numbers=sub_numbers,
                 )
                 visual_notes = next(
-                    (
-                        c.visual_notes
-                        for c in pending
-                        if c.needs_visual and c.visual_notes
-                    ),
+                    (c.visual_notes for c in pending if c.needs_visual and c.visual_notes),
                     "",
                 )
                 add_group_material(
@@ -1079,8 +1039,7 @@ def _render_group_draft_section(page: Page, pending: list) -> None:
 
                 confirm_group(database, group_id)
                 st.toast(
-                    f"已确认为题组：第 {group_number_guess} 题综合题。"
-                    "之后加入的小问会自动归组。"
+                    f"已确认为题组：第 {group_number_guess} 题综合题。之后加入的小问会自动归组。"
                 )
             except QuestionGroupError as exc:
                 st.error(f"题组确认失败：{exc}")
@@ -1096,12 +1055,7 @@ def _render_question_tree_section(page: Page, roots: list) -> None:
 
     if not roots:
         return
-    leaf_count = sum(
-        1
-        for root in roots
-        for node in iter_question_nodes([root])
-        if node.is_leaf
-    )
+    leaf_count = sum(1 for root in roots for node in iter_question_nodes([root]) if node.is_leaf)
     st.info(f"检测到综合题，已拆成 {leaf_count} 个可单独整理的小题。")
 
     def lines(node, prefix: str = "") -> list[str]:
@@ -1151,14 +1105,12 @@ def _render_candidate_cards(
         figure_label = (
             "　涉及：" + "、".join(candidate.figure_refs) if candidate.figure_refs else ""
         )
-        stem_preview = ui_plaintext_digest(candidate.stem, 160)
+        stem_display = candidate_display_stem(store.root, page.id, candidate.stem)
         with st.container(border=True):
             head = (
                 f"**{candidate.number or '（未检测到题号）'}**"
                 f"　{_candidate_status_line(candidate)}{figure_label}"
             )
-            if candidate.completeness == "incomplete" and candidate.incomplete_reason:
-                head += f"　·　{candidate.incomplete_reason}"
             if candidate.user_edited:
                 head += "　·　手动补录/已修订"
             st.markdown(head)
@@ -1170,7 +1122,47 @@ def _render_candidate_cards(
                         f"📄 {candidate.visual_notes}　·　图表关联待核对"
                         "（原图就在本页，尚未确认绑定）"
                     )
-            render_math_markdown(stem_preview or "（未识别到题干文字）")
+            shared_stems = [
+                ancestor.stem for ancestor in ancestors
+                if ancestor.has_shared_stem is not False and ancestor.stem.strip()
+            ]
+            if shared_stems:
+                with st.expander("本小题需要的公共题干", expanded=True):
+                    for shared_stem in shared_stems:
+                        render_question_math_markdown(shared_stem)
+            regions = _visual_material_block(candidate, page, ancestors=ancestors)["regions"]
+            shared_regions = [r for r in regions if r["role"] == "shared"]
+            if shared_regions:
+                st.markdown("**公共图像材料**")
+                render_region_images(page.image_path, shared_regions)
+            render_question_content(
+                stem_display or "（未识别到题干文字）",
+                image_path=page.image_path,
+                regions=regions,
+            )
+            if (
+                candidate.image_recognized_stem
+                and candidate.image_recognized_stem != candidate.stem
+            ):
+                with st.expander("本次 AI 读图原题（人工修订已保留）"):
+                    render_question_content(
+                        candidate.image_recognized_stem,
+                        image_path=page.image_path,
+                        regions=regions,
+                    )
+            from src.question_image_editor import (
+                render_question_crop_editor,
+                render_question_image_editor,
+            )
+
+            render_question_image_editor(
+                page.image_path, page_id=page.id, number=candidate.number, regions=regions,
+                key=f"candidate_image_{candidate_key}",
+            )
+            render_question_crop_editor(
+                page.image_path, page_id=page.id, number=candidate.number, regions=regions,
+                key=f"candidate_crop_{candidate_key}",
+            )
             col_join, col_skip, col_ignore = st.columns([2, 2, 2])
             join_key = f"cand_join_{candidate_key}"
             skip_key = f"cand_skip_{candidate_key}"
@@ -1208,9 +1200,7 @@ def _render_candidate_cards(
                     store.confirm_visual_binding_at_path(page.id, node_path)
                     st.toast("已确认图表关联（记录为你的确认，而非 AI 判断）。")
                     st.rerun()
-            _render_candidate_edit(
-                page, candidate, store, candidate_key, node_path=node_path
-            )
+            _render_candidate_edit(page, candidate, store, candidate_key, node_path=node_path)
 
 
 def _candidate_widget_suffix(
@@ -1298,8 +1288,23 @@ def _render_candidate_edit(
                     LOGGER.exception("候选修改保存失败")
                     st.error("保存修改失败，请稍后重试。")
             else:
+                _format_candidate_after_save(page, store, edited_stem.strip())
                 st.toast("候选已更新（记录为你修订过的版本）。")
                 st.rerun()
+
+
+def _format_candidate_after_save(page: Page, store: QuestionCandidateStore, source: str) -> None:
+    """Queue optional AI typesetting; never delay the saved local math preview."""
+
+    try:
+        from src.learning_ai_draft_service import LearningAIDraftService
+        from src.runtime import application_ai_provider
+
+        provider = application_ai_provider()
+        if provider is not None and source:
+            schedule_candidate_math(store.root, page.id, source, LearningAIDraftService(provider))
+    except Exception:  # noqa: BLE001 - optional AI must never block human saves
+        LOGGER.warning("候选数学排版不可用，保留人工修改和本地排版", exc_info=True)
 
 
 def _visual_material_block(candidate, page: Page, *, ancestors: tuple = ()) -> dict:
@@ -1317,9 +1322,7 @@ def _visual_material_block(candidate, page: Page, *, ancestors: tuple = ()) -> d
     ]
     local_dependency = str(getattr(candidate, "visual_dependency", "uncertain"))
     effective_dependency = (
-        local_dependency
-        if local_dependency != "none"
-        else ("required" if inherited else "none")
+        local_dependency if local_dependency != "none" else ("required" if inherited else "none")
     )
     material_notes = str(getattr(candidate, "visual_notes", "") or "").strip()
     if not material_notes and inherited:
@@ -1340,6 +1343,21 @@ def _visual_material_block(candidate, page: Page, *, ancestors: tuple = ()) -> d
         binding_confirmed = binding_confirmed and all(
             bool(getattr(item, "binding_confirmed", False)) for item in inherited
         )
+    regions = list(getattr(candidate, "visual_regions", []) or [])
+    for ancestor in ancestors:
+        for region in getattr(ancestor, "visual_regions", []) or []:
+            if region.get("role") in ("stem", "shared"):
+                shared_region = {**region, "role": "shared"}
+                if shared_region not in regions:
+                    regions.append(shared_region)
+    from src.question_content_ui import question_regions
+
+    regions = question_regions(
+        getattr(page, "image_path", None), str(candidate.number or ""), regions, page_id=page.id,
+        committed_only=True,
+    )
+    if regions:
+        effective_dependency = "required"
     return {
         "dependency": effective_dependency,
         "material_notes": material_notes,
@@ -1351,6 +1369,7 @@ def _visual_material_block(candidate, page: Page, *, ancestors: tuple = ()) -> d
             else "AI BINDING DRAFT（AI 关联建议，未经你确认）"
         ),
         "source_page_id": page.id,
+        "regions": regions,
     }
 
 
@@ -1382,7 +1401,7 @@ def _add_candidate(
         from src.choice_group_detector import detect_choice_groups
 
         pending_now = _page_pending(page, store)
-        for draft in detect_choice_groups(pending_now, page.ocr_text or ""):
+        for draft in detect_choice_groups(pending_now, page.extracted_text or ""):
             if candidate.number in draft.member_numbers:
                 unique = draft.unique_stems.get(candidate.number, "").strip()
                 if unique:
@@ -1422,7 +1441,7 @@ def _add_candidate(
                 "provenance": (
                     "用户手动补录/修订的候选（系统忠实保存，未经 AI 改写）"
                     if candidate.user_edited
-                    else "AI 题目拆分候选（题干忠实摘自识别文字，未补写）"
+                    else "AI 题目识别候选（依据原卷，数学表达已排版，待核对）"
                 ),
                 "candidate": {
                     "number": candidate.number,
@@ -1434,29 +1453,30 @@ def _add_candidate(
                     "visual_dependency": candidate.visual_dependency,
                     "visual_notes": candidate.visual_notes,
                     "binding_confirmed": candidate.binding_confirmed,
+                    "recognition_source": candidate.recognition_source,
+                    "visual_regions": candidate.visual_regions,
+                },
+                "math_display": {
+                    "stem_text": {
+                        "source": stem_text,
+                        "display": candidate_display_stem(store.root, page.id, stem_text),
+                    }
                 },
                 "choice_group_sharing": {
                     "shared_text_len": len(shared_text_used),
                     "shared_text": shared_text_used,
                     "full_source_stem": candidate.stem,
-                    "note": (
-                        "本小题属于选择题组：独有题干已入库，共享材料"
-                        "只在题组保存一份（F3）"
-                    )
+                    "note": ("本小题属于选择题组：独有题干已入库，共享材料只在题组保存一份（F3）")
                     if shared_text_used
                     else "",
                 },
-                "visual_material": _visual_material_block(
-                    candidate, page, ancestors=ancestors
-                ),
+                "visual_material": _visual_material_block(candidate, page, ancestors=ancestors),
                 "question_structure": {
                     "node_id": structure_node_id,
                     "root_node_id": node_ids["0"],
                     "node_path": structure_node_path,
                     "question_kind": "atomic",
-                    "ancestor_labels": [
-                        str(parent.number or "") for parent in ancestors
-                    ],
+                    "ancestor_labels": [str(parent.number or "") for parent in ancestors],
                     "split_source": candidate.split_source,
                     "split_confidence": candidate.split_confidence,
                     "note": "叶子题通过 question_nodes 动态继承父题上下文",
@@ -1475,9 +1495,7 @@ def _add_candidate(
         # a group/family failure never undoes the join itself.
         try:
             group = latest_group_for_page(_database(), page.id)
-            member_numbers = (
-                group_member_numbers(group) if group is not None else None
-            )
+            member_numbers = group_member_numbers(group) if group is not None else None
             candidate_number = normalize_candidate_number(candidate.number)
             # F-BOSS-02: auto-attach ONLY when the candidate number is a
             # printed member of the group.  Same-page strays (the previous
@@ -1487,41 +1505,64 @@ def _add_candidate(
                 and member_numbers is not None
                 and candidate_number in member_numbers
             ):
-                attach_question_to_group(
-                    _database(), int(question.id), int(group["id"])
-                )
+                attach_question_to_group(_database(), int(question.id), int(group["id"]))
         except Exception:  # noqa: BLE001 - grouping must never break joining
             LOGGER.debug("题目归组失败（题目已加入）", exc_info=True)
         try:
             from src.learning_workflow_service import QuestionOrganizationService
 
-            QuestionOrganizationService(_database()).auto_organize_question(
-                int(question.id)
-            )
+            QuestionOrganizationService(_database()).auto_organize_question(int(question.id))
         except Exception:  # noqa: BLE001 - family draft must never break joining
             LOGGER.debug("加入后自动归纳失败（题目已加入）", exc_info=True)
-        # G3-B P1 (layer-2 timing): the moment the subquestion joins layer 1,
-        # AI family suggestions surface as DRAFTS for the user to confirm —
-        # they are never auto-forced (organize_with_confidence stores
-        # MEDIUM/LOW proposals as review items, never silent attachments).
+        # Joining owns one reference generation; failures never undo the saved question.
         try:
-            from src.learning_ai_draft_service import LearningAIDraftService
+            from src.learning_reference_service import generate_join_reference
             from src.learning_workflow_service import QuestionOrganizationService
-            from src.runtime import application_ai_provider
+            from src.runtime import (
+                application_ai_provider,
+                application_question_vision_provider,
+                application_training_profile_service,
+            )
 
-            provider = application_ai_provider()
-            if provider is not None:
-                drafts = LearningAIDraftService(provider).generate_question_drafts(
-                    question
+            with st.spinner("正在生成订正、解析、题型和方法的参考版…"):
+                drafts = generate_join_reference(
+                    question_service.get_question_item(int(question.id)), _database(),
+                    provider=application_ai_provider(),
+                    vision_provider=application_question_vision_provider(),
+                    learner_profile=application_training_profile_service().get_profile(),
                 )
+                question_service.save_ai_reference(int(question.id), drafts)
+            try:
                 QuestionOrganizationService(_database()).organize_with_confidence(
-                    int(question.id),
-                    type_family=drafts.get("type_family"),
+                    int(question.id), type_family=drafts.get("type_family"),
                     method_families=drafts.get("method_families") or None,
-                    secondary_conclusion=drafts.get("secondary_conclusion"),
+                    secondary_conclusion=None,
                 )
-        except Exception:  # noqa: BLE001 - family draft must never break joining
-            LOGGER.debug("加入后 AI 族建议失败（题目已加入）", exc_info=True)
+            except Exception:  # noqa: BLE001 - classification never discards the reference
+                LOGGER.warning("加入后归类建议未完成：question_id=%s", question.id, exc_info=True)
+            st.session_state["learning_reference_flash"] = (
+                "已加入学习整理，并生成订正、解析、题型和方法的 AI 参考版，请核对后修改保存。"
+            )
+        except Exception as reference_exc:  # noqa: BLE001 - preserve the successful join
+            from src.ai.provider import AIExecutionError, AIUnavailableError
+            from src.learning_ai_draft_service import LearningAIDraftError
+
+            if isinstance(reference_exc, LearningAIDraftError) and reference_exc.reference:
+                question_service.record_reference_failure(
+                    int(question.id), str(reference_exc), reference_exc.reference,
+                )
+
+            safe_message = (
+                str(reference_exc)
+                if isinstance(reference_exc, (
+                    LearningAIDraftError, AIExecutionError, AIUnavailableError,
+                ))
+                else "参考版生成未完成，请检查模型配置和网络环境。"
+            )
+            LOGGER.warning("加入后参考版未完成：question_id=%s", question.id, exc_info=True)
+            st.session_state["learning_reference_flash"] = (
+                "题目已加入学习整理，但参考版暂未生成：" + safe_message
+            )
     except Exception as exc:  # noqa: BLE001 - user-facing failure surface
         if isinstance(exc, LearningWorkflowError):
             st.error(f"加入学习整理失败：{exc}")
@@ -1536,24 +1577,13 @@ def _add_candidate(
     st.rerun()
 
 
-def _render_whole_page_entry(
-    page: Page,
-    selected_kind: str,
-    selected_subject: str,
-    question_service: QuestionService,
-    store,
-    candidates,
-) -> None:
-    """Demoted whole-page entry (§41): secondary, clearly labelled."""
+def _render_candidate_split_section(page: Page, candidates: list[QuestionCandidate] | None) -> None:
+    """Split/re-split pages; whole pages cannot become learning questions."""
 
-    has_pending = bool(candidates and any(c.status == "pending" for c in candidates))
-    expander_title = (
-        "整页作为一条加入（一页多题时不推荐）"
-        if has_pending
-        else "本页还没有逐题候选 —— 在这里拆分候选或整页加入"
-    )
+    has_candidates = candidates is not None
+    expander_title = "重新拆分本页题目" if has_candidates else "先拆分本页题目"
     with st.expander(expander_title):
-        if not has_pending:
+        if not has_candidates:
             extract_clicked = st.button(
                 "AI 拆分本页题目候选",
                 key=f"extract_candidates_{page.id}",
@@ -1563,138 +1593,47 @@ def _render_whole_page_entry(
                 _extract_candidates(page)
                 return
             st.caption(
-                "AI 会按题号把本页拆成逐题候选，拆完可逐题加入；"
-                "也可以继续用下面的整页方式。"
+                "请先按原卷题号和小问拆分，再逐题加入学习整理。"
+                "一页只有一道大题时，也应按其中可独立作答的小问整理；"
+                "还可以用「手动补一道」逐题补录。"
             )
         else:
             # Geography G1 (§26): a re-split must stay reachable after the
             # first extraction — e.g. after confirming a visual draft or a
             # source-priority fix — otherwise stale stems are stuck.
             st.caption(
-                "重新拆分会用当前可用来源重新生成本页候选；"
-                "现有候选（含已加入/已忽略状态）会被覆盖。"
-                "已加入学习整理的题目与你在第一层确认的图表关联不受影响。"
+                "重新直接读取原页图片并更新 AI 候选；"
+                "人工修订和已加入/已忽略状态会保留。"
+                "已加入学习整理的题目保留人工修改，新识别的图像区域会同步到对应题目。"
             )
             if st.button(
-                "重新拆分本页（覆盖现有候选）",
+                "重新读图并切分本页",
                 key=f"resplit_candidates_{page.id}",
             ):
                 _extract_candidates(page)
                 return
-        if has_pending:
-            st.warning(
-                "本页已识别出题目候选，不能绕过题目粒度判断将整页"
-                "直接当作一道题。请从上方可单独作答的小题中选择。"
-            )
-        else:
-            st.caption(
-                "只有在你确认本页就是一个可独立作答、评价、复盘的"
-                "完整题目时，才能整页加入。"
-            )
-            if st.button(
-                "我确认本页只有一道完整题，整页加入",
-                key=f"join_learning_add_{page.id}",
-                disabled=not selected_subject,
-            ):
-                _add_whole_page(
-                    page, selected_kind, selected_subject, question_service
-                )
 
 
 def _extract_candidates(page: Page) -> None:
     """Run one AI extraction of per-question candidates for this page."""
 
-    provider = None
     try:
-        from src.runtime import application_ai_provider
+        from src.runtime import application_page_image_reader
 
-        provider = application_ai_provider()
-    except Exception:  # noqa: BLE001 - UI must survive provider errors
-        provider = None
-    if provider is None:
-        st.warning("AI 服务未配置，自动拆题不可用；可直接用「整页作为一条加入」。")
-        return
-    split_text, split_source_label, _split_extra = _resolve_page_source(page)
-    page_text = split_text
-    diagram_text = ""
-    try:
-        from src.runtime import application_page_visual_service
-
-        state = application_page_visual_service().get_page_visual_state(page.id)
-        diagrams = [
-            str(r.get("content", "")).strip()
-            for r in state.get("interpretations", [])
-            if r.get("provenance") in ("IMAGE_REGION", "DIAGRAM_INTERPRETATION")
-            and str(r.get("content", "")).strip()
-        ]
-        diagram_text = "\n\n---\n\n".join(diagrams[-2:])  # newest two readings
-    except Exception:  # noqa: BLE001 - auxiliary lookup must never break review
-        LOGGER.debug("读取图表解析失败（跳过该来源）", exc_info=True)
-    if not page_text and not diagram_text:
-        st.warning(
-            "这一页还没有可拆分的文字（先执行视觉读取 / 文字识别或图表解析，再拆题）。"
-        )
-        return
-    try:
-        with st.spinner("正在按题拆分本页内容……"):
-            from src.ai.completion_stage import CompletionStage, completion_stage_scope
-            from src.ai.provider import AIExecutionError, ProviderCallError
-            from src.question_candidate_service import (
-                QuestionCandidateError,
-                associate_companion_answer_refs,
-                build_extraction_prompt,
-                parse_candidates_payload,
+        reader = application_page_image_reader()
+        if reader.provider is None:
+            st.warning("请先启用支持直接读图的 Qwen 3.8 Max 或 Flash。")
+            return
+        with st.spinner("正在直接读图、识别公式并切分题目与图表……"):
+            st.caption(
+                f"本次识别使用：{reader.provider.provider_id} / {reader.provider.default_model}"
             )
-
-            try:
-                # Bounded structured-JSON request: run in the LEARNING_DRAFT
-                # stage scope (thinking disabled, raised timeout floor) —
-                # same fix family as V086-203; the default stage times out.
-                with completion_stage_scope(CompletionStage.LEARNING_DRAFT):
-                    completion = provider.complete(
-                        build_extraction_prompt(page_text, diagram_text),
-                        max_completion_tokens=4096,
-                        source_feature="question_candidate_split",
-                        target_refs=(f"page:{page.id}",),
-                    )
-            except ProviderCallError as exc:
-                st.error(f"拆题失败：{exc}")
-                return
-            except AIExecutionError as exc:
-                st.error(f"拆题失败：{exc}")
-                return
-            candidates = parse_candidates_payload(getattr(completion, "text", "") or "")
-            candidates = associate_companion_answer_refs(
-                _database(),
-                source_document_id=page.document_id,
-                candidates=candidates,
-            )
-    except QuestionCandidateError as exc:
-        st.error(f"拆题失败：{exc}")
+            reader.read_page(page.id)
+        st.success("本页读图结果已保存，人工修订和已加入状态已保留。")
+    except Exception as exc:  # noqa: BLE001 - keep the review page usable
+        LOGGER.exception("页面直接读图失败：page_id=%s", page.id)
+        st.error(f"读图失败：{exc}")
         return
-    except Exception:  # noqa: BLE001 - never break the review page
-        LOGGER.exception("题目候选拆分失败")
-        st.error("拆题失败，请稍后重试。")
-        return
-    store = _candidate_store()
-    if store is None:
-        st.error("候选存储不可用，无法保存拆分结果。")
-        return
-    store.save_page_candidates(page.id, candidates)
-    if not candidates:
-        st.info("AI 在本页主体没有识别到可拆分的题目（相邻页内容不会被拆入）。")
-    else:
-        leaf_count = sum(1 for _entry in iter_atomic_leaves(candidates))
-        composite_count = sum(1 for item in candidates if item.children)
-        structure_note = (
-            f"，其中 {composite_count} 道为综合题"
-            if composite_count
-            else ""
-        )
-        st.success(
-            f"已识别 {leaf_count} 个叶子小问{structure_note}"
-            f"（来源：{split_source_label}），请逐题核对后加入。"
-        )
     st.rerun()
 
 
@@ -1706,9 +1645,7 @@ def _add_whole_page(
 ) -> None:
     try:
         content, provenance_label, extra_fields = _resolve_page_source(page)
-        source_sha256 = (
-            hashlib.sha256(content.encode("utf-8")).hexdigest() if content else ""
-        )
+        source_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest() if content else ""
         if content:
             duplicate = question_service.find_duplicate_source(
                 document_id=page.document_id,
@@ -1763,9 +1700,7 @@ def _add_whole_page(
             source_page_id=page.id,
             root_candidate=manual_root,
         )
-        link_atomic_question(
-            _database(), node_id=node_ids["0"], question_item_id=int(question.id)
-        )
+        link_atomic_question(_database(), node_id=node_ids["0"], question_item_id=int(question.id))
     except LearningWorkflowError as exc:
         st.error(f"加入学习整理失败：{exc}")
         return
@@ -1792,9 +1727,7 @@ def _candidate_store():
         from src.question_candidate_service import QuestionCandidateStore
         from src.runtime import application_settings
 
-        return QuestionCandidateStore(
-            Path(application_settings().data_dir) / "question-candidates"
-        )
+        return QuestionCandidateStore(Path(application_settings().data_dir) / "question-candidates")
     except Exception:  # noqa: BLE001 - auxiliary entry must never break review
         LOGGER.debug("题目候选存储不可用", exc_info=True)
         return None

@@ -55,7 +55,7 @@ def test_ran_but_uncertain_is_distinguishable_from_never_ran() -> None:
     assert fields["已检测"] == "是"
     assert fields["检测状态"].startswith("不确定")
     assert fields["检测方式"] == "本地结构检测"
-    assert fields["检测时间"] == "2026-09-25 16:09:01"
+    assert fields["检测时间"] == "2026-09-26 00:09:01"
     line = format_visual_detection_provenance(_state())
     assert "已检测：否" in line
 

@@ -82,6 +82,20 @@ def test_complete_builds_openai_compatible_request() -> None:
     assert result.text == "回答"
 
 
+def test_vision_json_mode_keeps_image_input_and_stops_freeform_output() -> None:
+    transport = FakeTransport([_completion_body(text='{"candidates":[]}')])
+    provider = _provider(transport)
+    provider.complete_vision(
+        "Read the image; return JSON", "data:image/jpeg;base64,YQ==",
+        model="qwen3.8-flash", max_completion_tokens=16384, json_output=True,
+    )
+    payload = transport.calls[0][2]
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["enable_thinking"] is False
+    assert payload["messages"][0]["content"][1]["type"] == "image_url"
+    assert payload["model"] == "qwen3.8-flash"
+
+
 def test_complete_parses_model_echo_and_usage() -> None:
     transport = FakeTransport([_completion_body(text="你好", model="qwen-custom-echo")])
     result = _provider(transport).complete("hi")

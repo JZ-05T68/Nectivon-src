@@ -33,6 +33,7 @@ from src.models import (
     MemoryCitationSnapshotError,
     parse_memory_citations,
 )
+from src.time_display import to_beijing_time
 
 LOGGER = logging.getLogger(__name__)
 
@@ -803,7 +804,7 @@ def _kind_label(entry: KnowledgeMemoryEntry) -> str:
 def _friendly_date(value) -> str:
     """Return a short date a non-technical user can scan quickly."""
 
-    local_value = value.astimezone() if value.tzinfo is not None else value
+    local_value = to_beijing_time(value)
     return f"{local_value.month} 月 {local_value.day} 日"
 
 

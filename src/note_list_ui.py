@@ -25,6 +25,7 @@ from src.note_ui import (
     _render_region_status,
     _render_source_status,
 )
+from src.time_display import format_beijing_time
 
 LOGGER = logging.getLogger(__name__)
 
@@ -422,7 +423,7 @@ def _open_source(item: NoteListItem) -> None:
 
 
 def _format_time(value) -> str:
-    return value.strftime("%Y-%m-%d %H:%M")
+    return format_beijing_time(value)
 
 
 def _queue_key_clear(*keys: str) -> None:

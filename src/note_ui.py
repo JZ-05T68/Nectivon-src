@@ -49,6 +49,7 @@ from src.note_service import (
     TextSourceUnavailableError,
     badge_foreground,
 )
+from src.time_display import format_beijing_time
 
 LOGGER = logging.getLogger(__name__)
 
@@ -1218,7 +1219,7 @@ def _render_region_overlay(image_path: Path, region: dict) -> None:
 
 
 def _format_time(value) -> str:
-    return value.strftime("%Y-%m-%d %H:%M")
+    return format_beijing_time(value)
 
 
 def _queue_key_clear(*keys: str) -> None:

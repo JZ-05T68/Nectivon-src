@@ -6,6 +6,7 @@ import streamlit as st
 
 from src import __version__
 from src.runtime import application_database
+from src.time_display import format_beijing_time
 from src.workspace_ui import render_workspace
 
 st.set_page_config(page_title=f"导入记录 · Nectivon v{__version__}", page_icon="📋", layout="wide")
@@ -35,7 +36,7 @@ for record in records:
         st.markdown(f"**{record.title or record.filename} · {status_label}**")
         st.caption(
             f"原文件：{record.filename}　|　"
-            f"开始：{record.started_at.astimezone():%Y-%m-%d %H:%M:%S}"
+            f"开始：{format_beijing_time(record.started_at, fmt='%Y-%m-%d %H:%M:%S')}"
         )
         columns = st.columns(5)
         columns[0].metric("总页数", record.total_pages)

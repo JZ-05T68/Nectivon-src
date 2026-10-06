@@ -167,3 +167,58 @@ def test_learning_hub_page_exposes_all_layers(tmp_path: Path, monkeypatch) -> No
     # R5.1 copy pass: the review surface is now the 导出 tab (错题本/复习册/
     # 专项册 booklets); assert its stable wording instead of 复习清单.
     assert "导出文档" in joined or "复习清单" in joined
+
+
+def test_teachback_self_assessment_is_exclusive_and_saves_the_current_choice(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A yes/no self-report requires one choice and never invents AI evidence."""
+
+    database = _database(tmp_path)
+    question = QuestionService(database).create_question_item(
+        document_id=1, page_id=1, question_kind="typical",
+        question_number="1", stem_text="计算 $1+1$。",
+    )
+    mastery = MasteryService(database)
+    monkeypatch.setattr(runtime, "application_database", lambda: database)
+    monkeypatch.setattr(runtime, "application_ai_provider", lambda: None)
+    monkeypatch.setattr(
+        runtime, "application_training_profile_service",
+        lambda: TrainingProfileService(tmp_path / "data" / "training_profile.db"),
+    )
+    monkeypatch.setattr(
+        runtime, "application_page_visual_service",
+        lambda: (_ for _ in ()).throw(RuntimeError("AppTest 无视觉服务")),
+    )
+    app = AppTest.from_file(
+        str(Path(__file__).resolve().parents[1] / "pages" / "18_学习整理.py")
+    ).run(timeout=60)
+    assert not app.exception
+    assert any(item.value == "### 讲给别人听" for item in app.markdown)
+    choice_key = f"teachback_peer_choice_{question.id}"
+    save_key = f"teachback_peer_save_{question.id}"
+    choice = app.radio(key=choice_key)
+    assert choice.value is None
+    assert choice.options == ["是，能讲清楚", "否，还讲不清楚"]
+    assert not any(item.key in (
+        f"teachback_peer_yes_{question.id}", f"teachback_peer_no_{question.id}",
+    ) for item in app.checkbox)
+    app.button(key=save_key).click().run(timeout=60)
+    assert not app.exception
+    assert any("请先选择" in item.value for item in app.warning)
+    assert mastery.teachback_status(question.id)["manual_state"] == "unverified"
+
+    app.radio(key=choice_key).set_value("是，能讲清楚").run(timeout=60)
+    app.button(key=save_key).click().run(timeout=60)
+    assert not app.exception
+    assert mastery.teachback_status(question.id)["manual_pass"] is True
+
+    app.radio(key=choice_key).set_value("否，还讲不清楚").run(timeout=60)
+    assert app.radio(key=choice_key).value == "否，还讲不清楚"
+    app.button(key=save_key).click().run(timeout=60)
+    assert not app.exception
+    status = mastery.teachback_status(question.id)
+    assert status["manual_state"] == "gaps"
+    assert status["manual_pass"] is False
+    assert status["pass_count"] == 0
+    assert status["ai_state"] == "unverified"

@@ -137,6 +137,32 @@ def test_visual_tool_without_hits_returns_empty(tmp_path: Path) -> None:
     assert result.status.value == "empty"
 
 
+def test_visual_tool_network_failure_reports_reason_without_text_fallback(
+    tmp_path: Path,
+) -> None:
+    from src.ai.provider import AIExecutionError
+
+    database, pages_dir, _ = _database_with_visual_page(tmp_path, image_text="x")
+
+    class DisconnectedVision:
+        def complete_vision(self, *args, **kwargs):
+            raise AIExecutionError("connection unavailable", error_class="network")
+
+    adapter = PageVisualAdapter(
+        SearchService(database),
+        kb_uuid=database.get_knowledge_base_uuid(),
+        vision_provider=DisconnectedVision(),
+        pages_dir=pages_dir,
+    )
+    result = adapter(
+        ToolInput(tool_name="page_visual_search", arguments={"query": "参数表"}),
+        ToolContext(run_id="t"),
+    )
+    assert result.data["results"] == []
+    assert "无网络环境或无法连接 AI 服务" in result.data["notes"][0]
+    assert "额定参数表" not in str(result.data)
+
+
 def test_decision_prompt_has_visual_rule() -> None:
     from src.agent.decision import prompt as decision_prompt
     from src.agent.tools.adapters.page_search import PAGE_SEARCH_DEFINITION

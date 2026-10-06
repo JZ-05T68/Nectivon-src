@@ -1,7 +1,7 @@
 """V086-209 regression: visual drafts enter questions; shells are forbidden.
 
 「加入学习整理」 must carry the page's best available source into the new
-question item (manual text > Stage 2 draft > Agent reading > OCR), never
+question item (manual text > image transcript > native text), never
 create a silent empty shell when a source exists, and never duplicate an
 identical source on repeated clicks.
 """
@@ -20,7 +20,7 @@ from src.models import Page
 
 
 @pytest.fixture()
-def database(tmp_path: Path) -> Database:
+def database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Database:
     db = Database(tmp_path / "data" / "database" / "knowledge.db")
     (tmp_path / "data" / "raw").mkdir(parents=True)
     (tmp_path / "data" / "pages" / "1").mkdir(parents=True)
@@ -43,6 +43,21 @@ def database(tmp_path: Path) -> Database:
         ocr_text="OCR 出来的手写内容",
         status="ready",
     )
+    from types import SimpleNamespace
+
+    import src.page_image_ui as image_ui
+    import src.runtime as runtime
+
+    monkeypatch.setattr(
+        runtime, "application_settings", lambda: SimpleNamespace(agent_readings_dir="unused")
+    )
+    monkeypatch.setattr(
+        image_ui,
+        "current_image_reading",
+        lambda page, root: SimpleNamespace(
+            transcript="AI直接读取原图的完整文字", model="qwen3.8-max"
+        ),
+    )
     return db
 
 
@@ -61,40 +76,11 @@ def test_source_priority_manual_text_wins(database: Database) -> None:
     assert extra["origin"] == "user_manual_text"
 
 
-def test_source_priority_prefers_stage2_draft_over_ocr(database: Database) -> None:
-    from src.page_visual_service import PageVisualService
-
-    service = PageVisualService(database)
-    interpretation_id = service.record_interpretation(
-        1,
-        provenance="HANDWRITING_VISION",
-        content="视觉草稿转录的 1781 字符内容",
-        confidence="uncertain",
-        origin="ai_vision",
-        # Presence gate (fix round §18/§24): a handwriting reading only
-        # becomes the page source when the model declared handwriting
-        # present; the source-priority test must respect that contract.
-        region_json={"handwriting_presence": "confirmed"},
-    )
-    content, label, extra = _resolve_page_source(
-        _page(database), visual_service=service
-    )
-    assert "视觉草稿转录" in content
-    # Overnight humanization: the raw enum key never surfaces; the label
-    # reads as a plain-Chinese draft description and carries the presence
-    # verdict so the user knows what the model decided.
-    assert label.startswith("AI 视觉识别草稿")
-    assert "已判定存在手写" in label
-    assert extra["interpretation_id"] == interpretation_id
-    assert extra["origin"] == "stage2_visual_draft"
-
-
-def test_ocr_fallback_is_used_when_nothing_else_exists(database: Database) -> None:
+def test_image_reading_source_keeps_model_provenance(database: Database) -> None:
     content, label, extra = _resolve_page_source(_page(database))
-    assert content == "OCR 出来的手写内容"
-    # Overnight humanization: developer slang (OCR) never reaches users.
-    assert label == "系统识别出的文字"
-    assert extra["origin"] == "page_ocr_text"
+    assert content == "AI直接读取原图的完整文字"
+    assert extra["origin"] == "page_image_reading" and extra["model"] == "qwen3.8-max"
+    assert "OCR" not in content
 
 
 def test_create_with_source_keeps_draft_and_uncertain_stem(database: Database) -> None:
@@ -118,7 +104,7 @@ def test_create_with_source_keeps_draft_and_uncertain_stem(database: Database) -
         },
     )
     assert question.ai_draft is not None
-    assert question.ai_draft["content"] == "OCR 出来的手写内容"
+    assert question.ai_draft["content"] == "AI直接读取原图的完整文字"
     assert question.ai_draft["segmentation"] == "pending"
     assert question.stem_confidence == "uncertain"
 
@@ -193,7 +179,7 @@ def test_exam_structure_is_preserved_verbatim_never_assumed(database: Database) 
     page = _page(database)
     database.update_page(
         page.id,
-        ocr_text=(
+        markdown_content=(
             "二、多项选择题：本题共 3 小题，每小题 6 分，共 18 分。\n"
             "9．已知函数 f(x)，下列说法正确的是（多选）\n"
             "17．（17 分）已知抛物线 C:x²=2py。\n"

@@ -8,14 +8,17 @@ import streamlit as st
 
 from src.ai.model_registry import (
     CapabilitySupport,
+    ModelPurpose,
     ProviderId,
     get_capability_profile,
     get_provider_definition,
+    list_model_presets,
 )
 from src.ai.provider import AIUnavailableError, ProviderCallError
 from src.ai.provider_config import ModelSelectionKind
 from src.ai.provider_settings_service import (
     ProviderConfigurationState,
+    ProviderSettingsService,
     safe_settings_error,
 )
 
@@ -59,7 +62,7 @@ def render_provider_settings() -> None:
     }[state]
     current_provider = _PROVIDER_LABELS.get(active_provider, "—")
     st.markdown(
-        f"**当前模型**　Provider：`{current_provider}`　"
+        f"**当前模型（讲题/知识问答）**　Provider：`{current_provider}`　"
         f"Model：`{active_model or '—'}`　状态：**{status_label}**"
     )
     if state is ProviderConfigurationState.LEGACY:
@@ -68,37 +71,73 @@ def render_provider_settings() -> None:
             "可在下方重新输入 API Key 并保存为新配置。"
         )
 
-    provider_ids = list(ProviderId)
+    image_provider, image_model = service.current_image_state()
+    st.markdown(
+        f"**当前读图模型**　Provider：`{_PROVIDER_LABELS.get(image_provider, '—')}`　"
+        f"Model：`{image_model or '—'}`"
+    )
+    image_tab, text_tab = st.tabs(["读图 / 切题", "讲题 / 知识问答"])
+    with image_tab:
+        st.caption("直接读取原图，生成题目、数学公式和原图裁块；无网络时提示无法识别。")
+        _render_purpose_settings(service, ModelPurpose.IMAGE)
+        with st.expander("其他型号的读图状态"):
+            st.caption(
+                "Kimi K2.6 支持图片输入，但本次试卷的图框定位明显偏移，暂不用于切题。"
+                "Qwen3 VL Plus 支持图片输入，但本次试卷第三页把同一题的填空过度拆分，暂不用于切题。"
+                "这两个型号仍保留在问答配置中。"
+            )
+    with text_tab:
+        st.caption("用于讲题、知识问答和人工输入的数学内容排版。")
+        _render_purpose_settings(service, ModelPurpose.TEXT)
+
+
+def _render_purpose_settings(service: ProviderSettingsService, purpose: ModelPurpose) -> None:
+    """Render independent selections while sharing each provider's saved key."""
+
+    image_mode = purpose is ModelPurpose.IMAGE
+    key_prefix = "ai_image_settings" if image_mode else "ai_settings"
+    provider_ids = [item for item in ProviderId if list_model_presets(item, purpose=purpose)]
+    current_provider = (
+        service.current_image_state()[0] if image_mode else service.current_state()[1]
+    )
+    preferred = current_provider or (ProviderId.QWEN if image_mode else ProviderId.DEEPSEEK)
     selected_provider = st.selectbox(
-        "服务商",
+        "读图服务商" if image_mode else "服务商",
         options=provider_ids,
         format_func=lambda item: _PROVIDER_LABELS[item],
-        key="ai_settings_provider",
+        index=provider_ids.index(preferred) if preferred in provider_ids else 0,
+        key=f"{key_prefix}_provider",
     )
     try:
-        view = service.view(selected_provider)
+        view = (
+            service.image_view(selected_provider) if image_mode else service.view(selected_provider)
+        )
     except (AIUnavailableError, ProviderCallError) as exc:
         st.error(safe_settings_error(exc))
         return
     definition = get_provider_definition(selected_provider)
-    preset_ids = [preset.model_id for preset in definition.presets]
+    preset_ids = [
+        preset.model_id for preset in list_model_presets(selected_provider, purpose=purpose)
+    ]
     current_model_id = view.settings.model_id if view.settings is not None else ""
     current_is_preset = current_model_id in preset_ids
     model_choice = st.selectbox(
-        "模型",
-        options=[*preset_ids, _CUSTOM_MODEL],
+        "读图模型" if image_mode else "模型",
+        options=preset_ids if image_mode else [*preset_ids, _CUSTOM_MODEL],
         index=(
             preset_ids.index(current_model_id)
             if current_is_preset
+            else 0
+            if image_mode
             else len(preset_ids)
         ),
-        key=f"ai_settings_model_{selected_provider.value}",
+        key=f"{key_prefix}_model_{selected_provider.value}",
     )
     if model_choice == _CUSTOM_MODEL:
         model_id = st.text_input(
             "自定义 Model ID",
             value=current_model_id if not current_is_preset else "",
-            key=f"ai_settings_custom_model_{selected_provider.value}",
+            key=f"{key_prefix}_custom_model_{selected_provider.value}",
         ).strip()
         model_selection = ModelSelectionKind.CUSTOM
     else:
@@ -106,13 +145,17 @@ def render_provider_settings() -> None:
         model_selection = ModelSelectionKind.PRESET
 
     profile = get_capability_profile(selected_provider, model_id)
-    st.caption(_effective_capability_caption(profile.effective))
+    st.caption(
+        "支持图片输入和文字问答。"
+        if profile.effective.vision is CapabilitySupport.SUPPORTED
+        else "用于文字问答；读图请在「读图 / 切题」中单独选择视觉模型。"
+    )
     if view.credential_saved:
         st.success("API Key 已安全保存")
     else:
         st.caption("尚未保存 API Key")
 
-    form_key = f"ai_provider_form_{selected_provider.value}"
+    form_key = f"ai_provider_form_{purpose.value}_{selected_provider.value}"
     with st.form(form_key, clear_on_submit=True):
         api_key = st.text_input(
             "API Key",
@@ -129,13 +172,25 @@ def render_provider_settings() -> None:
                     else definition.default_base_url
                 ),
             )
-        st.caption("测试连接会发送一次极小的模型请求，可能产生少量 API 费用。")
-        buttons = st.columns(3)
-        save = buttons[0].form_submit_button("保存配置", use_container_width=True)
-        save_active = buttons[1].form_submit_button(
-            "保存并设为当前", type="primary", use_container_width=True
+        st.caption(
+            "测试图片连接会发送一张本地生成的小图，可能产生少量 API 费用。"
+            if image_mode
+            else "测试连接会发送一次极小的模型请求，可能产生少量 API 费用。"
         )
-        test = buttons[2].form_submit_button("测试连接", use_container_width=True)
+        buttons = st.columns(2 if image_mode else 3)
+        save = (
+            False
+            if image_mode
+            else buttons[0].form_submit_button("保存配置", use_container_width=True)
+        )
+        save_active = buttons[0 if image_mode else 1].form_submit_button(
+            "保存并用于读图" if image_mode else "保存并设为当前",
+            type="primary",
+            use_container_width=True,
+        )
+        test = buttons[1 if image_mode else 2].form_submit_button(
+            "测试图片连接" if image_mode else "测试连接", use_container_width=True
+        )
 
     if save or save_active or test:
         try:
@@ -147,17 +202,22 @@ def render_provider_settings() -> None:
             )
             if test:
                 result = service.test_connection(
-                    provider_settings, api_key_override=api_key
+                    provider_settings, api_key_override=api_key, purpose=purpose
                 )
                 st.success(
-                    "✓ API Key 有效　✓ 服务可访问　✓ 当前模型可以调用\n\n"
-                    f"响应模型：{result.resolved_model}"
+                    (
+                        "✓ 图片请求可以调用\n\n"
+                        if image_mode
+                        else "✓ API Key 有效　✓ 服务可访问　✓ 当前模型可以调用\n\n"
+                    )
+                    + f"响应模型：{result.resolved_model}"
                 )
             else:
                 service.save(
                     provider_settings,
                     new_api_key=api_key,
                     make_active=save_active,
+                    purpose=purpose,
                 )
                 _clear_model_session_state()
                 st.success("模型服务配置已安全保存。")
@@ -167,7 +227,7 @@ def render_provider_settings() -> None:
             LOGGER.error("模型服务设置操作失败：error_type=%s", type(exc).__name__)
             st.error(safe_settings_error(exc))
 
-    if st.button(
+    if not image_mode and st.button(
         "清除该 Provider 配置",
         key=f"ai_settings_delete_{selected_provider.value}",
         use_container_width=True,

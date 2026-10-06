@@ -184,7 +184,7 @@ def test_reread_unavailable_only_for_textless_page_with_reason(
     available, reason = page_reread_availability(page)
     assert available is False
     assert reason.strip()
-    assert "可读文字" in reason
+    assert "原始图片不可用" in reason
 
 
 def test_reread_without_manual_correction_reads_and_never_touches_markdown(

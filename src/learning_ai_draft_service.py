@@ -25,6 +25,7 @@ import re
 from typing import Final
 
 from src.ai.completion_stage import CompletionStage, completion_stage_scope
+from src.question_recognition_rules import MATH_NOTATION_RULES
 
 LOGGER = logging.getLogger(__name__)
 
@@ -33,7 +34,8 @@ _SCOPE_GUARD_PROMPT: Final = (
     "1. 只能使用与这道题来源材料相同课程、相同年级、真实考试范围内的知识；\n"
     "2. 绝对不能超纲；绝对不能为了显得有深度而生成偏题、怪题、冷门竞赛技巧、"
     "超难题或真实考试根本不考的内容；\n"
-    "3. 表达必须贴近这个课程阶段的规范书写习惯。\n"
+    + MATH_NOTATION_RULES
+    + "3. 表达必须贴近这个课程阶段的规范书写习惯。\n"
     "4. 遇到化学内容时，不得输出 \\ce{...}；化学式、电荷、平衡常数、"
     "科学计数法和反应箭头只用标准 KaTeX 可支持的 LaTeX，并逐式检查"
     "下标、上标、电荷、系数、结晶水中点号与反应方向；无法从原图"
@@ -58,6 +60,10 @@ _STUDENT_FINAL_NUMBER = re.compile(
 
 class LearningAIDraftError(RuntimeError):
     """AI draft generation failed or produced out-of-scope content."""
+
+    def __init__(self, message: str, *, reference: dict | None = None) -> None:
+        super().__init__(message)
+        self.reference = reference
 
 
 def _numeric_claims(pattern: re.Pattern[str], text: str) -> set[str]:
@@ -125,8 +131,15 @@ def _repair_review_json_transport(text: str) -> str:
                 end += 1
             slashes = text[index:end]
             following = text[end] if end < len(text) else ""
-            if len(slashes) % 2 and following:
-                if (inside_math and following.isalpha()) or following not in '"\\/bfnrtu':
+            unicode_escape = following == "u" and bool(
+                re.fullmatch(r"[0-9a-fA-F]{4}", text[end + 1:end + 5])
+            )
+            if len(slashes) % 2 and following and not unicode_escape:
+                # JSON newlines around a display equation are still newlines.
+                # Only multi-letter commands such as \neq/\times collide with
+                # JSON control escapes; a lone \n is not a LaTeX command.
+                math_command = inside_math and bool(re.match(r"[A-Za-z]{2,}", text[end:]))
+                if math_command or following not in '"\\/bfnrtu':
                     slashes += "\\"
             output.append(slashes)
             if following == '"' and len(slashes) % 2:
@@ -323,7 +336,7 @@ def _clean_str(value: object) -> str:
 
 
 def first_pass_quality_violation(
-    data: dict, *, grade: str, subject: str, source_text: str = ""
+    data: dict, *, grade: str, subject: str, source_text: str = "", reference_only: bool = False,
 ) -> str | None:
     """Reject a deficient first draft; never silently rewrite it into a pass.
 
@@ -337,7 +350,7 @@ def first_pass_quality_violation(
         re.search(r"恰好.{0,12}\d+\s*步.{0,12}(?:到|得)到?\s*1", source_text)
         and not re.search(r"首(?:次|回)|第一次", source_text)
     )
-    if exact_steps_to_one:
+    if exact_steps_to_one and not reference_only:
         correction = _clean_str(data.get("correction"))
         analysis_for_steps = _clean_str(data.get("analysis"))
         if not all(part in correction for part in ("4", "6")) or not any(
@@ -354,7 +367,7 @@ def first_pass_quality_violation(
     if len(analysis) < 65:
         return "解析不足以展示逐步推理（少于 65 字）"
     reasons = _as_list(data.get("reason_tags"))
-    if not reasons:
+    if not reasons and not reference_only:
         return "缺少具体错因"
     generic = ("粗心", "马虎", "大意", "漏看", "计算错误", "知识点掌握不牢固")
     for reason in reasons:
@@ -370,16 +383,18 @@ def first_pass_quality_violation(
             return f"{field} 使用了不适合初一的闭区间表述"
         if "\\cdots\\cdots" in value:
             return f"{field} 把带余除法写成了不规范的省略号"
-        if value.count("$") % 2 or re.search(r"(?<=[0-9A-Za-z])\$\$", value):
+        without_display = re.sub(r"\$\$[^$]+\$\$", "", value, flags=re.DOTALL)
+        if value.count("$") % 2 or re.search(r"(?<=[0-9A-Za-z])\$\$", without_display):
             return f"{field} 存在损坏的数学公式分隔符"
-        math_spans = re.findall(r"\$([^$]+)\$", value)
+        blocks = re.findall(r"\$\$.*?\$\$|\$[^$]*\$", value, flags=re.DOTALL)
+        math_spans = [block[2:-2] if block.startswith("$$") else block[1:-1] for block in blocks]
         if any(re.search(r"\\\\(?=[A-Za-z])", span) for span in math_spans):
             return f"{field} 的 LaTeX 命令多写了反斜杠"
         if any(re.match(r"\s*(?:\\(?:le|ge|leq|geq)|[<>≤≥])", span) for span in math_spans):
             return f"{field} 的数学式缺少比较符号左边的对象"
         if any(re.search(r"(?<=[A-Za-z0-9|})])/(?=[A-Za-z0-9|({])", span) for span in math_spans):
             return f"{field} 的分数仍用斜杠而非上下分数线"
-        outside_math = re.sub(r"\$[^$]*\$", "", value)
+        outside_math = re.sub(r"\$\$.*?\$\$|\$[^$]*\$", "", value, flags=re.DOTALL)
         bare_math = (
             r"[|∣][A-Za-z][|∣]|\b[A-Za-z]\s*[+−*/=<>≤≥]\s*[A-Za-z0-9]"
             r"|\b[0-9]+[A-Za-z]\b"
@@ -431,19 +446,103 @@ class LearningAIDraftService:
 
     # ------------------------------------------------------------ internals
     def _complete(
-        self, prompt: str, *, target_refs: tuple[str, ...], max_tokens: int = 2048
+        self, prompt: str, *, target_refs: tuple[str, ...], max_tokens: int = 2048,
+        image_data: str | None = None,
     ) -> str:
         # Learning drafts are bounded structured-JSON requests: the stage
         # scope lets the adapter disable thinking and raise the transport
         # timeout floor (V086-203 family fix, overnight round 2026-09-27).
         with completion_stage_scope(CompletionStage.LEARNING_DRAFT):
-            result = self._provider.complete(
-                prompt,
-                max_completion_tokens=max_tokens,
-                source_feature="learning_ai_draft",
-                target_refs=target_refs,
+            options = {"max_completion_tokens": max_tokens,
+                       "source_feature": "learning_ai_draft", "target_refs": target_refs}
+            result = (
+                self._provider.complete_vision(prompt, image_data, json_output=True, **options)
+                if image_data else self._provider.complete(prompt, **options)
             )
         return getattr(result, "text", "") or ""
+
+    def generate_question_reference(
+        self, question, *, learner_profile=None, image_data: str | None = None,
+    ) -> dict:
+        """Generate four editable reference fields once, without judging the student."""
+
+        source = _question_with_context(question)
+        if not source:
+            raise LearningAIDraftError("本题题干为空，无法生成参考版。")
+        basic = getattr(learner_profile, "basic", None)
+        grade = _clean_str(getattr(basic, "grade", ""))
+        stage = _clean_str(getattr(basic, "stage", ""))
+        subject = _clean_str(getattr(question, "subject", ""))
+        grade_rules = (
+            "本题按初一数学解释：图形在数轴上的滚动，只列顶点的数、前几次位置和周期。"
+            "不要推测旋转角度，不引入三角函数、旋转矩阵、投影坐标或同余记号。\n"
+            if grade == "初一" and subject == "数学" else ""
+        )
+        prompt = (
+            "为刚加入学习整理的一道独立小题生成参考版，只处理当前小题。"
+            "这是正确解法与解题方法的参考，不是对学生作答的判定。"
+            "不得编造学生选了什么、写了什么、错因或批改结论；"
+            "不修改题干、学生作答或已保存的人工内容。\n"
+            f"学习范围：{stage}{grade or '按原题课程范围'}；学科：{subject}。\n"
+            f"{grade_rules}"
+            f"【已保存题干及公共条件】\n{source}\n"
+            + ("附图是本题当前关联截图，可能包括题干图、公共图和选项图。"
+               "必须直接读图核对数轴、标签和几何关系，不能把手写标记当作印刷条件。\n"
+               if image_data else "")
+            + "只返回 JSON：{\"correction\":\"正确结果与关键步骤\","
+            "\"analysis\":\"从条件开始逐步解释、计算并核对结论的完整解析\","
+            "\"method_tags\":[\"具体题型\"],"
+            "\"solution_method\":\"同类题下次可照做的解题步骤\","
+            "\"type_family\":{\"title\":\"题型族名\",\"description\":\"共同特征\"},"
+            "\"method_families\":[{\"title\":\"方法族名\",\"description\":\"方法要点\"}],"
+            "\"secondary_conclusion\":null}。前四个字段必须完整，"
+            "correction 无论是否已判定错误都要给参考解法，不能返回空字符串。"
+            "题型与方法分开；不生成错因。题意或图像不清楚时明确标注待核对，"
+            "不得猜答案。恰好走 N 步若没有首次到达的条件，不得偷换成首次到达；"
+            "不同理解产生不同答案时分别说明并注明待老师核实。\n"
+            "只给最后整理好的参考版，不输出内部试算、反复推翻的过程。"
+            "订正简述结论和关键算式（约160字以内），解析分3到6步，"
+            "解释每步依据，题型1到3项，方法列出可复用步骤。"
+            "无法确认时直说待核对，并说明缺少什么；不猜唯一答案。"
+            "没有联网或标准答案核验，禁止声称查证了教材、权威解法或标准答案。\n"
+            + MATH_NOTATION_RULES + _SCOPE_GUARD_PROMPT
+        )
+        raw = self._complete(
+            prompt, target_refs=(f"question:{question.id}",), max_tokens=8192,
+            image_data=image_data,
+        )
+        data = _parse_json_object(raw, math_strings=True)
+        original_reference = dict(data)
+        from src.math_display import normalize_question_math
+
+        for field in ("correction", "analysis", "solution_method"):
+            data[field] = normalize_question_math(_clean_str(data.get(field)))
+        data["method_tags"] = [normalize_question_math(tag)
+                               for tag in _as_list(data.get("method_tags"))]
+        required = ("correction", "analysis", "method_tags", "solution_method")
+        if any(not data[field] for field in required):
+            raise LearningAIDraftError(
+                "AI 参考版不完整，本次未写入，请核对题干和模型配置。",
+                reference=original_reference,
+            )
+        violation = scope_guard_violation(json.dumps(data, ensure_ascii=False))
+        # Check reference claims independently of any existing student answer.
+        fabricated = correction_fabrication_violation(
+            data["correction"] + data["analysis"], has_student_answer=False,
+        )
+        quality = first_pass_quality_violation(
+            {**data, "stem": "", "secondary_conclusion": None},
+            grade=grade, subject=subject, source_text=source, reference_only=True,
+        )
+        if violation or fabricated or quality:
+            raise LearningAIDraftError(
+                f"AI 参考版待核对，本次未写入：{violation or fabricated or quality}",
+                reference=original_reference,
+            )
+        data["original_reference"] = original_reference
+        data["secondary_conclusion"] = None
+        data["reason_tags"] = []
+        return data
 
     # ---------------------------------------------------------- first layer
     def generate_question_drafts(self, question, *, learner_profile=None) -> dict:

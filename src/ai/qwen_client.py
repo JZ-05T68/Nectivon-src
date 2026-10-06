@@ -96,6 +96,7 @@ QwenTransportError = OpenAICompatibleTransportError
 #: cascade (V086-204). This is a floor, never a shrink of a larger setting.
 VISION_MIN_TIMEOUT_SECONDS: Final[float] = 120.0
 
+
 #: Learning drafts (first layer / wings / correction / self-explanation
 #: review) are long structured-JSON completions.  The overnight round
 #: measured 3×30 s transport timeouts on honest bounded requests with the
@@ -230,6 +231,7 @@ class QwenProvider:
         *,
         model: str | None = None,
         max_completion_tokens: int | None = None,
+        json_output: bool = False,
     ) -> CompletionResult:
         """Return one completion over a prompt plus a PNG image (v0.7.2).
 
@@ -271,6 +273,10 @@ class QwenProvider:
         payload["enable_thinking"] = self._thinking_enabled(
             chosen_model, stage=current_completion_stage()
         )
+        if json_output:
+            payload["response_format"] = {"type": "json_object"}
+            payload["enable_thinking"] = False
+            payload["temperature"] = 0.2
         response, retry_count = self._post(
             "/chat/completions",
             payload,

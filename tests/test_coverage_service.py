@@ -13,12 +13,12 @@ from pathlib import Path
 import pytest
 
 from src.ai.coverage_service import CoverageSummary, PageEmbeddingCoverageService
-from src.ai.page_indexer import prepare_page_text
+from src.ai.page_indexer import EMBEDDING_CONFIG_VERSION, prepare_page_text
 from src.database import Database
 
 MODEL = "qwen3.7-text-embedding"
 DIMENSIONS = 1024
-CONFIG_VERSION = 1
+CONFIG_VERSION = EMBEDDING_CONFIG_VERSION
 
 
 def _library(tmp_path: Path) -> tuple[Database, int]:

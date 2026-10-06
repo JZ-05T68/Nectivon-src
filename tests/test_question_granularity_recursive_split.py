@@ -43,6 +43,26 @@ def test_parent_common_context_excludes_child_formulas_and_ocr_garbage() -> None
 
 
 @pytest.mark.parametrize(
+    "prompt",
+    (
+        "23.（8分）（1）若(x-1)²+|y+2|=0，求值。\n(2)已知另一条件。",
+        "23（8分）(1)若x=1，求值。\n(2)若y=2，求值。",
+        "（8分）(1)若x=1，求值。\n(2)若y=2，求值。",
+        "(1)独立小问一。\n(2)独立小问二。",
+        "23.（8分）",
+    ),
+)
+def test_independent_subquestions_have_no_shared_parent_prompt(prompt: str) -> None:
+    assert _shared_parent_prompt(prompt) == ""
+
+
+def test_inline_first_child_preserves_real_shared_conditions() -> None:
+    assert _shared_parent_prompt("已知a、b互为相反数：(1)求a+b。(2)求积。") == (
+        "已知a、b互为相反数："
+    )
+
+
+@pytest.mark.parametrize(
     ("label", "prompt", "expected"),
     (
         ("24", "24.（10分）请借助数轴探索。", "24\n（10分）请借助数轴探索。"),
@@ -95,6 +115,37 @@ def _atomic(label: str, prompt: str, **overrides) -> QuestionCandidate:
     }
     values.update(overrides)
     return QuestionCandidate(**values)
+
+
+def test_saved_leaf_does_not_inherit_sibling_from_inline_parent(
+    database: Database, source: tuple[int, int, int]
+) -> None:
+    document_id, page_id, _ = source
+    original_parent = "23.（8分）（1）若x=1。\n(2)若y=2。\n(3)若a=3。"
+    root = QuestionCandidate(
+        number="23", stem=original_parent, completeness="complete",
+        question_kind="composite", children=[
+            _atomic("23(1)", "若x=1。"),
+            _atomic("23(2)", "若y=2。"),
+            _atomic("23(3)", "若a=3。"),
+        ],
+    )
+    mapping = materialize_candidate_tree(
+        database, document_id=document_id, source_page_id=page_id, root_candidate=root
+    )
+    question = QuestionService(database).create_question_item(
+        document_id=document_id, page_id=page_id, question_kind="error",
+        question_number="23(3)", stem_text="若a=3。",
+    )
+    link_atomic_question(database, node_id=mapping["0.2"], question_item_id=question.id)
+    context = context_for_question_item(database, question.id)
+    assert context is not None
+    assert context.context_text == ""
+    assert context.page_refs == (page_id,)
+    with database._connection() as connection:  # noqa: SLF001
+        assert connection.execute(
+            "SELECT local_prompt FROM question_nodes WHERE id=?", (mapping["0"],)
+        ).fetchone()[0] == original_parent
 
 
 def _chemistry_tree(page_id: int) -> QuestionCandidate:

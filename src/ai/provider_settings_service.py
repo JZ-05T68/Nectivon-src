@@ -9,7 +9,7 @@ are local-only.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from src.ai.completion_stage import CompletionStage, completion_stage_scope
@@ -18,7 +18,14 @@ from src.ai.credential_store import (
     CredentialStoreError,
     SecretCredential,
 )
-from src.ai.model_registry import ProviderId, get_provider_definition
+from src.ai.model_registry import (
+    CapabilitySupport,
+    ModelPurpose,
+    ProviderId,
+    get_capability_profile,
+    get_provider_definition,
+    list_model_presets,
+)
 from src.ai.openai_compatible import Transport
 from src.ai.provider import (
     AIUnavailableError,
@@ -31,6 +38,7 @@ from src.ai.provider_config import (
     ModelSelectionKind,
     ProviderConfigStore,
     ProviderSettings,
+    image_provider_settings,
 )
 from src.ai.provider_factory import (
     build_provider_adapter,
@@ -155,6 +163,49 @@ class ProviderSettingsService:
             )
         return ProviderConfigurationState.UNCONFIGURED, None, None
 
+    def image_view(self, provider_id: ProviderId | str) -> ProviderSettingsView:
+        """Expose image settings without changing the provider's text selection."""
+
+        normalized = ProviderId(provider_id)
+        config = self.load_config()
+        selected = image_provider_settings(config)
+        view = self.view(normalized)
+        presets = list_model_presets(normalized, purpose=ModelPurpose.IMAGE)
+        if not presets:
+            return replace(view, settings=None, active=False)
+        settings = (
+            selected
+            if selected and selected.provider_id is normalized
+            else replace(
+                view.settings or ProviderSettings.default_for(normalized),
+                model_id=presets[0].model_id,
+                model_selection=ModelSelectionKind.PRESET,
+            )
+        )
+        return replace(
+            view,
+            settings=settings,
+            active=bool(
+                selected and selected.provider_id is normalized,
+            ),
+        )
+
+    def current_image_state(self) -> tuple[ProviderId | None, str | None]:
+        """Report the same non-secret image selection as production routing."""
+
+        if self.config_path_exists:
+            selected = image_provider_settings(self.load_config())
+            return (selected.provider_id, selected.model_id) if selected else (None, None)
+        if self.current_state()[0] is ProviderConfigurationState.LEGACY:
+            model = self._application_settings.ai_llm_model
+            if (
+                get_capability_profile("qwen", model).effective.vision
+                is not CapabilitySupport.SUPPORTED
+            ):
+                model = self._application_settings.ai_vision_model
+            return ProviderId.QWEN, model
+        return None, None
+
     @staticmethod
     def make_settings(
         *,
@@ -186,6 +237,7 @@ class ProviderSettingsService:
         *,
         new_api_key: str = "",
         make_active: bool,
+        purpose: ModelPurpose = ModelPurpose.TEXT,
     ) -> None:
         provider_id = provider_settings.provider_id
         normalized_key = new_api_key.strip()
@@ -197,11 +249,29 @@ class ProviderSettingsService:
                     provider_id=provider_id.value,
                 )
             )
+        config = self.load_config()
+        if purpose is ModelPurpose.IMAGE:
+            try:
+                config = config.with_image_provider(provider_settings)
+            except ValueError as exc:
+                raise ProviderCallError(
+                    SafeProviderError(
+                        code=ProviderErrorCode.UNSUPPORTED_CAPABILITY,
+                        provider_id=provider_id.value,
+                    )
+                ) from exc
+        else:
+            # The first text edit of a legacy single-purpose document must
+            # freeze its existing image route before replacing a provider.
+            # Otherwise changing Qwen's text model also changes image input.
+            if config.image_settings is None:
+                previous_image = image_provider_settings(config)
+                if previous_image is not None:
+                    config = config.with_image_provider(previous_image)
+            config = config.with_provider(provider_settings, make_active=make_active)
         if normalized_key:
             try:
-                self._credential_store.set(
-                    provider_id, SecretCredential(normalized_key)
-                )
+                self._credential_store.set(provider_id, SecretCredential(normalized_key))
             except CredentialStoreError as exc:
                 raise ProviderCallError(
                     SafeProviderError(
@@ -209,9 +279,6 @@ class ProviderSettingsService:
                         provider_id=provider_id.value,
                     )
                 ) from exc
-        config = self.load_config().with_provider(
-            provider_settings, make_active=make_active
-        )
         self._config_store.save(config)
         self._invalidate_runtime()
 
@@ -235,6 +302,7 @@ class ProviderSettingsService:
         provider_settings: ProviderSettings,
         *,
         api_key_override: str = "",
+        purpose: ModelPurpose = ModelPurpose.TEXT,
     ) -> ConnectionTestResult:
         normalized_override = api_key_override.strip()
         try:
@@ -262,10 +330,17 @@ class ProviderSettingsService:
         )
         adapter = build_provider_adapter(resolved, transport=self._transport)
         with completion_stage_scope(CompletionStage.CONNECTION_TEST):
-            result = adapter.complete(
-                "请只回复 OK。",
-                max_completion_tokens=8,
-            )
+            if purpose is ModelPurpose.IMAGE:
+                from src.ai.image_probe import image_connection_probe
+
+                result = adapter.complete_vision(
+                    "请描述这张图片中左右两侧的颜色，只回复颜色名称。",
+                    image_connection_probe(),
+                    model=provider_settings.model_id,
+                    max_completion_tokens=256,
+                )
+            else:
+                result = adapter.complete("请只回复 OK。", max_completion_tokens=8)
         return ConnectionTestResult(
             provider_id=provider_settings.provider_id,
             requested_model=provider_settings.model_id,

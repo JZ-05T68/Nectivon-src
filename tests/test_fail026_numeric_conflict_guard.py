@@ -120,7 +120,8 @@ def test_vision_prompt_carries_digit_gap_prior(tmp_path: Path) -> None:
     assert "字形" in prompt and "间隙" in prompt
     assert "整数 26" in prompt
     assert "只有看到明确的小数点" in prompt
-    assert "7. 下方是从同一原始页面直接提取的文字层" in prompt
+    assert "同一原始页面直接提取的文字层" not in prompt
+    assert "训练轮次变化" not in prompt
 
 
 # ------------------------------------------------------- adapter integration
@@ -128,6 +129,7 @@ def test_vision_prompt_carries_digit_gap_prior(tmp_path: Path) -> None:
 
 def test_adapter_appends_note_when_layers_disagree(tmp_path: Path) -> None:
     database, pages_dir = _database_with_visual_page(tmp_path)
+    database.update_page(1, markdown_content=database.get_page(1).extracted_text)
     stub = _StubVision("第 6 轮损失约为 2.6。")
     adapter = _adapter(database, pages_dir, stub)
     result = adapter(_tool_input("训练损失"), _context())

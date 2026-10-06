@@ -670,3 +670,12 @@ def test_first_layer_prompt_contract_forbids_fabricated_choice() -> None:
     src = inspect.getsource(svc)
     assert "绝不能编造学生选了什么选项" in src
     assert "绝对不要假设或编造" in src
+
+
+def test_math_json_preserves_display_newlines_and_commands() -> None:
+    from src.learning_ai_draft_service import _parse_json_object
+
+    data = _parse_json_object(
+        r'{"analysis":"$$\n|a| \neq \nu\n$$"}', math_strings=True,
+    )
+    assert data["analysis"] == "$$\n|a| " + r"\neq \nu" + "\n$$"

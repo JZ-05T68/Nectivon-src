@@ -7,7 +7,7 @@ so business services remain unaware of concrete providers.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import ClassVar, Protocol
 
@@ -30,7 +30,11 @@ from src.ai.provider import (
     build_production_audited_provider,
     require_production_audited_provider,
 )
-from src.ai.provider_config import ProviderConfigStore, ProviderSettings
+from src.ai.provider_config import (
+    ProviderConfigStore,
+    ProviderSettings,
+    image_provider_settings,
+)
 from src.ai.qwen_client import QwenProvider
 from src.config import Settings
 
@@ -55,6 +59,7 @@ __all__ = [
     "build_qwen_adapter",
     "resolve_completion_runtime",
     "resolve_active_provider_runtime",
+    "resolve_image_provider_runtime",
     "resolve_deepseek_runtime",
     "resolve_glm_runtime",
     "resolve_hunyuan_runtime",
@@ -223,9 +228,7 @@ def resolve_glm_runtime(
     return resolved if isinstance(resolved, ResolvedGlmRuntime) else None
 
 
-_RUNTIME_TYPES: dict[
-    ProviderId, type[ResolvedCompletionRuntime]
-] = {
+_RUNTIME_TYPES: dict[ProviderId, type[ResolvedCompletionRuntime]] = {
     ProviderId.DEEPSEEK: ResolvedDeepSeekRuntime,
     ProviderId.KIMI: ResolvedKimiRuntime,
     ProviderId.HUNYUAN: ResolvedHunyuanRuntime,
@@ -282,6 +285,7 @@ def resolve_qwen_runtime(
     *,
     config_store: ProviderConfigStore | None = None,
     credential_store: CredentialStore | None = None,
+    allow_inactive: bool = False,
 ) -> ResolvedQwenRuntime | None:
     """Resolve secure config first, otherwise preserve legacy Settings behavior."""
 
@@ -296,7 +300,9 @@ def resolve_qwen_runtime(
             config = config_store.load()
         except ValueError as exc:
             raise AIUnavailableError("安全 AI Provider 配置无效。") from exc
-        if config.active_provider_id is not ProviderId.QWEN:
+        if config.active_provider_id is None or (
+            config.active_provider_id is not ProviderId.QWEN and not allow_inactive
+        ):
             return None
         qwen_settings = config.get(ProviderId.QWEN)
         if qwen_settings is None:
@@ -313,7 +319,9 @@ def resolve_qwen_runtime(
             llm_model=qwen_settings.model_id,
         )
 
-    if settings.ai_mode != "api" or settings.ai_provider != ProviderId.QWEN.value:
+    if settings.ai_mode != "api" or (
+        settings.ai_provider != ProviderId.QWEN.value and not allow_inactive
+    ):
         return None
     legacy_key = settings.ai_api_key.get_secret_value()
     if not legacy_key:
@@ -409,6 +417,47 @@ def resolved_runtime_from_settings(
     )
 
 
+def resolve_image_provider_runtime(
+    settings: Settings,
+    *,
+    config_store: ProviderConfigStore | None = None,
+    credential_store: CredentialStore | None = None,
+) -> ResolvedQwenRuntime | ResolvedCompletionRuntime | None:
+    """Resolve only the selected image model; missing keys never switch vendors."""
+
+    config_store = config_store or ProviderConfigStore()
+    if config_store.path.is_file():
+        try:
+            selected = image_provider_settings(config_store.load())
+        except (ValueError, KeyError) as exc:
+            raise AIUnavailableError("安全读图模型配置无效。") from exc
+        if selected is None:
+            return None
+        credentials = credential_store or build_default_credential_store()
+        credential = credentials.get(selected.provider_id)
+        if credential is None:
+            return None
+        return resolved_runtime_from_settings(selected, credential, settings)
+    legacy = resolve_qwen_runtime(
+        settings,
+        config_store=config_store,
+        credential_store=credential_store,
+    )
+    if legacy is None:
+        return None
+    from src.ai.model_registry import CapabilitySupport, get_capability_profile
+
+    model = next(
+        (
+            model
+            for model in (legacy.default_model, legacy.vision_model)
+            if get_capability_profile("qwen", model).effective.vision is CapabilitySupport.SUPPORTED
+        ),
+        None,
+    )
+    return replace(legacy, llm_model=model) if model else None
+
+
 def build_qwen_adapter(
     resolved: ResolvedQwenRuntime,
     *,
@@ -438,7 +487,7 @@ def build_deepseek_adapter(
     transport: Transport,
     constructor: DeepSeekAdapterConstructor = DeepSeekAdapter,
 ) -> DeepSeekAdapter:
-    """Build the completion-only DeepSeek adapter with a wrapped credential."""
+    """Build the DeepSeek text/image adapter with a wrapped credential."""
 
     return constructor(
         api_key=resolved.credential,
@@ -456,7 +505,7 @@ def build_kimi_adapter(
     transport: Transport,
     constructor: KimiAdapterConstructor = KimiAdapter,
 ) -> KimiAdapter:
-    """Build the completion-only Kimi adapter with a wrapped credential."""
+    """Build the Kimi text/image adapter with a wrapped credential."""
 
     return constructor(
         api_key=resolved.credential,
@@ -492,7 +541,7 @@ def build_glm_adapter(
     transport: Transport,
     constructor: GlmAdapterConstructor = GlmAdapter,
 ) -> GlmAdapter:
-    """Build the completion-only GLM adapter with a wrapped credential."""
+    """Build the GLM text/image adapter with a wrapped credential."""
 
     return constructor(
         api_key=resolved.credential,
@@ -509,7 +558,7 @@ def build_completion_adapter(
     *,
     transport: Transport,
 ) -> DeepSeekAdapter | KimiAdapter | HunyuanAdapter | GlmAdapter:
-    """Central dispatch for the secure completion-only adapters."""
+    """Central dispatch for secure provider adapters and their capabilities."""
 
     constructors = {
         ProviderId.DEEPSEEK: DeepSeekAdapter,

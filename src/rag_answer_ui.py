@@ -32,6 +32,7 @@ from src.knowledge_context_packager import (
 )
 from src.math_display import render_math_markdown
 from src.models import ContextItem, KnowledgeSearchResult, SearchResult
+from src.time_display import format_beijing_time
 
 LOGGER = logging.getLogger(__name__)
 ASK_QUESTION_KEY = "rag_ask_question"
@@ -161,7 +162,7 @@ def render_ask_ai_section(
         return
     st.markdown("#### AI 回答")
     render_math_markdown(output.answer)
-    st.caption(f"模型：{output.model}　|　生成时间：{output.generated_at}")
+    st.caption(f"模型：{output.model}　|　生成时间：{format_beijing_time(output.generated_at)}")
     if output.token_usage is not None:
         st.caption(f"Token 用量：{output.token_usage.total_tokens}")
     with st.expander("查看引用来源与上下文范围", expanded=True):

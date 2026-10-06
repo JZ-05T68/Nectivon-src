@@ -33,6 +33,7 @@ from src.models import (
     KnowledgeRelationType,
     NoteImportance,
 )
+from src.time_display import format_beijing_time
 
 LOGGER = logging.getLogger(__name__)
 
@@ -212,7 +213,7 @@ def _render_object_card(
         st.caption(
             f"ID {knowledge_object.id} · {knowledge_object.epistemic_basis.label} · "
             f"{_confirmation_badge(knowledge_object)} · "
-            f"更新于 {knowledge_object.updated_at:%Y-%m-%d %H:%M}"
+            f"更新于 {format_beijing_time(knowledge_object.updated_at)}"
         )
         if knowledge_object.superseded_by_ko_id is not None:
             st.caption(f"已替代 → 知识对象 {knowledge_object.superseded_by_ko_id}")

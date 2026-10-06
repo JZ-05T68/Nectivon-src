@@ -25,6 +25,8 @@ data/markdown/*
 !data/markdown/.gitkeep
 data/agent-readings/*
 !data/agent-readings/.gitkeep
+data/question-candidates/*
+!data/question-candidates/.gitkeep
 data/database/*
 !data/database/.gitkeep
 # Profile/preferences are runtime data outside the document subdirectories.
@@ -97,3 +99,9 @@ docs/阶段1_个人信息配置_详细测试报告_2026-10-02.md
 scripts/apply_stage4_review_fixes.py
 scripts/audit_stage4_review.py
 scripts/verify_stage4_first_pass.py
+
+# Public source snapshots exclude internal reports and restricted catalogs.
+/docs/
+/src/data/schools.json
+/src/data/undergraduate_majors.json
+/src/data/training_profile_catalog_sources.json

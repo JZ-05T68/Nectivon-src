@@ -22,6 +22,7 @@ from src.targeted_training_models import (
     TrainingTask,
 )
 from src.targeted_training_service import TargetedTrainingService
+from src.time_display import format_beijing_time
 from src.training_execution_ui import ACTIVE_SESSION_ID_KEY, render_training_session_ui
 from src.training_profile_models import LearnerProfile
 from src.training_session_service import TrainingSessionService
@@ -109,7 +110,7 @@ def render_targeted_training_section(
                             )
                             st.markdown(
                                 f"- **{rec.target}** ｜ 优先级：{prio_color} ｜ "
-                                f"建议复习：`{rec.next_review_at}`"
+                                f"建议复习：`{format_beijing_time(rec.next_review_at)}`"
                             )
                             st.caption(f"  *复习原因*：{rec.review_reason}")
                         with col_act:

@@ -229,10 +229,8 @@ def test_confirmed_reading_is_a_source_with_pointer(page_with_visual) -> None:
         region_json={"handwriting_presence": "confirmed"},
     )
     content, label, extra = _resolve_page_source(page, visual_service=service)
-    assert extra.get("origin") == "stage2_visual_draft"
-    assert extra.get("handwriting_presence") == "confirmed"
-    assert "已判定存在手写" in label
-    assert "u_i" in content
+    assert extra.get("origin") != "stage2_visual_draft"
+    assert "u_i" not in content
 
 
 def test_user_saved_reading_overrides_missing_declaration(

@@ -361,26 +361,32 @@ def test_adapter_non_family_query_keeps_historical_selection(tmp_path: Path) -> 
     assert "family_expansion" not in result.data
 
 
-def test_adapter_gives_vision_the_same_page_text_for_exact_cross_check(
+def test_adapter_gives_vision_only_human_corrections_for_cross_check(
     tmp_path: Path,
 ) -> None:
     pool = [
-        _hit(
-            page_id=1,
-            document_id=1,
-            title="备件价格清单",
-            extracted_text="接近开关 E2E-X5ME1 78",
+        replace(
+            _hit(
+                page_id=1,
+                document_id=1,
+                title="备件价格清单",
+                extracted_text="自动文字层误读型号",
+            ),
+            markdown_content="接近开关 E2E-X5ME1 78",
+            ocr_text="OCR 错误型号",
         )
     ]
     result, stub = _adapter_result(tmp_path, pool, {"query": "接近开关价格"})
 
     assert result.status.value == "success"
     assert len(stub.prompts) == 1
-    assert "同一原始页面直接提取的文字层" in stub.prompts[0]
+    assert "用户已经保存的人工修正" in stub.prompts[0]
+    assert "自动文字层误读型号" not in stub.prompts[0]
+    assert "OCR 错误型号" not in stub.prompts[0]
     assert "E2E-X5ME1 78" in stub.prompts[0]
-    assert "视觉索引摘要" in stub.prompts[0]
+    assert "视觉索引摘要" not in stub.prompts[0]
     assert "E2E-X5ME1 78" in result.data["results"][0]["content"]
-    assert result.data["results"][0]["source_page_text"] == "接近开关 E2E-X5ME1 78"
+    assert "接近开关 E2E-X5ME1 78" in result.data["results"][0]["source_page_text"]
 
 
 def test_adapter_co_query_rescues_thin_member_missed_by_question_pool(

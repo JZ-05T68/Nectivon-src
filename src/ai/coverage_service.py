@@ -23,6 +23,7 @@ from src.ai.page_indexer import (
 )
 from src.config import Settings
 from src.database import Database
+from src.page_image_text import page_ai_text
 
 __all__ = [
     "CoverageSummary",
@@ -99,7 +100,7 @@ class PageEmbeddingCoverageService:
         skipped_empty = 0
         for document in self._database.list_documents():
             for page in self._database.list_pages(document.id):
-                prepared = prepare_page_text(page.searchable_content)
+                prepared = prepare_page_text(page_ai_text(page, self._database.image_readings_dir))
                 if prepared is None:
                     skipped_empty += 1
                     continue

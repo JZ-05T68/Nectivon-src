@@ -134,7 +134,7 @@ def _rewind_current_database_to_v14(
 
 
 def test_schema_version_is_fifteen() -> None:
-    assert SCHEMA_VERSION == 33
+    assert SCHEMA_VERSION == 34
 
 
 def test_fresh_database_reaches_15_with_visual_index_table(tmp_path: Path) -> None:

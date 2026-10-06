@@ -32,8 +32,8 @@ CPython 3.11 x64 build interpreter is required only on the packaging machine, an
 rejects the repository `.venv` as that interpreter.
 
 Before WiX runs, the bundled interpreter must pass the exact `python311._pth`/`sys.path` gate and
-import `streamlit`, PyMuPDF, Pillow, RapidOCR, ONNX Runtime, OpenCV, jieba, Pydantic, and
-pydantic-settings. The native smoke also exercises PyMuPDF, Pillow, OpenCV, and ONNX Runtime.
+import `streamlit`, PyMuPDF, Pillow, OpenCV, jieba, Pydantic, and
+pydantic-settings. The native smoke also exercises PyMuPDF, Pillow, and OpenCV.
 The build also downloads Microsoft's signed x64 Visual C++ Redistributable 14.51.36247.0, requires
 SHA-256 `843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c`, and uses WiX only to
 extract the signed x64 runtime DLLs for app-local deployment beside `python.exe`. This avoids a
@@ -45,8 +45,11 @@ endpoint and home page, render the Nectivon brand under Streamlit's test harness
 its own PID record. A pre-existing 8501 listener blocks the build; it is never stopped or accepted
 as staged evidence.
 
-OCR is complete in the base package (`rapidocr`, `onnxruntime`, OpenCV, Pillow, and their locked
-dependencies). `rapidfuzz` is absent because the frozen product has zero runtime imports.
+The base package does not include RapidOCR or ONNX Runtime. Page recognition uses optional
+vision-model calls with original page images; unavailable network/model access is reported
+without an OCR fallback. Local import, reading, search, notes and backup remain usable without
+an AI service. Historical OCR data fields remain for compatibility with existing materials.
+`rapidfuzz` is absent because the frozen product has zero runtime imports.
 
 The staging inventory is allowlisted from Git-tracked `app.py`, `pages`, `src`, and Streamlit
 configuration plus the installed lifecycle scripts. It rejects `.env`, `.git`, `.venv`, tests,

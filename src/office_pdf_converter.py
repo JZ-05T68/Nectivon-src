@@ -3,7 +3,7 @@
 The converter uses the installed desktop Word/PowerPoint applications through
 their local COM automation interfaces.  It never sends a document over the
 network and never edits the uploaded original.  PDF remains the one page-level
-ingestion format used by the existing rendering, OCR and citation pipeline.
+ingestion format used by the page-image recognition and citation pipeline.
 """
 
 from __future__ import annotations

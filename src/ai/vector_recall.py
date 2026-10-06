@@ -46,6 +46,7 @@ from src.ai.page_indexer import prepare_page_text
 from src.ai.provider import EmbeddingProvider
 from src.ai.retrieval import RankedHit
 from src.models import PageEmbedding
+from src.page_image_text import page_ai_text
 
 __all__ = [
     "CurrentFingerprintSource",
@@ -127,8 +128,8 @@ class CurrentFingerprintSource(Protocol):
 class SearchableContentFingerprintSource:
     """Fingerprint pages with the shared Phase 9 preparation policy.
 
-    Delegates to ``prepare_page_text`` (prototype ``config_version = 1``:
-    page-level ``Page.searchable_content``, explicit 8000-character
+    Delegates to ``prepare_page_text`` (prototype ``config_version = 2``:
+    page-level text without OCR, explicit 8000-character
     truncation, SHA-256 over the exact embeddable text). Keeping recall and
     indexing on the same policy guarantees an embedding written by the
     indexer is recognized as fresh here. This remains a prototype policy —
@@ -144,7 +145,9 @@ class SearchableContentFingerprintSource:
         page = self._pages.get_page(page_id)
         if page is None:
             return None
-        prepared = prepare_page_text(page.searchable_content)
+        prepared = prepare_page_text(
+            page_ai_text(page, getattr(self._pages, "image_readings_dir", None))
+        )
         return prepared.sha256 if prepared is not None else None
 
 

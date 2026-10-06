@@ -6,7 +6,7 @@ model id is supported for every provider, but custom ids do not acquire
 capabilities by name inference; callers must treat those capabilities as
 unknown until a provider response proves otherwise.
 
-Official documentation was last checked on 2026-09-21.  Keep this list small
+Official documentation was last checked on 2026-10-05.  Keep this list small
 and re-check the linked vendor pages before changing a capability:
 
 * DeepSeek: https://api-docs.deepseek.com/quick_start/pricing/
@@ -30,6 +30,7 @@ __all__ = [
     "ADAPTER_CAPABILITIES",
     "MODEL_REGISTRY",
     "ModelCapabilities",
+    "ModelPurpose",
     "ModelPreset",
     "ProviderDefinition",
     "ProviderId",
@@ -57,6 +58,13 @@ class CapabilitySupport(StrEnum):
     SUPPORTED = "supported"
     UNSUPPORTED = "unsupported"
     UNKNOWN = "unknown"
+
+
+class ModelPurpose(StrEnum):
+    """Independent user selections for image reading and text assistance."""
+
+    TEXT = "text"
+    IMAGE = "image"
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +95,7 @@ class ModelPreset:
     capabilities: ModelCapabilities
     context_window_tokens: int | None = None
     recommended: bool = False
+    image_selectable: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,21 +130,18 @@ MODEL_REGISTRY: dict[ProviderId, ProviderDefinition] = {
         provider_id=ProviderId.DEEPSEEK,
         display_name="DeepSeek",
         default_base_url="https://api.deepseek.com",
-        # v0.8.5: the two console-official ids below are offered as presets for
-        # ordinary users.  Their capabilities stay UNKNOWN on purpose until a
-        # real smoke re-verifies them, so the adapter omits vendor-specific
-        # capability fields exactly as it does for custom ids.
+        # Official V4.1 Flash accepts images; V4 Pro remains text-only.
         presets=(
             ModelPreset(
                 model_id="deepseek-flash",
                 display_name="DeepSeek V4.1 Flash",
-                capabilities=ModelCapabilities(),
+                capabilities=ModelCapabilities(vision=_YES),
                 recommended=True,
             ),
             ModelPreset(
                 model_id="deepseek-v4-pro",
                 display_name="DeepSeek V4 Pro",
-                capabilities=ModelCapabilities(),
+                capabilities=ModelCapabilities(vision=_NO),
             ),
         ),
     ),
@@ -156,12 +162,20 @@ MODEL_REGISTRY: dict[ProviderId, ProviderDefinition] = {
                 recommended=True,
             ),
             ModelPreset(
-                # Same-family companion preset for ordinary users.  Capabilities
-                # stay UNKNOWN until a real smoke re-verifies this model, so the
-                # adapter omits vendor-specific capability fields for it.
+                # Official Qwen3.8 multimodal input support, checked 2026-10-05.
                 model_id="qwen3.8-flash",
                 display_name="Qwen3.8 Flash",
-                capabilities=ModelCapabilities(),
+                capabilities=ModelCapabilities(streaming=_YES, reasoning=_YES, vision=_YES),
+            ),
+            ModelPreset(
+                # Official image/structured-output support and original-page
+                # region recognition verified 2026-10-05.
+                model_id="qwen3-vl-plus",
+                display_name="Qwen3 VL Plus",
+                capabilities=ModelCapabilities(reasoning=_YES, vision=_YES),
+                # Page 3 over-split one question's blanks in four-page acceptance.
+                # Retain the known model and compatible historical settings.
+                image_selectable=False,
             ),
         ),
     ),
@@ -192,6 +206,9 @@ MODEL_REGISTRY: dict[ProviderId, ProviderDefinition] = {
                     vision=_YES,
                 ),
                 context_window_tokens=256_000,
+                # Current original-page crop coordinates drift substantially.
+                # Preserve native vision metadata and text configuration.
+                image_selectable=False,
             ),
         ),
     ),
@@ -233,22 +250,19 @@ MODEL_REGISTRY: dict[ProviderId, ProviderDefinition] = {
         # https://docs.bigmodel.cn - chat completions live under
         # https://open.bigmodel.cn/api/paas/v4.
         default_base_url="https://open.bigmodel.cn/api/paas/v4",
-        # Official model codes verified 2026-09-25 on docs.bigmodel.cn /
-        # docs.z.ai: ``glm-5.3`` and ``glm-5.3-flash``.  Their capability
-        # fields stay UNKNOWN on purpose until a real smoke re-verifies them,
-        # so the adapter omits vendor-specific capability fields exactly as
-        # it does for custom ids (same policy as the DeepSeek presets).
+        # https://docs.z.ai/guides/vlm/glm-5.3-flash: Flash accepts images;
+        # GLM-5.3 is text-only. No capability is inferred for custom IDs.
         presets=(
             ModelPreset(
                 model_id="glm-5.3",
                 display_name="GLM-5.3",
-                capabilities=ModelCapabilities(),
+                capabilities=ModelCapabilities(vision=_NO),
                 recommended=True,
             ),
             ModelPreset(
                 model_id="glm-5.3-flash",
-                display_name="GLM-5.3flash",
-                capabilities=ModelCapabilities(),
+                display_name="GLM-5.3 Flash",
+                capabilities=ModelCapabilities(vision=_YES),
             ),
         ),
     ),
@@ -256,26 +270,24 @@ MODEL_REGISTRY: dict[ProviderId, ProviderDefinition] = {
 
 
 # Adapter implementation scope is deliberately separate from vendor-native
-# model metadata.  v0.8.4 remains non-streaming; only Qwen currently exposes
-# the existing vision business path.  Reasoning here means the adapter safely
+# model metadata. Non-streaming vision uses image-bearing vendor requests.
+# Reasoning here means the adapter safely
 # handles the provider's reasoning request/response fields, not that chain of
 # thought is exposed to callers.
 ADAPTER_CAPABILITIES: dict[ProviderId, ModelCapabilities] = {
     ProviderId.DEEPSEEK: ModelCapabilities(
-        streaming=_NO, reasoning=_YES, tool_calling=_NO, vision=_NO
+        streaming=_NO, reasoning=_YES, tool_calling=_NO, vision=_YES
     ),
     ProviderId.QWEN: ModelCapabilities(
         streaming=_NO, reasoning=_YES, tool_calling=_NO, vision=_YES
     ),
     ProviderId.KIMI: ModelCapabilities(
-        streaming=_NO, reasoning=_YES, tool_calling=_NO, vision=_NO
+        streaming=_NO, reasoning=_YES, tool_calling=_NO, vision=_YES
     ),
     ProviderId.HUNYUAN: ModelCapabilities(
         streaming=_NO, reasoning=_YES, tool_calling=_NO, vision=_NO
     ),
-    ProviderId.GLM: ModelCapabilities(
-        streaming=_NO, reasoning=_YES, tool_calling=_NO, vision=_NO
-    ),
+    ProviderId.GLM: ModelCapabilities(streaming=_NO, reasoning=_YES, tool_calling=_NO, vision=_YES),
 }
 
 
@@ -289,15 +301,29 @@ def get_provider_definition(provider_id: ProviderId | str) -> ProviderDefinition
     return MODEL_REGISTRY[normalized]
 
 
-def list_model_presets(provider_id: ProviderId | str) -> tuple[ModelPreset, ...]:
-    """Return the immutable preset tuple for one provider."""
+def list_model_presets(
+    provider_id: ProviderId | str,
+    *,
+    purpose: ModelPurpose = ModelPurpose.TEXT,
+) -> tuple[ModelPreset, ...]:
+    """Offer only implemented, documented image models for image reading."""
 
-    return get_provider_definition(provider_id).presets
+    presets = get_provider_definition(provider_id).presets
+    if purpose is ModelPurpose.IMAGE:
+        return tuple(
+            preset
+            for preset in presets
+            if preset.image_selectable
+            and get_capability_profile(
+                provider_id,
+                preset.model_id,
+            ).effective.vision
+            is CapabilitySupport.SUPPORTED
+        )
+    return presets
 
 
-def get_model_preset(
-    provider_id: ProviderId | str, model_id: str
-) -> ModelPreset | None:
+def get_model_preset(provider_id: ProviderId | str, model_id: str) -> ModelPreset | None:
     """Return a curated preset, or ``None`` for a valid custom-model path."""
 
     normalized_model_id = model_id.strip()
@@ -313,9 +339,7 @@ def is_hunyuan_model_id(model_id: str) -> bool:
     return _HUNYUAN_MODEL_ID.fullmatch(model_id.strip()) is not None
 
 
-def get_capability_profile(
-    provider_id: ProviderId | str, model_id: str
-) -> CapabilityProfile:
+def get_capability_profile(provider_id: ProviderId | str, model_id: str) -> CapabilityProfile:
     """Return native, adapter and conservative effective capabilities."""
 
     normalized_provider = ProviderId(provider_id)
@@ -334,9 +358,7 @@ def get_capability_profile(
     )
 
 
-def _intersect(
-    native: CapabilitySupport, adapter: CapabilitySupport
-) -> CapabilitySupport:
+def _intersect(native: CapabilitySupport, adapter: CapabilitySupport) -> CapabilitySupport:
     if CapabilitySupport.UNSUPPORTED in {native, adapter}:
         return CapabilitySupport.UNSUPPORTED
     if native is CapabilitySupport.SUPPORTED and adapter is CapabilitySupport.SUPPORTED:

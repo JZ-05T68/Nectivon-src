@@ -40,10 +40,12 @@ from src.runtime import (
     application_ai_vision_provider,
     application_database,
     application_knowledge_memory_service,
+    application_page_image_reader,
     application_settings,
 )
 from src.source_metadata import InvalidSourceId, parse_source_id
 from src.text_utils import ui_plaintext_digest
+from src.time_display import format_beijing_time, to_beijing_time
 from src.workspace_ui import render_workspace
 
 LOGGER = logging.getLogger(__name__)
@@ -293,6 +295,7 @@ def _resolve_client(mode: AgentMode) -> Any:
         database=application_database(),
         provider=provider,
         readings=AgentReadingStore(settings.agent_readings_dir),
+        page_image_reader=application_page_image_reader(),
         model=provider.default_model if provider is not None else "",
         vision_provider=application_ai_vision_provider(),
         vision_model=provider.default_model if provider is not None else None,
@@ -549,7 +552,7 @@ def _render_conversation_bar() -> None:
             for item in conversations:
                 row = st.columns([5, 1])
                 title_text = demo_ui.escape_text(item.title or "（未命名对话）")
-                when_text = demo_ui.escape_text(item.updated_at[:16].replace("T", " "))
+                when_text = demo_ui.escape_text(format_beijing_time(item.updated_at))
                 row[0].markdown(
                     "<span style='font-size:12.5px'>"
                     f"**{title_text}** · {item.message_count} 条 · {when_text}</span>",
@@ -803,7 +806,7 @@ def _render_save_memory_button() -> None:
 def _saved_date(value: Any) -> str:
     """Return a short local date for duplicate-save messages."""
 
-    local_value = value.astimezone() if getattr(value, "tzinfo", None) else value
+    local_value = to_beijing_time(value)
     return f"{local_value.month} 月 {local_value.day} 日"
 
 

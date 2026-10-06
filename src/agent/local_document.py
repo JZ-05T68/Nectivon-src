@@ -42,11 +42,12 @@ class LocalDocumentAgent:
         vision_provider: object | None = None,
         vision_model: str | None = None,
         pages_dir: Path | None = None,
+        page_image_reader: object | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("Agent 模型不能为空")
         self._model = model.strip()
-        self._reader = AgentDocumentReader(
+        self._reader = page_image_reader or AgentDocumentReader(
             database=database,
             provider=provider,
             store=readings,

@@ -47,6 +47,7 @@ def _patch_streamlit_basics(
     progress: _Progress,
     error_messages: list[str],
 ) -> dict[str, list[str]]:
+    monkeypatch.setattr(runtime, "application_page_image_reader", lambda: None)
     captured: dict[str, list[str]] = {"markdown": [], "subheader": [], "info": []}
 
     def button(label: str, **kwargs: Any) -> bool:
@@ -137,6 +138,7 @@ def test_multi_file_import_reads_each_and_reports_honestly(
         progress=progress,
         error_messages=error_messages,
     )
+    monkeypatch.setattr(runtime, "application_page_image_reader", lambda: None)
     monkeypatch.setattr(runtime, "application_document_service", lambda: Service())
     monkeypatch.setattr(
         runtime,
@@ -165,7 +167,7 @@ def test_multi_file_import_reads_each_and_reports_honestly(
         "隔离资料.docx",
         "另一份.docx",
     ]
-    assert ocr_pages == [1, 2, 3, 1, 2, 3]
+    assert ocr_pages == []
     assert read_documents == [7, 7]
     assert progress.labels[-1] == "上传队列处理完成。"
     visible_text = "\n".join(progress.labels + error_messages)
@@ -247,6 +249,7 @@ def test_duplicate_upload_gets_explicit_feedback(
     monkeypatch.setattr(st, "columns", lambda spec: [Column() for _ in range(2)])
     monkeypatch.setattr(st, "progress", lambda *args, **kwargs: progress)
     monkeypatch.setattr(st, "error", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runtime, "application_page_image_reader", lambda: None)
     monkeypatch.setattr(runtime, "application_document_service", lambda: Service())
     monkeypatch.setattr(
         runtime,
@@ -356,6 +359,7 @@ def test_reading_failure_reports_import_and_reading_separately(
         lambda *args, **kwargs: markdown_messages.append(str(args[0]) if args else ""),
     )
     monkeypatch.setattr(st, "error", lambda message, *a, **k: error_messages.append(str(message)))
+    monkeypatch.setattr(runtime, "application_page_image_reader", lambda: None)
     monkeypatch.setattr(runtime, "application_document_service", lambda: Service())
     monkeypatch.setattr(
         runtime,

@@ -22,7 +22,7 @@ import json
 import logging
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
@@ -123,6 +123,10 @@ class PageReading:
     keywords: tuple[str, ...]
     key_facts: tuple[str, ...]
     read_at: str
+    transcript: str = ""
+    source_image_sha256: str = ""
+    manual_text_sha256: str = ""
+    blocks: list[dict] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -633,8 +637,7 @@ class AgentDocumentReader:
 def page_agent_source(page: Page) -> tuple[str, str]:
     """Return source text plus separately labelled user corrections.
 
-    The original text is always retained verbatim.  OCR is preferred when it
-    exists; otherwise the immutable PDF text layer is used.  A user's manual
+    The native PDF text layer is retained verbatim. A user's manual
     page edit is appended under an explicit label so it can correct handwriting
     recognition without masquerading as original PDF text.  Generated summaries
     are never included.
@@ -642,7 +645,7 @@ def page_agent_source(page: Page) -> tuple[str, str]:
 
     return build_agent_page_text(
         extracted_text=page.extracted_text,
-        ocr_text=page.ocr_text,
+        ocr_text="",
         manual_text=page.markdown_content,
     )
 
@@ -654,20 +657,19 @@ def page_reread_availability(page: Page) -> tuple[bool, str]:
     switched, previous result unsatisfying, visual parsing updated) — a
     manual correction is therefore NOT a precondition. The only hard
     precondition (also enforced by :meth:`AgentDocumentReader.read_page`)
-    is that the page carries any readable text at all. Returns
+    is an original page image or legacy readable content. Returns
     ``(available, unavailable_reason)`` so a disabled button always shows
     why instead of failing silently.
     """
 
-    if (
+    if Path(page.image_path).is_file() or (
         page.markdown_content.strip()
-        or page.ocr_text.strip()
         or page.extracted_text.strip()
     ):
         return True, ""
     return False, (
-        "这一页还没有任何可读文字（OCR / 提取文本 / 人工修正均为空），"
-        "请先完成该页文字识别，之后才能让 Agent 重读。"
+        "这一页的原始图片不可用，且没有可供查看的历史文字，"
+        "请先重新生成该页图片，之后才能直接读图。"
     )
 
 
@@ -769,6 +771,10 @@ def _page_reading_from_payload(payload: Mapping[str, object]) -> PageReading:
         keywords=keywords,
         key_facts=key_facts,
         read_at=str(payload["read_at"]),
+        transcript=str(payload.get("transcript", "")),
+        source_image_sha256=str(payload.get("source_image_sha256", "")),
+        manual_text_sha256=str(payload.get("manual_text_sha256", "")),
+        blocks=list(payload.get("blocks", [])),
     )
     if reading.format_version != READING_FORMAT_VERSION:
         raise ValueError("reading version")

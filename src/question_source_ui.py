@@ -15,7 +15,7 @@ from src.local_training_source_policy import (
     is_local_training_result_payload,
     is_locatable_local_training_question,
 )
-from src.math_display import render_math_markdown
+from src.question_content_ui import render_training_question
 from src.question_source_models import (
     QuestionRetrievalResult,
     VerifiedQuestion,
@@ -77,7 +77,7 @@ def _render_question_card(idx: int, q: VerifiedQuestion) -> None:
                 f"{extra_badge}"
             )
             # 题目题干渲染
-            render_math_markdown(q.question_text)
+            render_training_question(q)
 
             # 展开查看防伪指纹与原题核验凭据
             with st.expander("🔍 查看真实来源核验详情与数字指纹", expanded=False):

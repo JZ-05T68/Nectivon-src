@@ -65,6 +65,18 @@ def test_existing_latex_is_not_double_wrapped() -> None:
     assert rendered == r"已有 $\frac{3}{4}$，另有 $\frac{5}{6}$。"
 
 
+def test_doubled_ai_command_escapes_render_as_commands_without_changing_plain_text() -> None:
+    source = r"公式 $2\\times3+\\dfrac{1}{2}+\\sin\\alpha$，目录 C:\\times。"
+    normalized = math_display.normalize_math_delimiters(source)
+    assert normalized == r"公式 $2\times3+\dfrac{1}{2}+\sin\alpha$，目录 C:\\times。"
+    assert math_display.normalize_math_delimiters(normalized) == normalized
+
+
+def test_matrix_rows_and_row_followed_by_command_keep_their_backslashes() -> None:
+    source = r"$\begin{matrix}1 & 2\\\frac{1}{2} & 4\\5 & 6\end{matrix}$"
+    assert math_display.normalize_math_delimiters(source) == source
+
+
 def test_line_start_negative_numbers_do_not_become_markdown_lists() -> None:
     rendered = math_display.normalize_plain_school_math(
         "行程：+8，-6，+4，\n- 8, - 4, +3, +3."
@@ -171,3 +183,105 @@ def test_adjacent_absolute_value_steps_do_not_merge_or_leak_placeholders() -> No
     assert r"$|a-c|=c-a$" in rendered
     assert r"$|b-c|=c-b$" in rendered
     assert "\ue000" not in rendered
+
+
+def test_unicode_power_and_roots_are_typeset_without_changing_source() -> None:
+    source = "已知(a+1)²+|b+5|=b+5，m²=9，求√(a+1)、√2、π。"
+    rendered = math_display.normalize_question_math(source)
+    assert r"$(a+1)^{2}+|b+5|=b+5$" in rendered
+    assert r"$m^{2}$" in rendered
+    assert r"$\sqrt{a+1}$" in rendered
+    assert r"$\sqrt{2}$" in rendered
+    assert r"$\pi$" in rendered
+    assert "²" in source
+
+
+@pytest.mark.parametrize("separator", [".", "．", "、", "：", ")"])
+def test_long_choice_options_have_individual_paragraphs(separator: str) -> None:
+    options = [f"{label}{separator} " + (f"选项{label}的完整说明。" * 15) for label in "ABCD"]
+    source = "请选择正确说法（）。" + " ".join(options)
+    rendered = math_display.format_multiple_choice_lines(source)
+    assert rendered.split("\n\n") == ["请选择正确说法（）。", *options]
+
+
+def test_option_like_labels_inside_existing_math_are_not_split() -> None:
+    source = r"说明 $\text{A. B. C. D.}$。 A. 甲 B. 乙 C. 丙 D. 丁"
+    rendered = math_display.format_multiple_choice_lines(source)
+    assert rendered.startswith(r"说明 $\text{A. B. C. D.}$。" + "\n\nA. 甲")
+
+
+def test_adjacent_pi_letter_spans_keep_valid_latex_commands() -> None:
+    rendered = math_display.normalize_question_math("周长为2πr。")
+    assert r"\pi r" in rendered
+    assert r"\pir" not in rendered
+
+
+def test_abbreviations_within_long_english_choices_do_not_break_option_layout() -> None:
+    source = "Choose a sentence. A. This refers to U.S.A. B. Second sentence. C. Third. D. Fourth."
+    rendered = math_display.format_multiple_choice_lines(source)
+    assert "\n\nA. This refers to U.S.A.\n\nB. Second sentence." in rendered
+
+
+@pytest.mark.parametrize(("source", "expected"), [
+    ("x^2", "$x^{2}$"), ("(x+1)^3", "$(x+1)^{3}$"),
+    ("a^n", "$a^{n}$"), ("x^{n+1}", "$x^{n+1}$"),
+    ("(x+1)^(n+1)", "$(x+1)^{n+1}$"), ("10^-3", "$10^{-3}$"),
+])
+def test_typed_caret_exponent_renders_immediately(source: str, expected: str) -> None:
+    assert math_display.normalize_question_math(source) == expected
+
+
+def test_advanced_latex_from_first_recognition_remains_complete() -> None:
+    source = (
+        r"计算 $\sin\alpha+\cos\theta$、$\int_{0}^{1}x^{2}\,\mathrm{d}x$、"
+        r"$\lim_{n\to\infty}\dfrac{1}{n}$、$\sum_{k=1}^{n}k$、"
+        r"$\begin{pmatrix}a&b\\c&d\end{pmatrix}$。"
+    )
+    assert math_display.normalize_question_math(source) == source
+
+
+def test_plain_functions_greek_and_integral_use_one_math_span() -> None:
+    result = math_display.normalize_question_math("求sinα+cosθ以及∫_0^1 x^2 dx。")
+    assert r"$\sin \alpha +\cos \theta$" in result
+    assert r"$\int _{0}^{1} x^{2} dx$" in result
+
+
+def test_standard_latex_delimiters_are_accepted_by_katex() -> None:
+    result = math_display.normalize_question_math(
+        r"计算 \(\sin\alpha+x^{2}\)，以及 \[\int_0^1 x^2\,dx\]。"
+    )
+    assert r"$\sin\alpha+x^{2}$" in result
+    assert r"$$\int_{0}^{1} x^{2}\,dx$$" in result
+    assert r"\(" not in result and r"\[" not in result
+def test_explicit_grouped_math_indices_are_not_split_into_baseline_text():
+    from src.math_display import normalize_question_math
+
+    rendered = normalize_question_math(r'$\sum_(k=1)^n a_2023+\alpha_(i+1)$')
+    assert r'\sum_{k=1}^{n}' in rendered
+    assert 'a_{2023}' in rendered
+    assert r'\alpha_{i+1}' in rendered
+
+
+def test_adjacent_inline_and_display_equations_remain_separate_and_idempotent():
+    source = r"先看 $x=1$$y=2$，第2步$$\alpha^{2}+\beta^{2}=1$$结束。"
+    display = math_display.normalize_question_math(source)
+    assert "$x=1$ $y=2$" in display
+    assert "\n\n" + r"$$\alpha^{2}+\beta^{2}=1$$" + "\n\n" in display
+    assert math_display.normalize_question_math(display) == display
+
+
+def test_display_layout_escapes_do_not_show_literal_newline_commands():
+    source = r"结果：$$\n\nu+x^2\n$$。"
+    display = math_display.normalize_question_math(source)
+    assert r"$$\nu+x^{2}$$" in display
+    assert r"\n\nu" in source
+    assert math_display.normalize_question_math(display) == display
+
+
+@pytest.mark.parametrize("source", ["(a+1)/(b-2)", "$(a+1)/(b-2)$"])
+def test_typed_fraction_retains_both_operand_groups_after_save(source: str):
+    assert math_display.normalize_question_math(source) == r"$\dfrac{a+1}{b-2}$"
+
+
+def test_typed_fraction_with_a_grouped_denominator_remains_equivalent():
+    assert math_display.normalize_question_math("a/(b+1)") == r"$\dfrac{a}{b+1}$"

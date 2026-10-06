@@ -6,8 +6,8 @@ Official documentation verified 2026-09-20:
 * Chat and thinking fields: https://api-docs.deepseek.com/api/create-chat-completion/
 * Status semantics: https://api-docs.deepseek.com/quick_start/error_codes/
 
-The adapter is completion-only in this phase.  It does not expose native tool
-calling, vision, streaming, or reasoning content to Agent/RAG contracts.
+The adapter supports text and image completion (Flash only for images).
+It never exposes hidden reasoning content, native tools or streaming.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from typing import Any, Final
 
 from src.ai.completion_stage import CompletionStage, current_completion_stage
 from src.ai.credential_store import SecretCredential
+from src.ai.image_message import image_user_content
 from src.ai.model_registry import CapabilitySupport, ProviderId, get_model_preset
 from src.ai.openai_compatible import (
     OpenAICompatibleClient,
@@ -83,6 +84,7 @@ class DeepSeekAdapter:
         else:
             self._credential = SecretCredential(api_key) if api_key.strip() else None
         self._model = normalized_model
+        self._timeout_seconds = timeout_seconds
         self._client = OpenAICompatibleClient(
             base_url=base_url,
             timeout_seconds=timeout_seconds,
@@ -103,22 +105,40 @@ class DeepSeekAdapter:
     ) -> CompletionResult:
         """Return only final answer content; reasoning content remains internal."""
 
+        return self._complete_content(
+            prompt,
+            model=model,
+            max_completion_tokens=max_completion_tokens,
+        )
+
+    def _complete_content(
+        self,
+        content: str | list[dict[str, Any]],
+        *,
+        model: str | None,
+        max_completion_tokens: int | None,
+        json_output: bool = False,
+    ) -> CompletionResult:
+        """Share transport, token policy and final-content parsing across inputs."""
+
         credential = self._require_credential()
         chosen_model = (model or self._model).strip()
         stage = current_completion_stage()
         payload = build_chat_completion_payload(
             model=chosen_model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": content}],
         )
         thinking = self._thinking_parameter(chosen_model, stage=stage)
+        if isinstance(content, list):
+            # Transcription must spend the requested budget on visible JSON,
+            # not a hidden solution/reasoning stream (official thinking API).
+            thinking = {"type": "disabled"}
         if max_completion_tokens is not None:
             if max_completion_tokens <= 0:
                 raise ValueError("max_completion_tokens 必须为正数")
             # DeepSeek's current Chat Completions schema names this field
             # ``max_tokens``; this translation is vendor-specific.
-            payload["max_tokens"] = self._completion_token_limit(
-                max_completion_tokens, stage=stage
-            )
+            payload["max_tokens"] = self._completion_token_limit(max_completion_tokens, stage=stage)
         if thinking is not None:
             payload["thinking"] = thinking
         self._log_request_policy(
@@ -127,6 +147,8 @@ class DeepSeekAdapter:
             max_tokens=payload.get("max_tokens"),
             thinking_type=thinking.get("type") if thinking else None,
         )
+        if json_output:
+            payload["response_format"] = {"type": "json_object"}
         try:
             response, retry_count = self._client.post(
                 "/chat/completions",
@@ -134,11 +156,12 @@ class DeepSeekAdapter:
                 credential=credential,
                 provider_id=ProviderId.DEEPSEEK.value,
                 error_mapper=_deepseek_error_detail,
+                timeout_seconds=max(self._timeout_seconds, 120.0)
+                if isinstance(content, list)
+                else None,
             )
             self._validate_reasoning_content(response)
-            result = parse_chat_completion(
-                response, chosen_model, retry_count=retry_count
-            )
+            result = parse_chat_completion(response, chosen_model, retry_count=retry_count)
             self._log_response_outcome(stage=stage, result=result)
             return result
         except ProviderCallError as exc:
@@ -162,11 +185,20 @@ class DeepSeekAdapter:
         *,
         model: str | None = None,
         max_completion_tokens: int | None = None,
+        json_output: bool = False,
     ) -> CompletionResult:
-        """Fail explicitly: no DeepSeek vision business flow is added in this phase."""
+        """Read supplied pixels using a documented visual model in one request."""
 
-        del prompt, image_png_base64, model, max_completion_tokens
-        raise self._unsupported_capability()
+        chosen_model = (model or self._model).strip()
+        preset = get_model_preset(ProviderId.DEEPSEEK, chosen_model)
+        if preset is None or preset.capabilities.vision is not CapabilitySupport.SUPPORTED:
+            raise self._unsupported_capability()
+        return self._complete_content(
+            image_user_content(prompt, image_png_base64),
+            model=chosen_model,
+            max_completion_tokens=max_completion_tokens,
+            json_output=json_output,
+        )
 
     def embed(
         self,
@@ -217,9 +249,7 @@ class DeepSeekAdapter:
         return None
 
     @staticmethod
-    def _completion_token_limit(
-        requested: int, *, stage: CompletionStage | None
-    ) -> int:
+    def _completion_token_limit(requested: int, *, stage: CompletionStage | None) -> int:
         """Raise the Agent Decision output floor to 256 (final content only).
 
         The floor applies only inside the Decision stage and never shrinks a
@@ -246,8 +276,7 @@ class DeepSeekAdapter:
         """
 
         LOGGER.info(
-            "AI 请求策略：provider=deepseek stage=%s model=%s max_tokens=%s "
-            "thinking=%s",
+            "AI 请求策略：provider=deepseek stage=%s model=%s max_tokens=%s thinking=%s",
             stage.value if stage is not None else "none",
             model,
             max_tokens,
@@ -255,9 +284,7 @@ class DeepSeekAdapter:
         )
 
     @staticmethod
-    def _log_response_outcome(
-        *, stage: CompletionStage | None, result: CompletionResult
-    ) -> None:
+    def _log_response_outcome(*, stage: CompletionStage | None, result: CompletionResult) -> None:
         """Emit a redaction-safe response-outcome line for the audit trail."""
 
         usage = result.usage

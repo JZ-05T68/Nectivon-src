@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from src.time_display import format_beijing_time
+
 
 @dataclass
 class QuestionEvidence:
@@ -202,7 +204,7 @@ class LearningReport:
             f"- **所属学科**：{self.subject}",
             f"- **训练目标**：{target_title}",
             f"- **教育类型**：{self.education_type}",
-            f"- **报告生成时间**：{self.generated_at[:19].replace('T', ' ')} (UTC)",
+            f"- **报告生成时间**：{format_beijing_time(self.generated_at)} (GMT+8)",
             f"- **统计时间范围**：{self.time_range}",
         ]
 

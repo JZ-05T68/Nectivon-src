@@ -11,6 +11,7 @@ import streamlit as st
 
 from src.ai_ledger_service import AILedgerError, AILedgerService
 from src.models import AICallLedgerEntry, AICallLedgerQuery
+from src.time_display import format_beijing_time
 
 STATUS_LABELS = {
     "success": "成功",
@@ -37,7 +38,7 @@ def _none_dash(value: int | None) -> str:
 def _render_entry(entry: AICallLedgerEntry) -> None:
     with st.container(border=True):
         head = st.columns([2.4, 1.2, 1.2, 1, 1.2, 1.2])
-        head[0].caption(f"时间：{entry.created_at}")
+        head[0].caption(f"时间：{format_beijing_time(entry.created_at, fmt='%Y-%m-%d %H:%M:%S')}")
         head[1].caption(f"功能：{entry.source_feature}")
         head[2].caption(
             f"类型：{CAPABILITY_LABELS.get(entry.capability, entry.capability)}"

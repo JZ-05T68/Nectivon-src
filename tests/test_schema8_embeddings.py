@@ -162,7 +162,7 @@ def test_migrate_v7_to_v8_preserves_data_and_adds_table(tmp_path: Path) -> None:
 
 def test_fresh_database_has_v8_structure(tmp_path: Path) -> None:
     database = Database(tmp_path / "knowledge.db")
-    assert database.SCHEMA_VERSION == 33
+    assert database.SCHEMA_VERSION == 34
     with sqlite3.connect(database.database_path) as connection:
         assert _table_columns(connection, "page_embeddings") == EXPECTED_COLUMNS
         versions = [

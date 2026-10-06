@@ -16,7 +16,6 @@ from streamlit.testing.v1 import AppTest
 import src.runtime as runtime
 from src.database import Database
 from src.document_service import DocumentService, PageOcrOutcome
-from src.models import PageStatus
 from src.ocr_engine import OcrExecutionError
 from src.ocr_ui import page_ocr_feedback, page_ocr_unavailable_feedback
 
@@ -129,110 +128,41 @@ def test_unavailable_maps_to_warning() -> None:
 # Widget behavior --------------------------------------------------------------
 
 
-def test_page_with_ocr_text_keeps_draft_hidden_and_offers_rerun(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("historical_ocr", ["", "历史 OCR 文字"])
+def test_review_has_only_direct_image_recognition_controls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, historical_ocr: str,
 ) -> None:
     engine = _FakeOcrEngine()
     app, database, page_id = _build_review_app(
-        tmp_path, monkeypatch, ocr_engine=engine, ocr_text="本地识别初稿文字"
+        tmp_path, monkeypatch, ocr_engine=engine, ocr_text=historical_ocr,
     )
-
     assert not app.exception
-    assert not any(item.key == f"review_ocr_draft_{page_id}" for item in app.text_area)
-    assert any("检索和拆题仍在使用" in item.value for item in app.caption)
-    labels = {button.label for button in app.button}
-    assert "执行本地 OCR" not in labels
-    assert not any("批量" in label and "OCR" in label for label in labels)
-    assert "全部页面 OCR" not in labels
-    assert "重新识别" in labels
+    labels = [button.label for button in app.button]
+    assert "重新读图并切分本页" in labels
+    assert "整份资料重新读图并切分" in labels
+    assert "重新识别" not in labels
+    assert "识别这一页的文字" not in labels
     assert engine.calls == []
+    assert database.get_page(page_id).ocr_text == historical_ocr
 
 
-def test_page_without_ocr_text_runs_single_page_ocr(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_image_recognition_failure_keeps_review_and_originals_usable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    engine = _FakeOcrEngine(result="识别出的泵体参数")
-    app, database, page_id = _build_review_app(tmp_path, monkeypatch, ocr_engine=engine)
+    app, database, page_id = _build_review_app(tmp_path, monkeypatch)
+    page = database.get_page(page_id)
+    original = page.image_path.read_bytes()
+    from types import SimpleNamespace
 
+    def fail(_page_id):
+        raise RuntimeError("模拟读图失败")
+
+    monkeypatch.setattr(runtime, "application_page_image_reader", lambda: SimpleNamespace(
+        provider=SimpleNamespace(provider_id="qwen", default_model="qwen3.8-max"),
+        read_page=fail,
+    ))
+    next(b for b in app.button if b.key == f"review_read_image_{page_id}").click().run()
     assert not app.exception
-    button = next(b for b in app.button if b.label == "识别这一页的文字")
-    assert button.key == f"review_run_ocr_{page_id}"
-    assert sum(1 for b in app.button if "识别" in b.label) == 1
-
-    button.click().run()
-
-    assert not app.exception
-    assert any("本页文字识别完成。" == item.value for item in app.success)
-    assert engine.calls and len(engine.calls) == 1
-    persisted = database.get_page(page_id)
-    assert persisted is not None
-    assert persisted.ocr_text == "识别出的泵体参数"
-    assert persisted.processing_status == "ocr_completed"
-    assert persisted.markdown_content == ""
-    assert persisted.status is PageStatus.PENDING
-    assert not any(item.key == f"review_ocr_draft_{page_id}" for item in app.text_area)
-    assert any(button.label == "重新识别" for button in app.button)
-
-
-def test_not_eligible_page_gets_info_and_engine_is_not_called(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    engine = _FakeOcrEngine()
-    app, database, page_id = _build_review_app(
-        tmp_path,
-        monkeypatch,
-        ocr_engine=engine,
-        extracted_text="工程正文内容" * 10,
-    )
-
-    next(b for b in app.button if b.label == "识别这一页的文字").click().run()
-
-    assert not app.exception
-    assert any("当前页面不需要重新识别" in item.value for item in app.info)
-    assert engine.calls == []
-    persisted = database.get_page(page_id)
-    assert persisted is not None
-    assert persisted.ocr_text == ""
-    assert persisted.status is PageStatus.PENDING
-
-
-def test_unavailable_engine_gets_warning_and_page_stays_usable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    app, database, page_id = _build_review_app(tmp_path, monkeypatch, ocr_engine=None)
-
-    next(b for b in app.button if b.label == "识别这一页的文字").click().run()
-
-    assert not app.exception
-    assert any("本机文字识别引擎不可用" in item.value for item in app.warning)
-    assert any(item.label == "保存草稿" for item in app.button)
-    persisted = database.get_page(page_id)
-    assert persisted is not None
-    assert persisted.ocr_text == ""
-    assert persisted.processing_error == ""
-
-
-def test_failed_ocr_gets_error_and_never_shows_absolute_paths(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    secret_dir = tmp_path / "secret"
-    engine = _FailingOcrEngine(f"path={secret_dir}/page.png")
-    app, database, page_id = _build_review_app(tmp_path, monkeypatch, ocr_engine=engine)
-
-    next(b for b in app.button if b.label == "识别这一页的文字").click().run()
-
-    assert not app.exception
-    assert any("本页文字识别执行失败" in item.value for item in app.error)
-    persisted = database.get_page(page_id)
-    assert persisted is not None
-    assert persisted.processing_error.startswith("OCR：")
-    assert "[本地路径]" in persisted.processing_error
-    assert persisted.markdown_content == ""
-    assert persisted.status is PageStatus.PENDING
-    visible_text = "\n".join(
-        item.value
-        for group in (app.error, app.warning, app.info, app.success, app.markdown)
-        for item in group
-    )
-    assert str(secret_dir) not in visible_text
-    assert "secret" not in visible_text
+    assert any("模拟读图失败" in item.value for item in app.error)
+    assert database.get_page(page_id).image_path.read_bytes() == original
+    assert database.get_page(page_id).ocr_text == ""

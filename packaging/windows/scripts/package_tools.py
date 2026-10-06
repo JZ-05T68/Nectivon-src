@@ -216,8 +216,6 @@ def smoke_bundled_python(root: Path) -> None:
         "streamlit",
         "fitz",
         "PIL",
-        "rapidocr",
-        "onnxruntime",
         "cv2",
         "jieba",
         "pydantic",
@@ -246,9 +244,6 @@ def smoke_bundled_python(root: Path) -> None:
     cv2 = imported["cv2"]
     if not cv2.getBuildInformation():
         raise RuntimeError("OpenCV native build information unavailable")
-    providers = imported["onnxruntime"].get_available_providers()
-    if not providers:
-        raise RuntimeError("ONNX Runtime exposed no execution provider")
 
     native_files = tuple(
         path
@@ -262,7 +257,6 @@ def smoke_bundled_python(root: Path) -> None:
     print(f"BUNDLED_PYTHON_EXECUTABLE = {sys.executable}")
     print("BUNDLED_PYTHON_SYS_PATH = " + json.dumps(sys.path, ensure_ascii=False))
     print("BUNDLED_IMPORTS = " + ",".join(modules))
-    print("ONNXRUNTIME_PROVIDERS = " + ",".join(providers))
     print(f"NATIVE_EXTENSION_OR_DLL_COUNT = {len(native_files)}")
     print("NATIVE_RUNTIME_DEPENDENCY_AUDIT = PASS")
     print("APP_LOCAL_MSVC_RUNTIME = " + ",".join(app_local_runtime))

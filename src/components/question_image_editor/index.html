@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{margin:0;font:14px "Microsoft YaHei",sans-serif;color:#243d35;background:transparent}
+.tools{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:9px}
+button,select,input{font:inherit}button,select{padding:7px 9px;border:1px solid #bed0c8;border-radius:5px;background:#fff;color:inherit}
+button{cursor:pointer}button:disabled{opacity:.4;cursor:default}button.active,#save{background:#147e67;color:white}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #147e67;outline-offset:2px}
+[hidden]{display:none!important}
+.swatch{display:inline-block;width:20px;height:20px;vertical-align:middle;border:1px solid #7f938a;border-radius:3px;margin-right:5px;background:#000}
+#colors{padding:12px;margin:0 0 12px;border:1px solid #bed0c8;border-radius:6px;background:#f2f7f4}
+.presets,.channels{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.presets{margin-bottom:10px}.presets button{width:30px;height:30px;padding:0;border:1px solid #83968c}
+.channels{margin:10px 0}.channels label{display:flex;align-items:center;gap:5px}.channels input{width:95px}.channels output{min-width:25px}
+#hex{width:90px}#hex[aria-invalid=true]{border-color:#ba3838}
+input[type=text],input[type=number]{padding:7px 9px;border:1px solid #bed0c8;border-radius:5px;background:#fff;color:inherit}
+.hint{color:#52665d;margin:0 0 8px;line-height:1.6}
+.panels{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+.panels>div{min-width:0}
+.view{overflow:auto;height:460px;border:1px solid #bed0c8;background:#e9efeb}
+canvas,img{display:block;max-width:none;touch-action:none}canvas{cursor:crosshair}
+.label{margin:4px 0;font-weight:600}.status{min-height:22px;margin-top:6px;color:#52665d}
+</style>
+</head>
+<body>
+<div class="tools">
+<select id="mode" aria-label="绘图工具"><option value="draw">画笔</option><option value="line">直线</option><option value="rectangle">矩形／方框</option><option value="square">正方形</option><option value="circle">圆</option><option value="ellipse">椭圆</option><option value="triangle">三角形</option><option value="text">文字标注</option><option value="erase">橡皮擦</option><option value="restore">恢复局部原图</option></select>
+<label>粗细 <input id="width" type="range" min="1" max="60" value="6" aria-label="画笔粗细" style="width:85px"></label>
+<button id="colorToggle" aria-label="选择画笔颜色" aria-expanded="false" aria-controls="colors"><span id="swatch" class="swatch"></span><span id="colorValue">#000000</span></button>
+<button id="sample" aria-pressed="false" disabled>吸管取色</button>
+<label><input id="fill" type="checkbox" disabled> 填充图形</label>
+<input id="text" type="text" placeholder="输入标注文字" aria-label="标注文字" style="width:110px" maxlength="100">
+<label>字号 <input id="fontSize" type="number" value="24" min="8" max="96" aria-label="标注字号" style="width:48px"></label>
+<button id="minus" aria-label="缩小">−</button><span id="zoom"></span><button id="plus" aria-label="放大">＋</button>
+<button id="undo" disabled>撤销</button><button id="redo" disabled>重做</button><button id="compare">按住对照原图</button>
+<button id="save" disabled>保存绘图修订</button>
+</div>
+<div id="colors" role="group" aria-label="画笔调色板" hidden>
+<div id="presets" class="presets" aria-label="常用颜色"></div>
+<label>颜色代码 <input id="hex" type="text" value="#000000" maxlength="7" spellcheck="false" aria-label="颜色代码" aria-invalid="false"></label>
+<div class="channels">
+<label>红 R <input id="red" type="range" min="0" max="255" value="0" aria-label="红色通道"><output id="redValue">0</output></label>
+<label>绿 G <input id="green" type="range" min="0" max="255" value="0" aria-label="绿色通道"><output id="greenValue">0</output></label>
+<label>蓝 B <input id="blue" type="range" min="0" max="255" value="0" aria-label="蓝色通道"><output id="blueValue">0</output></label>
+</div>
+<button id="colorDone">完成选色</button>
+</div>
+<p class="hint">吸管可点击左右任一图片提取颜色；直线和几何图形按住拖动绘制，勾选“填充图形”可绘制实心图形。</p>
+<div class="panels"><div><div class="label">原始扫描图</div><div class="view" id="leftView"><img id="original" alt="原始扫描图"></div></div>
+<div><div class="label">题目显示图（可修改）</div><div class="view" id="rightView"><canvas id="canvas" aria-label="题目图形修改画布"></canvas></div></div></div>
+<div id="status" class="status" role="status">等待图片…</div>
+<script src="drawing_tools.js"></script>
+<script src="editor.js"></script>
+</body></html>

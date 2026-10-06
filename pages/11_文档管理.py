@@ -13,6 +13,7 @@ from src.runtime import (
     application_database,
     application_document_deletion_service,
 )
+from src.time_display import format_beijing_time
 from src.workspace_ui import render_workspace
 
 LOGGER = logging.getLogger(__name__)
@@ -85,7 +86,7 @@ st.dataframe(
             "状态": document.status_label,
             "AI 阅读": _reading_labels.get(document.id, "AI 未阅读"),
             "导入时间": (
-                f"{(document.imported_at or document.created_at).astimezone():%Y-%m-%d %H:%M}"
+                f"{format_beijing_time(document.imported_at or document.created_at)}"
             ),
         }
         for document in documents

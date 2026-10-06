@@ -10,12 +10,12 @@ Provides:
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 
 import streamlit as st
 
 from src.learning_report_models import LearningReport
 from src.learning_report_service import LearningReportService
+from src.time_display import beijing_now, format_beijing_time
 
 LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def render_learning_report_view(
         return
 
     st.markdown(f"### 📋 针对训练学习报告 · {report.subject} · {report.target or '学科综合'}")
-    gen_time_str = report.generated_at[:19].replace('T', ' ')
+    gen_time_str = format_beijing_time(report.generated_at)
     st.caption(
         f"教育类型：**{report.education_type}** ｜ 生成时间：{gen_time_str} ｜ "
         f"时间跨度：{report.time_range}"
@@ -41,7 +41,7 @@ def render_learning_report_view(
     with col_dl:
         md_text = report.to_markdown()
         file_name = (
-            f"nectivon_report_{report.subject}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.md"
+            f"nectivon_report_{report.subject}_{beijing_now().strftime('%Y%m%d_%H%M%S')}.md"
         )
         st.download_button(
             label="📥 导出 Markdown 报告",
@@ -136,7 +136,7 @@ def render_historical_reports_expander(
                     f"**{rep.subject} · {rep.target or '学科综合'}** "
                     f"（等级：`{rep.mastery_level}` ｜ 正确率：`{rep.accuracy_rate}%`）"
                 )
-                st.caption(f"保存时间：{rep.generated_at[:19].replace('T', ' ')}")
+                st.caption(f"保存时间：{format_beijing_time(rep.generated_at)}")
             with col_act:
                 md_content = rep.to_markdown()
                 st.download_button(

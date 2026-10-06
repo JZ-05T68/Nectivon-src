@@ -22,8 +22,10 @@ from src.runtime import (
     application_ai_provider,
     application_database,
     application_document_service,
+    application_page_image_reader,
     application_settings,
 )
+from src.time_display import format_beijing_time
 from src.visual_provenance import (
     format_visual_detection_provenance,
     load_stage1_state,
@@ -65,6 +67,7 @@ def _agent_client() -> LocalDocumentAgentClient:
         database=application_database(),
         provider=provider,
         readings=AgentReadingStore(settings.agent_readings_dir),
+        page_image_reader=application_page_image_reader(),
         model=provider.default_model if provider is not None else "",
     )
 
@@ -172,7 +175,7 @@ with st.container(key="knowledge_object_overview"):
     for column, recent_document in zip(card_columns, documents[:3], strict=False):
         updated_at = recent_document.updated_at or recent_document.created_at
         updated_label = (
-            updated_at.strftime("%Y-%m-%d")
+            format_beijing_time(updated_at, fmt="%Y-%m-%d")
             if hasattr(updated_at, "strftime")
             else "未记录"
         )
@@ -338,6 +341,9 @@ with image_column:
     # reading (a distinct product) remains visible below.
     st.caption("系统识别出的原文由本机保留，用于检索与来源追溯（不再整页展示）。")
     _render_agent_reading(page.id)
+    from src.page_image_ui import render_page_image_blocks
+
+    render_page_image_blocks(page, database.image_readings_dir)
 
 with text_column:
     st.subheader("修改这一页的文字")

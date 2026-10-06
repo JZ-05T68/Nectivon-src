@@ -11,6 +11,7 @@ import streamlit as st
 
 from src import __version__, config
 from src.font_size_preferences import font_size_css, read_font_level
+from src.time_display import beijing_now
 
 _STYLE_PATH = Path(__file__).with_name("workspace.css")
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -24,7 +25,6 @@ _NAVIGATION = (
     )),
     ("学习整理", (
         ("pages/18_学习整理.py", "学习整理", "school"),
-        ("pages/19_针对训练.py", "训练配置", "tune"),
     )),
     ("工具", (
         ("pages/1_导入资料.py", "添加文件", "upload_file"),
@@ -104,10 +104,33 @@ def render_workspace(current: str) -> None:
         if os.environ.get("EKB_STAGING_INSTANCE") == "1"
         else "仅在本机运行"
     )
+    if current == "app.py":
+        _render_home_topbar(title, status)
+    else:
+        _render_topbar(current, title, status)
+
+
+@st.fragment(run_every="30s")
+def _render_home_topbar(title: str, status: str) -> None:
+    """Refresh the homepage clock without rerunning its business services/forms."""
+
+    _render_topbar("app.py", title, status)
+
+
+def _render_topbar(current: str, title: str, status: str) -> None:
+    """Keep the homepage clock between the breadcrumb and local-status badge."""
+
+    now = beijing_now()
+    clock = (
+        f'<time class="ekb-clock" datetime="{now.isoformat()}" aria-label="北京时间 GMT+8">'
+        f'{now:%Y-%m-%d %H:%M}<small>GMT+8</small></time>'
+        if current == "app.py" else ""
+    )
     with st.container(key="workspace_topbar"):
         st.markdown(
             '<div class="ekb-topbar"><span>我的 Nectivon'
             f'<span class="ekb-slash">/</span><b>{html.escape(title)}</b></span>'
+            + clock +
             f'<span class="ekb-top-status"><i></i>{status}</span></div>',
             unsafe_allow_html=True,
         )

@@ -61,8 +61,6 @@ def check_runtime_dependencies() -> bool:
         "Uvicorn": "uvicorn",
         "jieba": "jieba",
         "rapidfuzz": "rapidfuzz",
-        "RapidOCR": "rapidocr",
-        "ONNX Runtime": "onnxruntime",
     }
     missing = [name for name, module in modules.items() if importlib.util.find_spec(module) is None]
     if missing:

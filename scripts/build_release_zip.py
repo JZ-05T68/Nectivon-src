@@ -21,6 +21,9 @@ EXCLUDED_DIR_NAMES = {
     ".workbuddy",
     "__pycache__",
     "artifacts",
+    "build",
+    "cache",
+    "dist",
     "htmlcov",
     "logs",
     "runtime",
@@ -52,6 +55,8 @@ TOP_LEVEL_INCLUDE_DIRS = (
     "requirements",
     "templates",
     ".streamlit",
+    "benchmarks",
+    "packaging",
 )
 
 EMPTY_RUNTIME_DIRS = (
@@ -62,6 +67,12 @@ EMPTY_RUNTIME_DIRS = (
 
 TOP_LEVEL_INCLUDE_FILES = (
     "app.py",
+    "AGENTS.md",
+    ".gitignore",
+    ".gitattributes",
+    ".dockerignore",
+    "Dockerfile",
+    "CHANGELOG.md",
     "_nectivon_launcher.cmd",
     "requirements.txt",
     "requirements-hosted.txt",
@@ -72,11 +83,12 @@ TOP_LEVEL_INCLUDE_FILES = (
     "README_EN.md",
     "README_JP.md",
     "启动正式版.bat",
+    "静默启动Nectivon.vbs",
     "stop_release.bat",
     "启动测试版8511.bat",
-    "stop_test_8511.bat",
+    "停止测试版8511.bat",
     "启动测试版8512.bat",
-    "stop_test_8512.bat",
+    "停止测试版8512.bat",
     "check_environment.bat",
     "run_all_tests.bat",
 )
@@ -85,6 +97,17 @@ TOP_LEVEL_INCLUDE_FILES = (
 def should_skip(path: Path) -> bool:
     """Return whether a source path is transient or unsafe to ship."""
 
+    relative = path.relative_to(PROJECT_ROOT).as_posix()
+    if relative in {
+        "src/data/schools.json",
+        "src/data/undergraduate_majors.json",
+        "src/data/training_profile_catalog_sources.json",
+    }:
+        return True
+    if path.name == "secrets.toml" or (
+        path.name.startswith(".env") and path.name != ".env.example"
+    ):
+        return True
     if any(part in EXCLUDED_DIR_NAMES for part in path.parts):
         return True
     if path.suffix.lower() in EXCLUDED_FILE_SUFFIXES:

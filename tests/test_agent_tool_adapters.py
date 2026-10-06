@@ -319,6 +319,15 @@ def test_page_search_empty() -> None:
     assert result.data["results"] == []  # type: ignore[index]
 
 
+def test_agent_search_never_exposes_legacy_ocr_text_or_snippets() -> None:
+    from dataclasses import replace
+
+    hit = replace(_search_result(1), content="错误OCR", ocr_text="错误OCR", snippet="错误OCR")
+    adapter = PageSearchAdapter(_FakeSearchService([hit]), kb_uuid=KB_UUID)
+    result = adapter(_input("page_search", {"query": "电机"}), ToolContext())
+    assert "错误OCR" not in str(result.to_dict())
+
+
 def test_page_search_invalid_query() -> None:
     adapter = PageSearchAdapter(_FakeSearchService(), kb_uuid=KB_UUID)
 

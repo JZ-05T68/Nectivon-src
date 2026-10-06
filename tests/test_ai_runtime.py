@@ -187,8 +187,8 @@ def test_ai_factory_never_touches_existing_services(
     )
     monkeypatch.setattr(
         runtime,
-        "application_ocr_engine",
-        lambda: pytest.fail("AI 工厂不应触碰 OCR 引擎"),
+        "application_document_service",
+        lambda: pytest.fail("AI 工厂不应触碰文档服务"),
     )
 
     assert isinstance(runtime.application_ai_provider(), AuditedAIProvider)
@@ -266,7 +266,7 @@ def test_ai_cache_invalidation_is_narrow(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(runtime, "application_experience_model_service", experience)
     monkeypatch.setattr(runtime, "application_hybrid_search_service", hybrid)
     monkeypatch.setattr(runtime, "application_database", database)
-    monkeypatch.setattr(runtime, "application_ocr_engine", ocr)
+    monkeypatch.setattr(runtime, "application_document_service", ocr)
 
     runtime.invalidate_ai_runtime_cache()
 

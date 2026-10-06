@@ -32,6 +32,7 @@ from pathlib import Path
 from src.agent_document_reader import AgentReadingStore
 from src.database import Database, _tokenize_for_fts
 from src.models import PageStatus, SearchResult
+from src.page_image_text import agent_image_text, image_transcript
 from src.text_utils import build_agent_page_text
 
 LOGGER = logging.getLogger(__name__)
@@ -95,7 +96,7 @@ class VisualArtifactIndex:
             connection.execute(f"DELETE FROM {self.table_name}")
             pages = connection.execute(
                 """
-                SELECT p.id, p.extracted_text, p.ocr_text, p.markdown_content
+                SELECT p.id, p.image_path, p.extracted_text, p.markdown_content
                 FROM pages p JOIN documents d ON d.id = p.document_id
                 """
             ).fetchall()
@@ -108,9 +109,17 @@ class VisualArtifactIndex:
                     continue
                 source_text = build_agent_page_text(
                     extracted_text=str(row["extracted_text"] or ""),
-                    ocr_text=str(row["ocr_text"] or ""),
+                    ocr_text="",
                     manual_text=str(row["markdown_content"] or ""),
                 )[0]
+                if reading.transcript:
+                    transcript = image_transcript(
+                        self._readings.root, page_id, Path(str(row["image_path"])),
+                    )
+                    if not transcript:
+                        skipped_stale += 1
+                        continue
+                    source_text = agent_image_text(transcript, str(row["markdown_content"] or ""))
                 if not source_text:
                     skipped_stale += 1
                     continue
@@ -205,7 +214,7 @@ class VisualArtifactIndex:
                     document_source_path=Path(str(row["document_source_path"])),
                     document_sha256=str(row["document_sha256"]),
                     extracted_text=str(row["extracted_text"] or ""),
-                    ocr_text=str(row["ocr_text"] or ""),
+                    ocr_text="",
                     markdown_content=str(row["markdown_content"] or ""),
                 )
             )

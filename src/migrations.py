@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 LOGGER = logging.getLogger(__name__)
-SCHEMA_VERSION = 33
+SCHEMA_VERSION = 34
 
 # 仅用于 Phase 2B-V 失败注入验证；生产运行时恒为 None，永不触发。
 _V10_INJECTION_POINT: str | None = None
@@ -216,6 +216,9 @@ def migrate_database(database_path: Path) -> Path | None:
         if current_version < 33:
             _apply_version_thirty_three(connection)
             current_version = 33
+        if current_version < 34:
+            _apply_version_thirty_four(connection)
+            current_version = 34
         if current_version >= 17:
             _validate_version_fifteen_schema(connection)
             _validate_version_sixteen_schema(connection)
@@ -252,6 +255,8 @@ def migrate_database(database_path: Path) -> Path | None:
             _validate_version_thirty_two_schema(connection)
         if current_version >= 33:
             _validate_version_thirty_three_schema(connection)
+        if current_version >= 34:
+            _validate_version_thirty_four_schema(connection)
         connection.execute("PRAGMA foreign_keys = ON")
         _validate_database_integrity(connection, stage="迁移后")
     except Exception as exc:
@@ -4640,6 +4645,27 @@ def _validate_version_thirty_three_schema(connection: sqlite3.Connection) -> Non
     missing = {"analysis_note", "solution_method", "math_display_json"} - columns
     if missing:
         raise MigrationError(f"v33 校验失败：question_items 缺列：{sorted(missing)}")
+
+
+def _apply_version_thirty_four(connection: sqlite3.Connection) -> None:
+    """Persist semantic shared-stem decisions without guessing for legacy rows."""
+
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(question_nodes)")}
+    if "has_shared_stem" not in columns:
+        connection.execute(
+            "ALTER TABLE question_nodes ADD COLUMN has_shared_stem INTEGER "
+            "CHECK (has_shared_stem IN (0, 1))"
+        )
+    connection.execute(
+        "INSERT INTO schema_migrations(version, applied_at) VALUES (34, ?)", (_utc_now(),)
+    )
+    connection.commit()
+
+
+def _validate_version_thirty_four_schema(connection: sqlite3.Connection) -> None:
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(question_nodes)")}
+    if "has_shared_stem" not in columns:
+        raise MigrationError("v34 校验失败：question_nodes 缺少 has_shared_stem 列。")
 
 
 def _utc_now() -> str:

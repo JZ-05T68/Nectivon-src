@@ -91,9 +91,36 @@ def _select_provider(app: AppTest, provider: ProviderId) -> AppTest:
 
 
 def _current_model_markdown(app: AppTest) -> str:
-    return next(
-        item.value for item in app.markdown if "当前模型" in item.value
+    return next(item.value for item in app.markdown if "当前模型" in item.value)
+
+
+def test_image_dropdown_omits_text_only_providers_models_and_custom_ids(settings_ui) -> None:
+    app = _render_page()
+    provider = next(item for item in app.selectbox if item.label == "读图服务商")
+    assert "Hunyuan / 腾讯混元" not in provider.options
+    app = provider.set_value(ProviderId.GLM).run(timeout=10)
+    model = next(item for item in app.selectbox if item.label == "读图模型")
+    assert model.options == ["glm-5.3-flash"]
+    assert not app.exception
+
+
+def test_saving_image_selection_keeps_text_model_and_blank_stored_key(settings_ui) -> None:
+    _settings, _database, service = settings_ui
+    service.save(
+        ProviderSettings.default_for("qwen"),
+        new_api_key="synthetic-purpose-ui-key",
+        make_active=True,
     )
+    app = _render_page()
+    model = next(item for item in app.selectbox if item.label == "读图模型")
+    app = model.set_value("qwen3.8-flash").run(timeout=10)
+    button = next(item for item in app.button if item.label == "保存并用于读图")
+    app = button.click().run(timeout=10)
+    config = service.load_config()
+    assert config.image_settings.model_id == "qwen3.8-flash"
+    assert config.get("qwen").model_id == "qwen3.8-max"
+    assert config.active_provider_id is ProviderId.QWEN
+    assert not app.exception
 
 
 # --- Qwen (items 1-6) ---------------------------------------------------------
@@ -248,9 +275,7 @@ def test_hunyuan_presets_remain_unchanged() -> None:
         "Hunyuan HY 3",
     ]
     assert definition.default_model_id == "hy4-preview"
-    assert definition.legacy_base_urls == (
-        "https://api.hunyuan.cloud.tencent.com/v1",
-    )
+    assert definition.legacy_base_urls == ("https://api.hunyuan.cloud.tencent.com/v1",)
 
 
 # --- Current-model display (item 18) ------------------------------------------

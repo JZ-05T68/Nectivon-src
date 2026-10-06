@@ -65,17 +65,21 @@ def test_kimi_current_official_model_ids_and_hunyuan_positive_namespace() -> Non
     assert not is_hunyuan_model_id("kimi-k3")
 
 
-def test_qwen_offers_max_default_and_flash_preset() -> None:
+def test_qwen_offers_max_default_flash_and_verified_vision_preset() -> None:
     qwen = get_provider_definition(ProviderId.QWEN)
 
     assert qwen.default_model_id == "qwen3.8-max"
     assert {preset.model_id for preset in qwen.presets} == {
         "qwen3.8-max",
         "qwen3.8-flash",
+        "qwen3-vl-plus",
     }
     assert get_model_preset(ProviderId.QWEN, "qwen3.7-plus") is None
     assert get_model_preset(ProviderId.QWEN, "qwen3.8-max-0902") is None
     assert get_model_preset(ProviderId.QWEN, "qwen3.8-max-2026-09-02") is None
+    assert get_capability_profile("qwen", "qwen3-vl-plus").effective.vision is (
+        CapabilitySupport.SUPPORTED
+    )
 
 
 def test_effective_capability_is_native_intersect_adapter_implementation() -> None:
@@ -84,13 +88,13 @@ def test_effective_capability_is_native_intersect_adapter_implementation() -> No
     custom = get_capability_profile(ProviderId.KIMI, "future-custom-model")
 
     assert kimi.native.vision is CapabilitySupport.SUPPORTED
-    assert kimi.adapter.vision is CapabilitySupport.UNSUPPORTED
-    assert kimi.effective.vision is CapabilitySupport.UNSUPPORTED
+    assert kimi.adapter.vision is CapabilitySupport.SUPPORTED
+    assert kimi.effective.vision is CapabilitySupport.SUPPORTED
     assert kimi.effective.streaming is CapabilitySupport.UNSUPPORTED
     assert qwen.effective.vision is CapabilitySupport.SUPPORTED
     assert custom.native.reasoning is CapabilitySupport.UNKNOWN
     assert custom.effective.reasoning is CapabilitySupport.UNKNOWN
-    assert custom.effective.vision is CapabilitySupport.UNSUPPORTED
+    assert custom.effective.vision is CapabilitySupport.UNKNOWN
 
 
 def test_deepseek_offers_official_presets_and_keeps_custom_capabilities() -> None:
@@ -106,8 +110,7 @@ def test_deepseek_offers_official_presets_and_keeps_custom_capabilities() -> Non
         "DeepSeek V4 Pro",
     ]
     assert definition.allows_custom_model_id is True
-    # Capabilities stay UNKNOWN until a real smoke re-verifies the models, so
-    # the adapter omits vendor-specific capability fields for both presets.
+    # Only documented vision support changes; request-policy fields stay neutral.
     assert all(
         capability is CapabilitySupport.UNKNOWN
         for preset in definition.presets
@@ -115,9 +118,10 @@ def test_deepseek_offers_official_presets_and_keeps_custom_capabilities() -> Non
             preset.capabilities.streaming,
             preset.capabilities.reasoning,
             preset.capabilities.tool_calling,
-            preset.capabilities.vision,
         )
     )
+    assert definition.presets[0].capabilities.vision is CapabilitySupport.SUPPORTED
+    assert definition.presets[1].capabilities.vision is CapabilitySupport.UNSUPPORTED
     assert get_model_preset(ProviderId.DEEPSEEK, "deepseek-custom") is None
 
 

@@ -3,7 +3,7 @@
 Overnight real-corpus round (2026-09-26) product rules:
 
 - Tab order follows the learning path: 题目库（第一层）→ 归纳族（第二层）→
-  掌握训练（第三层）→ 方法触发 → 边界反例 → 导出。The two wings are
+  掌握训练（第三层）→ 方法触发 → 边界反例 → 导出 → 训练配置。The two wings are
   two independent tabs, never one笼统的「两翼」。
 - 第一层 is a per-question card workflow (① 题干 ② 我的作答 ③ 判定
   ④ 订正 ⑤ 错因 ⑥ 方法): AI fills *empty* fields as drafts, the user
@@ -21,7 +21,6 @@ Overnight real-corpus round (2026-09-26) product rules:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -64,7 +63,9 @@ from src.learning_workflow_service import (
     wing_provenance_label,
 )
 from src.math_display import render_math_markdown, render_question_math_markdown
-from src.math_formatting_service import display_field, schedule_math_formatting
+from src.math_formatting_service import display_field, schedule_math_formatting, split_math_tags
+from src.question_content_ui import render_question_content, render_region_images
+from src.question_visual_regions import crop_region, normalize_regions
 from src.runtime import (
     application_database,
     application_question_source_retrieval_service,
@@ -74,6 +75,8 @@ from src.runtime import (
 )
 from src.targeted_training_ui import render_targeted_training_section
 from src.text_utils import ui_plaintext_digest
+from src.time_display import beijing_now, format_beijing_time, to_beijing_time
+from src.training_profile_ui import render_training_profile_page
 from src.workspace_ui import (
     _PROJECT_ROOT,
     empty_panel,
@@ -172,9 +175,7 @@ if _safe_count("SELECT COUNT(*) FROM question_items") == 0:
 
 
 def _split_tags(text: str) -> list[str]:
-    return [
-        tag.strip() for tag in text.replace("，", ",").split(",") if tag.strip()
-    ]
+    return split_math_tags(text)
 
 
 _COLLECTION_KIND_LABELS = {
@@ -243,7 +244,7 @@ def _question_selectbox(label: str, key: str, *, question_id: int | None = None)
     return question_service.get_question_item(selected_id)
 
 
-library_tab, family_tab, mastery_tab, trigger_tab, boundary_tab, output_tab = st.tabs(
+library_tab, family_tab, mastery_tab, trigger_tab, boundary_tab, output_tab, profile_tab = st.tabs(
     [
         "题目库（第一层）",
         "归纳族（第二层）",
@@ -251,8 +252,12 @@ library_tab, family_tab, mastery_tab, trigger_tab, boundary_tab, output_tab = st
         "方法触发",
         "边界反例",
         "导出",
+        "训练配置",
     ]
 )
+
+with profile_tab:
+    render_training_profile_page(application_training_profile_service())
 
 
 def _wing_field_label(wing_kind: str, field: str) -> str:
@@ -362,7 +367,8 @@ def _render_wing_editor(
                     st.caption("暂无修订记录。")
                 for record in history:
                     st.caption(
-                        f"{record.get('created_at', '')} · {record.get('revision_kind', '')}"
+                        f"{format_beijing_time(record.get('created_at'))} · "
+                        f"{record.get('revision_kind', '')}"
                         + (f" · {record.get('note')}" if record.get("note") else "")
                     )
     _WING_LIST_FIELD_NAMES = frozenset(
@@ -501,7 +507,57 @@ def _apply_ai_drafts_to_widgets(question, drafts: dict) -> None:
         st.session_state[f"edit_solution_method_{key_prefix}"] = drafts["solution_method"]
 
 
-def _render_visual_material_section(question, key_prefix: str) -> None:
+def _question_visual_source(question) -> tuple[Path | None, list[dict]]:
+    """Resolve local source pixels and region references stored with this item."""
+
+    draft = question.ai_draft if isinstance(question.ai_draft, dict) else {}
+    material = draft.get("visual_material", {})
+    if not isinstance(material, dict) or material.get("dependency") == "none":
+        return None, []
+    if material.get("dependency") not in ("required", "uncertain") and not material.get("regions"):
+        return None, []
+    if not question.source_available or question.page_id is None:
+        return None, []
+    try:
+        page = application_database().get_page(int(question.page_id))
+    except Exception:  # noqa: BLE001 - a missing source must not hide saved text
+        LOGGER.exception("读取题目原图失败")
+        return None, []
+    path = Path(page.image_path) if page is not None else None
+    regions = [r for r in normalize_regions(material.get("regions", []))
+               if r.get("page_id", question.page_id) == question.page_id]
+    from src.question_content_ui import question_regions
+
+    regions = question_regions(path, question.question_number, regions, page_id=question.page_id)
+    return path, regions
+
+
+def _render_saved_question_content(question) -> bool:
+    """Keep per-option images visible in every full-question learning view."""
+
+    path, regions = _question_visual_source(question)
+    original = (question.ai_draft or {}).get("image_recognized_original", {})
+    if (original.get("human_stem_preserved") and original.get("stem")
+            and original["stem"] != question.stem_text):
+        with st.expander("本次 AI 读图原题（人工修订已保留）"):
+            render_question_content(original["stem"], image_path=path, regions=regions)
+    # The read/teach-back view already displayed shared crops with the parent
+    # conditions. Count those successful crops so a full-page fallback is not
+    # repeated below the child's stem.
+    shown = bool(question.shared_context.strip()) and any(
+        crop_region(path, region) is not None
+        for region in regions if region["role"] == "shared" and path is not None
+    )
+    if not question.shared_context.strip():
+        shown = render_region_images(path, [r for r in regions if r["role"] == "shared"])
+    return render_question_content(
+        display_field(question, "stem_text"), image_path=path, regions=regions,
+    ) or shown
+
+
+def _render_visual_material_section(
+    question, key_prefix: str, *, show_full_page: bool = True,
+) -> None:
     """G2-A-02/03: the visual material is PART of the question, not an attachment.
 
     When the question declares a visual dependency, the page image (the one
@@ -533,9 +589,18 @@ def _render_visual_material_section(question, key_prefix: str) -> None:
     notes = str(material.get("material_notes") or "").strip()
     confirmed = bool(material.get("binding_confirmed"))
     st.markdown("**关联材料**" + (f"　{notes}" if notes else ""))
-    st.image(str(image_path), width=380, caption="本页原图（共享原始证据，未被复制）")
-    with st.expander("查看大图"):
-        st.image(str(image_path))
+    from src.question_image_editor import render_question_crop_editor, render_question_image_editor
+
+    _, regions = _question_visual_source(question)
+
+    render_question_image_editor(
+        image_path, page_id=page.id, number=question.question_number, regions=regions,
+        key=f"learning_image_{key_prefix}",
+    )
+    render_question_crop_editor(
+        image_path, page_id=page.id, number=question.question_number, regions=regions,
+        key=f"learning_crop_{key_prefix}",
+    )
     if st.button(
         "定位原页",
         key=f"vm_locate_{key_prefix}",
@@ -609,6 +674,8 @@ def _render_question_read_view(question, key_prefix: str, edit_flag_key: str) ->
     if question.shared_context.strip():
         with st.expander("本小题需要的父题公共条件", expanded=True):
             render_question_math_markdown(question.shared_context)
+            source_path, regions = _question_visual_source(question)
+            render_region_images(source_path, [r for r in regions if r["role"] == "shared"])
             if question.shared_image_refs:
                 st.caption("共享图像：" + "、".join(question.shared_image_refs))
             # Recursive split already carries these inherited provenance
@@ -641,11 +708,15 @@ def _render_question_read_view(question, key_prefix: str, edit_flag_key: str) ->
                     + "、".join(dict.fromkeys(question.shared_answer_refs))
                 )
     st.markdown("**题干**")
+    cropped = False
     if question.stem_text.strip():
-        render_question_math_markdown(display_field(question, "stem_text"))
+        cropped = _render_saved_question_content(question)
     else:
         st.caption("（题干待补充——点「修改」补上，或在题目库上方先重新拆分。）")
-    _render_visual_material_section(question, key_prefix)
+    _render_visual_material_section(question, key_prefix, show_full_page=not cropped)
+    reference = (question.ai_draft or {}).get("learning_reference")
+    if isinstance(reference, dict) and reference.get("status") == "pending_review":
+        st.caption("订正、解析、题型和方法：AI 参考版，待你核对；可点击「修改」二次修订。")
     st.markdown("**我的作答**")
     if question.student_answer.strip():
         render_question_math_markdown(display_field(question, "student_answer"))
@@ -658,15 +729,13 @@ def _render_question_read_view(question, key_prefix: str, edit_flag_key: str) ->
         render_question_math_markdown(display_field(question, "correction_note"))
     if question.analysis_note.strip():
         st.markdown("**解析**")
-        render_question_math_markdown(
-            display_field(question, "analysis_note").replace("。", "。\n\n")
-        )
+        render_question_math_markdown(display_field(question, "analysis_note"))
     if question.reason_tags:
         st.markdown("**错因**")
-        render_question_math_markdown("、".join(question.reason_tags))
+        render_question_math_markdown(display_field(question, "reason_tags"))
     if question.method_tags:
         st.markdown("**题型**")
-        render_question_math_markdown("、".join(question.method_tags))
+        render_question_math_markdown(display_field(question, "method_tags"))
     if question.solution_method.strip():
         st.markdown("**方法**")
         render_question_math_markdown(display_field(question, "solution_method"))
@@ -760,37 +829,9 @@ def _render_question_card(question) -> None:
     if st.button("返回阅读（不保存本次修改）", key=f"cancel_edit_{key_prefix}"):
         st.session_state.pop(edit_flag_key, None)
         st.rerun()
-    ai_button_columns = st.columns([2, 3])
-    if ai_button_columns[0].button(
-        "AI 先帮我生成草稿", key=f"ai_draft_{key_prefix}", type="primary"
-    ):
-        ai = _ai_service()
-        if ai is None:
-            st.warning("AI 服务未配置：可以继续手动整理，所有功能不受影响。")
-        else:
-            try:
-                with st.spinner("正在生成整理草稿……"):
-                    drafts = ai.generate_question_drafts(
-                        question,
-                        learner_profile=application_training_profile_service().get_profile(),
-                    )
-            except LearningAIDraftError as exc:
-                st.error(f"草稿生成失败：{exc}")
-            except Exception as exc:  # noqa: BLE001 - user-facing failure
-                LOGGER.exception("AI 整理草稿失败")
-                st.error(f"草稿生成失败：{exc}")
-            else:
-                _apply_ai_drafts_to_widgets(question, drafts)
-                st.session_state[f"ai_suggestions_{key_prefix}"] = {
-                    "type_family": drafts.get("type_family"),
-                    "method_families": drafts.get("method_families"),
-                    "secondary_conclusion": drafts.get("secondary_conclusion"),
-                }
-                st.info("草稿已填入下面的编辑框（只填了空着的内容）。请核对、修改后点「保存」。")
-                st.rerun()
-    ai_button_columns[1].caption(
-        "AI 只生成草稿供你修改；你保存过的内容不会被 AI 覆盖。"
-    )
+    reference = (question.ai_draft or {}).get("learning_reference")
+    if isinstance(reference, dict):
+        st.caption("订正、解析、题型和方法已提供 AI 参考版，可在下方修改后保存。")
 
     with st.form("question_edit_form", clear_on_submit=False):
         if question.shared_context.strip():
@@ -842,7 +883,7 @@ def _render_question_card(question) -> None:
             st.caption("当前不是「错误」判定；这里的内容会作为参考解析保留，不会冒充你的作答。")
         st.markdown("**⑤ 解析**")
         analysis_note = st.text_area(
-            "解析（给初一学生看的逐步讲解）",
+            "解析",
             value=question.analysis_note,
             height=180,
             key=f"edit_analysis_{key_prefix}",
@@ -998,6 +1039,9 @@ def _render_question_card(question) -> None:
 
 with library_tab:
     st.subheader("题目库")
+    reference_flash = st.session_state.pop("learning_reference_flash", None)
+    if reference_flash:
+        st.info(reference_flash)
     filter_column, search_column = st.columns([1, 2])
     kind_choice = filter_column.selectbox(
         "按类型过滤",
@@ -1860,7 +1904,8 @@ with family_tab:
                     st.caption("暂无修订记录。")
                 for record in history:
                     st.caption(
-                        f"{record['created_at']} · {record['revision_kind']} · {record['note']}"
+                        f"{format_beijing_time(record['created_at'])} · "
+                        f"{record['revision_kind']} · {record['note']}"
                     )
             st.divider()
             st.markdown("**这个族的两翼**")
@@ -1947,10 +1992,10 @@ def _review_at_human(value: object) -> str:
     if not text:
         return "未排期"
     try:
-        when = datetime.fromisoformat(text)
+        when = to_beijing_time(text)
     except ValueError:
         return text[:16]
-    today = datetime.now().date()
+    today = beijing_now().date()
     delta = (when.date() - today).days
     if delta <= 0:
         return "今天"
@@ -1986,7 +2031,7 @@ def _render_training_submit(question_id: int, event_type: str, heading: str) -> 
         submit_training = st.form_submit_button("提交这次训练", type="primary")
     if submit_training:
         # §105: the same question + task + date collapses into ONE row.
-        key = f"{question_id}:{event_type}:{datetime.now().date().isoformat()}"
+        key = f"{question_id}:{event_type}:{beijing_now().date().isoformat()}"
         try:
             evidence_id = mastery.record_evidence(
                 question_id,
@@ -2122,7 +2167,7 @@ def _render_manual_record_form(question_id: int) -> None:
                 provenance="手动补录（非系统训练结果）",
                 user_note=practice_note,
                 idempotency_key=(
-                    f"{question_id}:manual:{datetime.now().date().isoformat()}:"
+                    f"{question_id}:manual:{beijing_now().date().isoformat()}:"
                     f"{outcome}"
                 ),
             )
@@ -2171,22 +2216,31 @@ def _render_teachback_section() -> None:
             st.markdown("**父题公共条件**")
             render_question_math_markdown(teachback_question.shared_context)
             st.markdown("**本小题**")
-        render_question_math_markdown(teachback_question.stem_text)
+        if teachback_question.shared_context:
+            source_path, regions = _question_visual_source(teachback_question)
+            render_region_images(source_path, [r for r in regions if r["role"] == "shared"])
+        cropped = _render_saved_question_content(teachback_question)
+        if not cropped:
+            source_path, _ = _question_visual_source(teachback_question)
+            if source_path is not None and source_path.is_file():
+                st.image(str(source_path), width=650, caption="本题来源原页")
         st.caption("提交讲解前不会显示参考讲解；来源和原页请到第一层核对。")
         peer_column, ai_column = st.columns([1, 2], gap="large")
         with peer_column:
-            st.markdown("### 讲给别人听 · 自评")
+            st.markdown("### 讲给别人听")
             st.caption("想象对方没做过这题：你能把为什么这样做、关键步骤讲明白吗？")
-            peer_yes = st.checkbox(
-                "是，能讲清楚", key=f"teachback_peer_yes_{teachback_question.id}"
-            )
-            peer_no = st.checkbox(
-                "否，还讲不清楚", key=f"teachback_peer_no_{teachback_question.id}"
+            peer_choice = st.radio(
+                "能把这道题讲清楚吗？",
+                options=("是，能讲清楚", "否，还讲不清楚"),
+                index=None,
+                key=f"teachback_peer_choice_{teachback_question.id}",
+                label_visibility="collapsed",
             )
             if st.button("保存自评", key=f"teachback_peer_save_{teachback_question.id}"):
-                if peer_yes == peer_no:
-                    st.warning("请只勾选“是”或“否”其中一项。")
+                if peer_choice is None:
+                    st.warning("请先选择“是”或“否”。")
                 else:
+                    peer_yes = peer_choice == "是，能讲清楚"
                     try:
                         mastery.record_evidence(
                             teachback_question.id,
@@ -2312,7 +2366,7 @@ def _render_teachback_section() -> None:
             st.markdown("**我的讲解与 AI 反馈**")
             for index, attempt in reversed(list(enumerate(attempts, start=1))):
                 with st.expander(
-                    f"第 {index} 次 · {attempt['created_at'][:16]}",
+                    f"第 {index} 次 · {format_beijing_time(attempt['created_at'])}",
                     expanded=index == len(attempts),
                 ):
                     st.markdown("**我原来是这样讲的**")
@@ -2372,7 +2426,7 @@ with mastery_tab:
         st.caption("还没有族级复习计划。完成训练后，系统会自动安排。")
     for row in review_rows:
         title = row.get("title") or "（未命名族）"
-        next_at = row.get("next_review_at") or "未排期"
+        next_at = format_beijing_time(row.get("next_review_at"), empty="未排期")
         st.caption(f"{title} · 下次复习：{next_at} · 间隔 {row.get('review_interval_days')} 天")
 
     with st.expander("单题掌握建议与历史记录", expanded=False):
@@ -2477,7 +2531,7 @@ with mastery_tab:
                             else ""
                         )
                         st.caption(
-                            f"{record['practiced_at'][:16]} · {outcome_label}"
+                            f"{format_beijing_time(record['practiced_at'])} · {outcome_label}"
                             + explain_suffix
                             + (f" · {record['note']}" if record.get("note") else "")
                         )

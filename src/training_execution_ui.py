@@ -19,8 +19,10 @@ import streamlit as st
 
 from src.local_training_source_policy import is_locatable_local_training_question
 from src.math_display import render_math_markdown
+from src.question_content_ui import render_training_question
 from src.question_source_ui import render_question_source_button
 from src.targeted_training_models import TrainingTask
+from src.time_display import format_beijing_time
 from src.training_session_models import ErrorType, SessionStatus, TrainingSession
 from src.training_session_service import TrainingSessionService
 
@@ -176,7 +178,7 @@ def _render_active_answering_view(
 
         st.markdown("---")
         st.markdown("##### 题目")
-        render_math_markdown(q.question_text)
+        render_training_question(q)
 
     # ==================================================================
     # 作答与提交区域
@@ -216,7 +218,7 @@ def _render_active_answering_view(
         with col_sub_info:
             st.caption(
                 f"ℹ️ 提交记录：已作答（第 **{attempt.submission_count}** 次提交） ｜ "
-                f"时间：{attempt.attempted_at[:19].replace('T', ' ')}"
+                f"时间：{format_beijing_time(attempt.attempted_at)}"
             )
 
         # 结果判定与人工确认
@@ -359,7 +361,7 @@ def render_training_session_result_view(
     st.markdown("### 🏆 针对训练完成报告")
     st.caption(
         f"训练目标：**{result.task_target}** ｜ 类别：{result.training_type} ｜ "
-        f"完成时间：{result.completed_at[:19].replace('T', ' ')}"
+        f"完成时间：{format_beijing_time(result.completed_at)}"
     )
 
     # 4 项关键指标展示
@@ -401,7 +403,8 @@ def render_training_session_result_view(
             f"{status_icon} 第 {idx} 题：{q.exam_or_contest_name} ({q.year or '未知'}年)",
             expanded=False,
         ):
-            st.markdown(f"**题干**：{q.question_text}")
+            st.markdown("**题干**")
+            render_training_question(q)
             if att:
                 st.markdown(
                     f"**你的解答**：`{att.user_answer}`（共提交 {att.submission_count} 次）"

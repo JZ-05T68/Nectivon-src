@@ -64,11 +64,13 @@ class ContextItemProjector:
         if document is None:
             raise ContextProjectionError(f"页面 {page_id} 的文档不存在：{page.document_id}")
 
-        content = (
-            page.extracted_text.strip()
-            or page.ocr_text.strip()
-            or page.markdown_content.strip()
+        from src.page_image_text import agent_image_text, image_transcript
+
+        transcript = (
+            image_transcript(self._database.image_readings_dir, page.id, page.image_path)
+            if self._database.image_readings_dir is not None else ""
         )
+        content = agent_image_text(transcript or page.extracted_text.strip(), page.markdown_content)
         anchors = (
             ContextSourceAnchor(
                 anchor_type=ContextAnchorType.DOCUMENT.value,

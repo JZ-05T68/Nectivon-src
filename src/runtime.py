@@ -9,6 +9,10 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.page_image_reader import PageImageReader
 
 from src.ai.coverage_service import PageEmbeddingCoverageService
 from src.ai.credential_store import (
@@ -17,7 +21,6 @@ from src.ai.credential_store import (
 )
 from src.ai.experience_model_service import ExperienceModelService
 from src.ai.hybrid_search import HybridSearchService
-from src.ai.model_registry import CapabilitySupport, get_capability_profile
 from src.ai.openai_compatible import urllib_transport
 from src.ai.page_indexer import EMBEDDING_CONFIG_VERSION, EMBEDDING_DIMENSIONS
 from src.ai.provider import (
@@ -32,6 +35,7 @@ from src.ai.provider_config import ProviderConfigStore
 from src.ai.provider_factory import (
     build_provider_adapter,
     resolve_active_provider_runtime,
+    resolve_image_provider_runtime,
 )
 from src.ai.provider_settings_service import ProviderSettingsService
 from src.ai.vector_recall import (
@@ -58,9 +62,9 @@ from src.models import QuarantineReconciliation
 from src.page_visual_service import PageVisualService
 from src.pdf_service import PdfService
 from src.question_source_retrieval_service import QuestionSourceRetrievalService
-from src.rapidocr_engine import RapidOcrEngine
 from src.review_queue_service import ReviewQueueService
 from src.search_service import SearchService
+from src.storage_path_repair import repair_relocated_asset_paths
 from src.targeted_training_service import TargetedTrainingService
 from src.training_profile_service import TrainingProfileService
 from src.training_session_service import TrainingSessionService
@@ -129,7 +133,15 @@ def application_database() -> Database:
     """Return the process-wide initialized SQLite database."""
 
     settings = application_settings()
-    return Database(settings.database_path)
+    database = Database(settings.database_path, image_readings_dir=settings.agent_readings_dir)
+    repair_relocated_asset_paths(
+        database,
+        data_dir=settings.data_dir,
+        raw_dir=settings.raw_dir,
+        pages_dir=settings.pages_dir,
+        markdown_dir=settings.markdown_dir,
+    )
+    return database
 
 
 @lru_cache(maxsize=1)
@@ -147,7 +159,7 @@ def application_ai_provider() -> AuditedAIProvider | None:
 
     Construction performs no network I/O. The durable ledger and budget guard
     resolve the local database lazily on first use, so building the provider
-    never initializes the database or OCR engine.
+    never initializes the database or page-image reader.
     """
 
     settings = application_settings()
@@ -197,15 +209,27 @@ def application_ai_model() -> str | None:
 
 
 def application_ai_vision_provider() -> AuditedAIProvider | None:
-    """Return a provider only when vision is effective in model and adapter."""
+    """Return the independently selected image provider for every image feature."""
 
-    provider = application_ai_provider()
-    if provider is None or provider.provider_id is None:
+    return application_question_vision_provider()
+
+
+def application_question_vision_provider() -> AuditedAIProvider | None:
+    """Build the selected image adapter without I/O or vendor fallback on error."""
+
+    settings = application_settings()
+    resolved = resolve_image_provider_runtime(
+        settings, credential_store=application_credential_store(),
+    )
+    if resolved is None:
         return None
-    profile = get_capability_profile(provider.provider_id, provider.default_model)
-    if profile.effective.vision is not CapabilitySupport.SUPPORTED:
-        return None
-    return provider
+    return require_production_audited_provider(build_production_audited_provider(
+        build_provider_adapter(resolved, transport=urllib_transport),
+        default_model=resolved.default_model,
+        default_embedding_model=resolved.default_embedding_model,
+        source_feature="question_vision",
+        ledger=_LazyDatabaseAiCallLedger(), budget_guard=_LazyTokenBudgetGuard(settings),
+    ))
 
 
 def invalidate_ai_runtime_cache() -> None:
@@ -314,19 +338,6 @@ def application_coverage_service() -> PageEmbeddingCoverageService:
 
 
 @lru_cache(maxsize=1)
-def application_ocr_engine() -> RapidOcrEngine:
-    """Return the shared lazy local OCR engine adapter.
-
-    Construction is cheap: no third-party OCR package is imported and no
-    model is loaded here. The heavy initialization happens only on the
-    first actual ``recognize`` call, and the single cached instance is
-    reused by the document service for the whole process.
-    """
-
-    return RapidOcrEngine()
-
-
-@lru_cache(maxsize=1)
 def application_document_service() -> DocumentService:
     """Return the document import and Markdown editing service."""
 
@@ -341,7 +352,21 @@ def application_document_service() -> DocumentService:
         pages_dir=settings.pages_dir,
         markdown_dir=settings.markdown_dir,
         pdf_service=pdf_service,
-        ocr_engine=application_ocr_engine(),
+    )
+
+
+def application_page_image_reader() -> PageImageReader:
+    """Build the shared all-format, all-page image recognition workflow."""
+
+    from src.agent_document_reader import AgentReadingStore
+    from src.page_image_reader import PageImageReader
+    from src.question_candidate_service import QuestionCandidateStore
+
+    settings = application_settings()
+    return PageImageReader(
+        database=application_database(), provider=application_question_vision_provider(),
+        readings=AgentReadingStore(settings.agent_readings_dir),
+        candidates=QuestionCandidateStore(settings.data_dir / "question-candidates"),
     )
 
 

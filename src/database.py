@@ -127,8 +127,13 @@ class Database:
 
     SCHEMA_VERSION: Final[int] = SCHEMA_VERSION
 
-    def __init__(self, database_path: Path | str) -> None:
+    def __init__(
+        self, database_path: Path | str, *, image_readings_dir: Path | None = None,
+    ) -> None:
         self.database_path = Path(database_path)
+        self.image_readings_dir = (
+            image_readings_dir or self.database_path.parent.parent / "agent-readings"
+        )
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.last_backup_path: Path | None = None
         self.initialize()
@@ -653,6 +658,39 @@ class Database:
                 (tag_id,),
             ).fetchall()
         return [_page_from_row(row) for row in rows]
+
+    def index_page_image_text(self, page_id: int, transcript: str) -> None:
+        """Index derived image text without rewriting text layers, OCR or notes.
+
+        The existing search mirror is an index only. The complete, labelled
+        AI transcript and image fingerprint remain in the local reading store.
+        """
+
+        page = self.get_page(page_id)
+        if page is None:
+            raise RecordNotFoundError("找不到页面。")
+        searchable = filter_knowledge_text(page.extracted_text + "\n" + transcript).filtered_text
+        with self._connection() as connection:
+            connection.execute(
+                "UPDATE pages SET search_extracted_text=? WHERE id=?",
+                (_tokenize_for_fts(searchable), page_id),
+            )
+
+    def _image_knowledge_values(
+        self, row: sqlite3.Row, tags: Sequence[str], projects: Sequence[str],
+    ) -> dict[SearchField, str]:
+        from src.page_image_text import image_transcript
+
+        values = _knowledge_surface_values(row, tags, projects)
+        transcript = image_transcript(
+            self.image_readings_dir,
+            int(row["id"]), Path(row["image_path"]),
+        )
+        if transcript:
+            values[SearchField.EXTRACTED_TEXT] += (
+                "\n" + filter_knowledge_text(transcript).filtered_text
+            )
+        return values
 
     def update_page(
         self,
@@ -1314,7 +1352,7 @@ class Database:
                     values = knowledge_values.get(page_id)
                     if values is None:
                         tags, projects = page_metadata.get(page_id, ((), ()))
-                        values = _knowledge_surface_values(row, tags, projects)
+                        values = self._image_knowledge_values(row, tags, projects)
                         knowledge_values[page_id] = values
                     return values
 
@@ -3851,7 +3889,10 @@ def _search_match_clause(
     clauses: list[str] = []
     parameters: list[object] = []
     field_expressions = {
-        SearchField.EXTRACTED_TEXT: "lower(p.extracted_text) LIKE ? ESCAPE '\\'",
+        SearchField.EXTRACTED_TEXT: (
+            "lower(p.extracted_text || replace(p.search_extracted_text, ' ', '')) "
+            "LIKE ? ESCAPE '\\'"
+        ),
         SearchField.OCR_TEXT: "lower(p.ocr_text) LIKE ? ESCAPE '\\'",
         SearchField.MARKDOWN: "lower(p.markdown_content) LIKE ? ESCAPE '\\'",
         SearchField.DOCUMENT_TITLE: "lower(d.title) LIKE ? ESCAPE '\\'",
@@ -3972,7 +4013,7 @@ def _knowledge_filtered_context_rows(
 
     rows = connection.execute(
         f"""
-        SELECT p.id, p.document_id, p.review_status,
+        SELECT p.id, p.document_id, p.review_status, p.image_path,
             p.markdown_content, p.ocr_text, p.extracted_text,
             d.title AS document_title, d.filename
         FROM pages p
@@ -3989,7 +4030,7 @@ def _knowledge_filtered_context_rows(
     kept: list[sqlite3.Row] = []
     for row in rows:
         tags, projects = metadata.get(int(row["id"]), ((), ()))
-        values = _knowledge_surface_values(row, tags, projects)
+        values = database._image_knowledge_values(row, tags, projects)
         if _page_matches_knowledge_surface(values, match_fields, literal_terms):
             kept.append(row)
     return kept

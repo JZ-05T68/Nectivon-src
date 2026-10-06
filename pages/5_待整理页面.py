@@ -16,13 +16,6 @@ from src.batch_ui import (
 )
 from src.learning_entry_ui import render_join_learning_section
 from src.models import Page, PageStatus
-from src.ocr_engine import OcrUnavailable
-from src.ocr_policy import has_reusable_ocr_text
-from src.ocr_ui import (
-    OCR_RUNNING_HINT,
-    page_ocr_feedback,
-    page_ocr_unavailable_feedback,
-)
 from src.page_jump_ui import render_page_jump
 from src.review_shortcuts import review_shortcuts_html
 from src.runtime import (
@@ -31,7 +24,6 @@ from src.runtime import (
     application_document_service,
     application_page_batch_service,
 )
-from src.visual_reading_ui import render_visual_reading_section
 from src.workspace_ui import render_workspace
 
 LOGGER = logging.getLogger(__name__)
@@ -48,7 +40,7 @@ st.set_page_config(
 )
 render_workspace("pages/5_待整理页面.py")
 st.title("查看识别结果")
-st.info("AI 已完成初步识别。请重点核对题目文字和图表关联；确认无误后即可加入学习整理。")
+st.info("直接读取原页图片并切分题目与图表。请核对 AI 结果，确认后加入学习整理。")
 st.caption("这里可以对照原始页面查看识别文字；不修改也不会影响正常提问。")
 
 
@@ -376,6 +368,25 @@ if st.button(
         _go_to_page(continuation_page.id)
     st.rerun()
 
+if st.button("整份资料重新读图并切分", key=f"review_read_document_{document.id}"):
+    from src.runtime import application_page_image_reader
+
+    bar = st.progress(0.0, text="正在逐页直接读图……")
+    try:
+        application_page_image_reader().read_document(
+            document.id,
+            force=True,
+            progress_callback=lambda current, total: bar.progress(
+                current / total, text=f"已处理 {current}/{total} 页",
+            ),
+        )
+    except Exception as exc:
+        LOGGER.exception("整份资料读图失败：document_id=%s", document.id)
+        st.error(str(exc))
+    else:
+        st.session_state[_FLASH_KEY] = ("success", "整份资料已直接读图并切分，已有校对已保留。")
+        st.rerun()
+
 image_column, editor_column = st.columns([1, 1], gap="large")
 with image_column:
     st.subheader("原始页面")
@@ -384,37 +395,14 @@ with image_column:
             st.image(str(page.image_path), width="stretch")
         else:
             st.error(f"页面图片缺失：{page.image_path}")
-    render_visual_reading_section(page)
 
-    def _run_page_ocr_button(button_label: str) -> None:
-        if st.button(button_label, key=f"review_run_ocr_{page.id}"):
-            try:
-                with st.spinner(OCR_RUNNING_HINT):
-                    ocr_result = document_service.run_page_ocr(page.id)
-            except OcrUnavailable:
-                level, message = page_ocr_unavailable_feedback()
-            else:
-                level, message = page_ocr_feedback(
-                    ocr_result.outcome, ocr_result.page.ocr_text
-                )
-            st.session_state[_FLASH_KEY] = (level, message)
-            st.rerun()
+    with st.expander("查看原文件文本层（如有）"):
+        st.text(page.extracted_text or "（原文件没有文本层；识别直接读取原页图片）")
+    if st.button("重新读图并切分本页", key=f"review_read_image_{page.id}"):
+        from src.learning_entry_ui import _extract_candidates
 
-    # Geography G1 WORKFLOW CHANGE 2: the raw OCR draft textarea is no
-    # longer rendered on the user-facing review surface.  The text itself
-    # is still stored and used by search / splitting / AI / provenance
-    # (backend contract unchanged); re-recognition stays available.
-    with st.expander("查看已提取文本"):
-        st.text(page.extracted_text or "（没有提取到文本）")
-    if has_reusable_ocr_text(page.ocr_text):
-        with st.expander("重新识别这一页的文字"):
-            st.caption(
-                "系统已保存本页识别文字（检索和拆题仍在使用它，这里不再整页展示）。"
-                "如果识别结果有误，可以重新识别覆盖。"
-            )
-            _run_page_ocr_button("重新识别")
-    else:
-        _run_page_ocr_button("识别这一页的文字")
+        _extract_candidates(page)
+
     if page.processing_error:
         st.error(f"失败原因：{page.processing_error}")
         if st.button("重新处理此页"):
@@ -434,6 +422,9 @@ with editor_column:
     # primary page workflow.  The whole-page Markdown editor is demoted to
     # an advanced expander below (kept for corrections and provenance).
     render_join_learning_section(page)
+    from src.page_image_ui import render_page_image_blocks
+
+    render_page_image_blocks(page, database.image_readings_dir)
 
     st.divider()
 

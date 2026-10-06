@@ -29,6 +29,7 @@ from src.runtime import (
     application_settings,
     run_quarantine_reconciliation,
 )
+from src.time_display import format_beijing_time
 from src.workspace_ui import render_workspace
 
 LOGGER = logging.getLogger(__name__)
@@ -126,7 +127,9 @@ else:
             statistics = validation.manifest["statistics"]
             st.success("备份 manifest、文件哈希、数据库完整性、外键和文件引用全部通过。")
             restore_metrics = st.columns(4)
-            restore_metrics[0].metric("备份时间", validation.manifest["created_at"])
+            restore_metrics[0].metric(
+                "备份时间", format_beijing_time(validation.manifest["created_at"])
+            )
             restore_metrics[1].metric("文档", statistics["documents"])
             restore_metrics[2].metric("页面", statistics["pages"])
             restore_metrics[3].metric("FTS", statistics["fts"])
@@ -194,7 +197,7 @@ if isinstance(snapshot, DiagnosticSnapshot):
         data=report.encode("utf-8"),
         file_name=(
             "engineering-kb-diagnostic-"
-            f"{snapshot.generated_at.strftime('%Y%m%d-%H%M%S')}.md"
+            f"{format_beijing_time(snapshot.generated_at, fmt='%Y%m%d-%H%M%S')}.md"
         ),
         mime="text/markdown",
         use_container_width=True,

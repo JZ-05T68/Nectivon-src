@@ -9,7 +9,9 @@ hybrid retrieval logic lives here.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
+from pathlib import Path
 from typing import Protocol
 
 from src.agent.tools.adapters._common import (
@@ -56,6 +58,7 @@ class PageReadingLookup(Protocol):
     def is_page_ready(self, page_id: int, source_text_sha256: str) -> bool: ...
 
     def page_reading(self, page_id: int) -> PageReadingView | None: ...
+
 
 PAGE_SEARCH_DEFINITION = ToolDefinition(
     name="page_search",
@@ -108,9 +111,7 @@ class PageSearchAdapter:
     def __call__(self, tool_input: ToolInput, context: ToolContext) -> ToolResult:
         try:
             reject_unknown_arguments(tool_input.arguments, ALLOWED_ARGUMENTS)
-            query = require_text(
-                tool_input.arguments, "query", max_length=MAX_QUERY_LENGTH
-            )
+            query = require_text(tool_input.arguments, "query", max_length=MAX_QUERY_LENGTH)
             limit = optional_int(
                 tool_input.arguments,
                 "limit",
@@ -127,29 +128,39 @@ class PageSearchAdapter:
             if question_number_marker_fragments(query):
                 results = results[:EXPLICIT_QUESTION_CONTEXT_LIMIT]
         except AdapterInputError as exc:
-            return failed_result(
-                self.tool_name, ToolErrorCode.INVALID_INPUT, exc.message
-            )
+            return failed_result(self.tool_name, ToolErrorCode.INVALID_INPUT, exc.message)
         except Exception as exc:
-            return internal_failure_result(
-                self.tool_name, exc, safe_message="页面检索执行失败"
-            )
+            return internal_failure_result(self.tool_name, exc, safe_message="页面检索执行失败")
         return self._to_result(query, limit, results)
 
-    def _to_result(
-        self, query: str, limit: int, results: list[SearchResult]
-    ) -> ToolResult:
+    def _to_result(self, query: str, limit: int, results: list[SearchResult]) -> ToolResult:
         rows: list[tuple[SearchResult, str, PageReadingView | None]] = []
         unread_hits = 0
         for result in results:
-            source_text = _agent_page_text(result) if self._require_agent_read else result.content
+            source_text = _agent_page_text(result)
             reading = (
                 self._page_readings.page_reading(result.page_id)
                 if self._page_readings is not None
                 else None
             )
+            image_reading = bool(reading and getattr(reading, "transcript", ""))
+            image_fresh = not image_reading
+            if image_reading:
+                from src.page_image_text import agent_image_text
+
+                image_path = Path(result.image_path)
+                image_fresh = (
+                    image_path.is_file()
+                    and hashlib.sha256(image_path.read_bytes()).hexdigest()
+                    == getattr(reading, "source_image_sha256", "")
+                    and _source_text_sha256(result.markdown_content)
+                    == getattr(reading, "manual_text_sha256", "")
+                )
+                if image_fresh:
+                    source_text = agent_image_text(reading.transcript, result.markdown_content)
             ready = bool(
                 source_text
+                and image_fresh
                 and self._page_readings is not None
                 and self._page_readings.is_page_ready(
                     result.page_id, _source_text_sha256(source_text)
@@ -158,13 +169,9 @@ class PageSearchAdapter:
             if self._require_agent_read and not ready:
                 unread_hits += 1
                 continue
-            rows.append((result, source_text or result.content, reading if ready else None))
+            rows.append((result, source_text, reading if ready else None))
         if not rows:
-            warnings = (
-                ("相关页面尚未让 Agent 读完。",)
-                if unread_hits
-                else ()
-            )
+            warnings = ("相关页面尚未让 Agent 读完。",) if unread_hits else ()
             return empty_result(
                 self.tool_name,
                 data={"query": query, "limit": limit, "total": 0, "results": []},
@@ -172,9 +179,7 @@ class PageSearchAdapter:
             )
         references = tuple(
             ToolReference(
-                stable_id=build_stable_id(
-                    self._kb_uuid, PAGE_STABLE_TYPE, result.page_id
-                ),
+                stable_id=build_stable_id(self._kb_uuid, PAGE_STABLE_TYPE, result.page_id),
                 anchor_label=f"{result.document_title} · 第 {result.page_number} 页",
             )
             for result, _, _ in rows
@@ -207,7 +212,8 @@ def _page_result_to_dict(
         # remains only a retrieval/display aid and AI-generated summaries stay
         # in separate fields below.
         "content": source_text,
-        "snippet": result.snippet,
+        # A legacy search snippet can contain OCR even when content is safe.
+        "snippet": source_text[:240],
         "match_type": result.match_type,
         "match_fields": [field.value for field in result.match_fields],
         "rank": result.rank,
@@ -226,7 +232,7 @@ def _page_result_to_dict(
 def _agent_page_text(result: SearchResult) -> str:
     text, _ = build_agent_page_text(
         extracted_text=result.extracted_text,
-        ocr_text=result.ocr_text,
+        ocr_text="",
         manual_text=result.markdown_content,
     )
     return text

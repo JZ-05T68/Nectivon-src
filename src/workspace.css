@@ -118,6 +118,9 @@ html { scroll-behavior:smooth; }
 .ekb-topbar { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center;
   color:var(--ekb-muted); font-size:12px; gap:12px; min-height:36px; }
 .ekb-topbar b { color:#334b40; font-weight:500; }
+.ekb-clock { color:#435e51; font-size:13px; font-variant-numeric:tabular-nums;
+  white-space:nowrap; line-height:1.5; }
+.ekb-clock small { margin-left:8px; color:var(--ekb-muted); font-size:10px; }
 .ekb-slash { margin:0 14px; color:#bcc5be; }
 .ekb-top-status { font-size:11px; white-space:nowrap; background:#edf5f1;
   border:1px solid #d5e7dd; border-radius:var(--ekb-radius-pill); padding:5px 10px; }

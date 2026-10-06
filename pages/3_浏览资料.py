@@ -36,6 +36,7 @@ from src.search_state import (
     encode_return_state,
     search_state_query_params,
 )
+from src.time_display import format_beijing_time
 from src.visual_provenance import (
     format_visual_detection_provenance,
     load_stage1_state,
@@ -301,7 +302,7 @@ summary_columns[1].metric("总页数", document.page_count)
 summary_columns[2].metric("导入已处理页", document.processed_page_count)
 summary_columns[3].metric("待复核", document.review_page_count)
 st.caption(
-    f"导入时间：{(document.imported_at or document.created_at).astimezone():%Y-%m-%d %H:%M}　|　"
+    f"导入时间：{format_beijing_time(document.imported_at or document.created_at)}　|　"
     f"状态：{document.status_label}　|　SHA-256：{document.sha256[:12]}…"
 )
 if not document.source_path.is_file():

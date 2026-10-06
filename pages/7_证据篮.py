@@ -15,6 +15,7 @@ from src.evidence_basket_service import (
 from src.evidence_prompt_builder import NO_CONFIRMED_EVIDENCE_MESSAGE
 from src.models import EvidenceConfirmationStatus, EvidenceType
 from src.runtime import application_evidence_basket_service
+from src.time_display import format_beijing_time
 from src.workspace_ui import render_workspace
 
 LOGGER = logging.getLogger(__name__)
@@ -145,7 +146,7 @@ else:
             confirmation_caption = f"确认状态：{item.confirmation_status.label}"
             if item.confirmed_at is not None:
                 confirmation_caption += (
-                    f"（确认于 {item.confirmed_at.astimezone():%Y-%m-%d %H:%M}）"
+                    f"（确认于 {format_beijing_time(item.confirmed_at)}）"
                 )
             confirmation_column.caption(confirmation_caption)
             is_confirmed = (

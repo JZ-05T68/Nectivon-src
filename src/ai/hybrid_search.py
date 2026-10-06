@@ -224,7 +224,7 @@ def _search_result_from_page(page: Page, document: Document) -> SearchResult:
         filename=document.filename,
         page_number=page.page_number,
         image_path=page.image_path,
-        content=page.searchable_content,
+        content=page.markdown_content.strip() or page.extracted_text.strip(),
         snippet="",
         rank=0.0,
         status=page.status,
@@ -232,7 +232,7 @@ def _search_result_from_page(page: Page, document: Document) -> SearchResult:
         document_source_path=document.source_path,
         document_sha256=document.sha256,
         extracted_text=page.extracted_text,
-        ocr_text=page.ocr_text,
+        ocr_text="",
         markdown_content=page.markdown_content,
         updated_at=page.updated_at,
     )
