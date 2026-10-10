@@ -46,7 +46,10 @@ import streamlit as st
 
 from src.learning_subject_policy import (
     ADVANCED_SUBJECT,
+    is_foreign_language_subject,
     normalize_subject_name,
+    read_saved_subject,
+    save_subject,
     subject_selection_policy,
 )
 from src.learning_workflow_service import LearningWorkflowError, QuestionItem, QuestionService
@@ -401,16 +404,32 @@ def _render_subject_picker(
     existing_subject = next(iter(subjects)) if len(subjects) == 1 else ""
     remembered = dict(st.session_state.get(durable_key) or {})
     if not remembered:
-        remembered = {
-            "choice": existing_subject
-            if existing_subject in policy.subjects
-            else (ADVANCED_SUBJECT if policy.allows_advanced and existing_subject else ""),
-            "custom": existing_subject
-            if policy.manual_only
-            or (policy.allows_advanced and existing_subject not in policy.subjects)
-            else "",
-            "confirmed": "",
-        }
+        saved_subject = ""
+        if not existing_subject:
+            try:
+                saved_subject = read_saved_subject(_database().database_path)
+                if not is_foreign_language_subject(saved_subject):
+                    saved_subject = ""
+            except (OSError, ValueError):
+                LOGGER.exception("读取已保存整理学科失败")
+                st.warning("已保存学科暂时无法读取，请重新填写并确认。")
+        preferred = existing_subject or saved_subject
+        if preferred in policy.subjects:
+            init_choice, init_custom = preferred, ""
+        elif policy.manual_only:
+            init_choice, init_custom = "", preferred
+        elif policy.manual_choice and saved_subject:
+            init_choice, init_custom = policy.manual_choice, saved_subject
+        elif policy.allows_advanced and existing_subject:
+            init_choice, init_custom = ADVANCED_SUBJECT, existing_subject
+        elif policy.manual_choice and existing_subject:
+            init_choice, init_custom = policy.manual_choice, existing_subject
+        else:
+            init_choice, init_custom = "", ""
+        remembered = {"choice": init_choice, "custom": init_custom, "confirmed": ""}
+        if saved_subject:
+            remembered.update(confirmed=saved_subject, policy=policy.signature)
+            remembered["manual_mode"] = policy.label if policy.manual_only else init_choice
     if remembered.get("policy") != policy.signature:
         remembered["confirmed"] = ""
         remembered["manual_mode"] = ""
@@ -435,25 +454,44 @@ def _render_subject_picker(
             )
             or ""
         )
-    if policy.manual_only or choice == ADVANCED_SUBJECT:
-        manual_mode = policy.label if policy.manual_only else ADVANCED_SUBJECT
+    if policy.manual_only or choice == ADVANCED_SUBJECT or choice == policy.manual_choice:
+        manual_mode = policy.label if policy.manual_only else (choice or ADVANCED_SUBJECT)
+        if policy.manual_only:
+            custom_label, custom_placeholder = (
+                "本次整理学科（人工填写）",
+                "例如：英语、日语、高等数学",
+            )
+        elif manual_mode == ADVANCED_SUBJECT:
+            custom_label, custom_placeholder = (
+                "填写强基/竞赛学科或方向",
+                "例如：数学竞赛、物理强基",
+            )
+        else:
+            custom_label, custom_placeholder = (
+                "填写自定义学科或方向",
+                "例如：日语、英语阅读、高等数学",
+            )
         if remembered.get("manual_mode") != manual_mode:
             remembered["confirmed"] = ""
             remembered["manual_mode"] = manual_mode
         st.session_state[custom_key] = remembered["custom"]
         custom = st.text_input(
-            "本次整理学科（人工填写）" if policy.manual_only else "填写强基/竞赛学科或方向",
+            custom_label,
             key=custom_key,
-            placeholder=(
-                "例如：高等数学、理论力学" if policy.manual_only else "例如：数学竞赛、物理强基"
-            ),
+            placeholder=custom_placeholder,
             on_change=_remember_subject_value,
             args=(document_id, "custom", custom_key),
         ).strip()
         remembered["custom"] = custom
         if st.button("确认学科", key=f"join_subject_confirm_{document_id}", disabled=not custom):
-            remembered["confirmed"] = custom
-            st.toast(f"已确认学科：{custom}")
+            try:
+                save_subject(_database().database_path, custom)
+            except (OSError, ValueError):
+                LOGGER.exception("保存整理学科失败")
+                st.error("学科保存失败，请检查本地数据目录后重试。")
+            else:
+                remembered["confirmed"] = custom
+                st.toast(f"已保存学科：{custom}")
         confirmed = bool(custom) and remembered.get("confirmed") == custom
         st.caption(f"已确认本次整理学科：{custom}。" if confirmed else "填写后请点击「确认学科」。")
         result = custom if confirmed else ""

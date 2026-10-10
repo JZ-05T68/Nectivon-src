@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 LOGGER = logging.getLogger(__name__)
-SCHEMA_VERSION = 34
+SCHEMA_VERSION = 36
 
 # 仅用于 Phase 2B-V 失败注入验证；生产运行时恒为 None，永不触发。
 _V10_INJECTION_POINT: str | None = None
@@ -219,6 +219,12 @@ def migrate_database(database_path: Path) -> Path | None:
         if current_version < 34:
             _apply_version_thirty_four(connection)
             current_version = 34
+        if current_version < 35:
+            _apply_version_thirty_five(connection)
+            current_version = 35
+        if current_version < 36:
+            _apply_version_thirty_six(connection)
+            current_version = 36
         if current_version >= 17:
             _validate_version_fifteen_schema(connection)
             _validate_version_sixteen_schema(connection)
@@ -257,6 +263,10 @@ def migrate_database(database_path: Path) -> Path | None:
             _validate_version_thirty_three_schema(connection)
         if current_version >= 34:
             _validate_version_thirty_four_schema(connection)
+        if current_version >= 35:
+            _validate_version_thirty_five_schema(connection)
+        if current_version >= 36:
+            _validate_version_thirty_six_schema(connection)
         connection.execute("PRAGMA foreign_keys = ON")
         _validate_database_integrity(connection, stage="迁移后")
     except Exception as exc:
@@ -4666,6 +4676,79 @@ def _validate_version_thirty_four_schema(connection: sqlite3.Connection) -> None
     columns = {row[1] for row in connection.execute("PRAGMA table_info(question_nodes)")}
     if "has_shared_stem" not in columns:
         raise MigrationError("v34 校验失败：question_nodes 缺少 has_shared_stem 列。")
+
+
+def _apply_version_thirty_five(connection: sqlite3.Connection) -> None:
+    """Link learning questions to existing knowledge objects without copying either."""
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS question_knowledge_links (
+            question_id INTEGER NOT NULL REFERENCES question_items(id) ON DELETE CASCADE,
+            knowledge_object_id INTEGER NOT NULL
+                REFERENCES knowledge_objects(id) ON DELETE CASCADE,
+            note TEXT NOT NULL DEFAULT '' CHECK(length(note) <= 1000),
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (question_id, knowledge_object_id)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_question_knowledge_links_knowledge "
+        "ON question_knowledge_links(knowledge_object_id)"
+    )
+    connection.execute(
+        "INSERT INTO schema_migrations(version, applied_at) VALUES (35, ?)", (_utc_now(),)
+    )
+    connection.commit()
+
+
+def _validate_version_thirty_five_schema(connection: sqlite3.Connection) -> None:
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(question_knowledge_links)")}
+    if columns != {"question_id", "knowledge_object_id", "note", "created_at"}:
+        raise MigrationError("v35 校验失败：题目与知识关联表结构不完整。")
+    foreign_keys = {
+        (row[2], row[3], row[4], row[6])
+        for row in connection.execute("PRAGMA foreign_key_list(question_knowledge_links)")
+    }
+    if foreign_keys != {
+        ("question_items", "question_id", "id", "CASCADE"),
+        ("knowledge_objects", "knowledge_object_id", "id", "CASCADE"),
+    }:
+        raise MigrationError("v35 校验失败：题目与知识关联缺少完整的引用约束。")
+
+
+def _apply_version_thirty_six(connection: sqlite3.Connection) -> None:
+    """Store confirmed knowledge classifications separately from original material."""
+
+    with connection:
+        connection.execute("BEGIN")
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS knowledge_subject_classifications ("
+            "knowledge_object_id INTEGER PRIMARY KEY "
+            "REFERENCES knowledge_objects(id) ON DELETE CASCADE, "
+            "subject TEXT NOT NULL CHECK(length(subject) BETWEEN 1 AND 120), "
+            "subdiscipline TEXT NOT NULL DEFAULT '' CHECK(length(subdiscipline) <= 120))"
+        )
+        _validate_version_thirty_six_schema(connection)
+        connection.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (36, ?)", (_utc_now(),)
+        )
+
+
+def _validate_version_thirty_six_schema(connection: sqlite3.Connection) -> None:
+    """Reject incomplete classification metadata schemas before loading assets."""
+
+    columns = {row[1] for row in connection.execute(
+        "PRAGMA table_info(knowledge_subject_classifications)")}
+    foreign_keys = {
+        (row[2], row[3], row[4], row[6])
+        for row in connection.execute("PRAGMA foreign_key_list(knowledge_subject_classifications)")
+    }
+    if columns != {"knowledge_object_id", "subject", "subdiscipline"} or foreign_keys != {
+        ("knowledge_objects", "knowledge_object_id", "id", "CASCADE"),
+    }:
+        raise MigrationError("v36 校验失败：知识点学科分类表结构或引用约束不完整。")
 
 
 def _utc_now() -> str:

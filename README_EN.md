@@ -1,44 +1,53 @@
-# Nectivon v0.8.6
+# Nectivon v0.8.7
 
 [简体中文](README.md) | **English** | [日本語](README_JP.md)
 
 **Nectivon** (formerly **Engineering Knowledge Base / EKB**) is a local-first personal knowledge and experience system
 for accumulating, organizing, verifying, and recalling long-term personal knowledge assets.
 
-## Using v0.8.6
+## Using v0.8.7
 
-On Windows 10/11 with Python 3.11+, run `check_environment.bat` and install missing dependencies:
+On Windows 10/11 with Python 3.11, run `check_environment.bat` first. If dependencies are missing:
 
 ```powershell
 python -m pip install -r requirements\requirements.txt
 ```
 
-Start the local application with `启动正式版.bat` at `127.0.0.1:8501`; stop it with `stop_release.bat`.
-The source also provides isolated development launchers for ports 8511 and 8512. `run_all_tests.bat`
-runs Ruff and the Python regression suite. No API key is required to start or use offline features.
+- `启动正式版.bat` / `stop_release.bat`: start and stop the formal instance at `127.0.0.1:8501`.
+- `run_all_tests.bat`: run Ruff followed by the complete pytest suite.
 
-### Separate image-reading and explanation settings
+The source also includes launch scripts for isolated internal test instances on ports 8511/8512.
+Their materials, settings, and credentials are excluded from the public repository.
 
-Configure providers in System Settings → AI / Model Services. Image reading / question splitting
-and explanations / knowledge Q&A save their models and credentials independently. Image reading
-can be enabled by itself; existing configurations remain compatible. Saving settings does not call AI.
-Keys use Windows Credential Manager or a DPAPI-encrypted fallback and are excluded from this repository.
+### AI provider settings
 
-PDFs, Word, PowerPoint, and images share direct reading of original page images; Office files are
-converted locally first. Supported image presets use Qwen, DeepSeek, Kimi, or GLM. The reading flow
-does not send OCR, extracted text layers, or old summaries to the image model. Connection failures
-are reported explicitly. Original files, notes, search, and backups remain local.
+Qwen, DeepSeek, Kimi, Hunyuan, and GLM are optional. Select a provider and model and save its API key
+under `系统设置 → AI / 模型服务` (System Settings → AI / Model Services).
+Image reading / question splitting and explanations / knowledge Q&A have separate provider, model,
+and credential settings. Image-only configuration is supported; saving settings makes no AI call.
+Non-secret settings live in `%LOCALAPPDATA%\Nectivon\config\ai-providers-v1.json`.
+Keys use Windows Credential Manager, with a DPAPI-encrypted fallback at
+`%LOCALAPPDATA%\Nectivon\credentials\ai-v1.bin`. Internal test instances keep their settings and
+credentials under their own data roots. `.env` / `EKB_AI_API_KEY` remains a legacy Qwen compatibility entry.
+The application starts without keys; local knowledge management and local practice remain available.
 
-### Source crops and manual image revisions
+### Page recognition and question splitting
 
-Question candidates, learning organization, explanations, and practice share source-image crops and
-math rendering. Compare the original scan with a manually revised display image using drawing,
-text, color sampling, shapes, local restoration, zoom, undo, and redo. Changes take effect only after
-Save; local display copies and revision history preserve the original scan. AI continues to read the original.
+PDF, Word, PowerPoint, and uploaded images use original page images for visual recognition and question splitting.
+Word and PowerPoint are converted to PDF locally. This recognition path does not run OCR or send extracted
+text layers or old recognition summaries to the visual model. Original files and page images stay local.
+Figures and graphical options are cropped from the original page, and mathematical notation is rendered
+with LaTeX / KaTeX. Automatic recognition requires a configured visual model and network access;
+failures are reported without falling back to OCR or presenting old candidates as a new successful result.
+Image-capable Qwen, DeepSeek, Kimi, and GLM models can be selected in image settings.
+Text capability does not imply image capability; errors do not automatically switch providers.
 
-The 2026-10-06 source update also aligns learning subjects with training profiles and fixes font
-preferences, storage-path compatibility, and GMT+8 time display. The existing v0.8.6 tag and release
-retain the earlier release snapshot; `main` contains these subsequent revisions.
+### Original-image crops and manual drawing revisions
+
+Question candidates, learning organization, teach-back, and practice share image crops and mathematical
+display. Compare with the original scan and edit the display copy with drawing, text, color picking,
+shapes, local restoration, zoom, and undo/redo. Changes apply only on explicit save; display copies and
+revision history stay local. Original page images are retained and AI still reads the original page.
 
 ## Product Positioning
 
@@ -74,8 +83,41 @@ materials -> understanding -> knowledge objects -> source verification -> person
 
 ## Current Version
 
-The current source version is v0.8.6; see this repository's v0.8.6 tag and release for the release identity. Port 8511 is an internal test instance. v0.8.4 was rejected after further defects were found and is **not** the current formal release. The v0.8.4 material below records only historical development and bounded test findings.
+The current source version is v0.8.7, in personal-use maintenance with stability, trustworthy materials,
+and small fixes taking priority. As of 2026-10-10, the latest formal tag / release is still v0.8.6;
+this source update does not create a v0.8.7 release. Ports 8511/8512 are isolated internal test instances.
+v0.8.4 was rejected after further defects were found and is **not** the current formal release.
+The v0.8.4 material below records only historical development and bounded test findings.
 The public distribution omits the school, undergraduate-major, and catalog-source JSON files whose redistribution basis is unconfirmed. Without them, higher-education catalog lookup and new profile configuration explicitly report that the data is unavailable. Saved records are retained; basic-education configuration, import, retrieval, learning organization, teach-back, and local practice remain available. Catalog-dependent regression tests require separately authorized data.
+
+### Implemented scope in v0.8.7
+
+- **Knowledge connections** (`知识串联`): a peer of learning organization. The graph reads questions,
+  knowledge objects, families, sources, and mastery records from the existing SQLite database,
+  without creating another knowledge store. Subject navigation includes subfields for computer science,
+  psychology, and cybersecurity.
+- **Optional AI knowledge mining**: create knowledge-point, relation, and classification drafts with
+  source-page references from imported text. Nothing is saved until the user reviews and confirms it.
+  Each generation makes one bounded call, without automatic repeated paid requests.
+- **Mathematical reading of knowledge points**: an enabled AI can typeset formulas after the user's
+  original text is saved. Original text, sources, and revision history are retained. Offline saving and
+  original-text reading still work when AI is unavailable or typesetting fails; compare the result with the original.
+- **Foreign-language layer one**: English, Japanese, and other language subjects use the saved subject
+  name for local routing, without a separate AI subject-classification call. After working independently
+  and correcting answers, describe the reasoning used. AI reviews evidence and understanding against
+  the source, questions, answers, and actual reasoning, including correct answers; it must not assert
+  guessing without evidence. Explanations adapt to the question type. Foreign-language work ends at
+  layer one, with no families, mastery practice, two wings, or extra review. Other subjects retain their existing flow.
+- **System dictation**: native text fields retain ordinary editing; this compatibility fix adds no speech API.
+  The graph command field now ignores Enter used to confirm input-method composition.
+- **Optional graph gestures and voice control**: camera or microphone permission is required.
+  Gesture models are bundled locally and camera frames are processed on the device. Browser speech
+  recognition may require a network connection; typing remains available. AR, independent Obsidian
+  import/watch, and direct browser-to-AI calls are outside the Nectivon integration.
+
+Browser text entry, editing, saving, and composition regressions were checked. Real microphone dictation
+across devices and live-model foreign-language explanation quality have not been accepted on real devices.
+Automated tests and limited browser checks do not certify every feature across devices.
 
 ### v0.8.4 — Historical Development and Bounded Reliability Tests (Rejected)
 
@@ -99,7 +141,7 @@ The v0.8.4 backend reliability baseline is frozen, but this is not a claim of pe
 guarantee that the product can never fail. A small amount of Honest Omission remains: relevant
 material may exist but not be retrieved in a given query. In that case, the system should say that
 the current evidence is insufficient rather than fill the gap with unrelated content. Zero-Batch
-real-user validation and further product work remained necessary. Those historical results do not replace the v0.8.6 release audit or human acceptance testing.
+real-user validation and further product work remained necessary. Those historical results do not replace the v0.8.7 release audit or human acceptance testing.
 
 ## Historical v0.8.4 Reliability Evidence (Not a Current Release Finding)
 
@@ -329,7 +371,8 @@ The source implements local-first material import and page handling (PDF, Word, 
 
 ### v0.9.0 — Limited Preview
 
-The next focus is real-user feedback and inputs for the v0.9.x hardening
+The current priority is v0.8.7 stability and trustworthy materials, without automatically expanding scope.
+Future work may use real-user feedback and inputs for the v0.9.x hardening
 stage. v0.9.x will continue to focus on long-running operation, cost, context, memory pollution,
 evaluation, and related engineering hardening. Only completed and validated capabilities should be
 described as shipped.
@@ -355,8 +398,8 @@ an API key.
 ## Quality Checks
 
 ```powershell
-python -m pytest --ignore=tests/test_hosted_packaging.py -q
 python -m ruff check .
+python -m pytest
 git diff --check
 ```
 
@@ -371,6 +414,7 @@ should be inferred.
 ## Documentation
 
 - [Changelog](CHANGELOG.md)
+- [v0.8.7 source maintenance and validation notes](docs/v0.8.7-maintenance-notes.md)
 - [GitHub Releases](https://github.com/JZ-05T68/Nectivon-src/releases)
 
 `README.md`, `README_EN.md`, and `README_JP.md` are fact-equivalent official project documents. Current version,

@@ -1,0 +1,117 @@
+{
+    "upstream":  "https://github.com/xinbenxiangyang/star-vault",
+    "commit":  "635ec41e72fc09dc3635620ac2250f99d601a0d8",
+    "verifiedAt":  "2026-10-06 23:03:26 Asia/Shanghai",
+    "sourceFilesMatched":  8,
+    "inlineScriptsSyntaxChecked":  6,
+    "externalScriptsSyntaxChecked":  3,
+    "files":  [
+                  {
+                      "file":  "README.md",
+                      "bytes":  3039,
+                      "gitBlob":  "a311183cd6a5539e15ba7c669c88a0f52d72eb84",
+                      "sha256":  "ad9bccd7430f68fe3b93486cf4ab91cf949b5f9d5d221a7e63d207c3ad2b695f"
+                  },
+                  {
+                      "file":  "assets/hand-model.js",
+                      "bytes":  10425505,
+                      "gitBlob":  "e95466a37df84ce46762cfc68c61f1e12b532be0",
+                      "sha256":  "df83de8a63b93564b91b51fc7121c9df2ad39907d9a617a2daa826a8c2f8d81a"
+                  },
+                  {
+                      "file":  "assets/hand-wasm.js",
+                      "bytes":  16011136,
+                      "gitBlob":  "de8cbb342c91ca907ea0bf85c75938a154f8f357",
+                      "sha256":  "9fca9da0f2e4a287de3721cba1f383008153e10b94de077bb82c6853e43bfef7"
+                  },
+                  {
+                      "file":  "assets/ok.js",
+                      "bytes":  32,
+                      "gitBlob":  "7389dfcb14e92ba2729acd3a2edfcf9dbd6ae4a1",
+                      "sha256":  "b143813c66d9c49aa565dc4ae1960c374073a474d24bdcb057a7e5cfe4508eba"
+                  },
+                  {
+                      "file":  "index.html",
+                      "bytes":  1911765,
+                      "gitBlob":  "ce1c6bcdfe221def59dd8cfd52e0a5124fe9ea37",
+                      "sha256":  "346ccf264d465edfe7dfbd92bd56a358f0b8f596b3f159c04eef60aaa09fdb9f"
+                  },
+                  {
+                      "file":  "使用说明.txt",
+                      "bytes":  6946,
+                      "gitBlob":  "0e82f2a63009544696173f0c561390a3fae5acb4",
+                      "sha256":  "23a568ec2bd0a17507c5c13c5c5d43a18873b1775cf26166b891e763fa960c27"
+                  },
+                  {
+                      "file":  "启动本地服务-Mac.command",
+                      "bytes":  1154,
+                      "gitBlob":  "abc78c72f650488290e53a94dc14c0fa3954b682",
+                      "sha256":  "13e62c4d1db82482e2965e4d128aba3fece85f572818b222df3df3989366e3c2"
+                  },
+                  {
+                      "file":  "启动本地服务-Windows.bat",
+                      "bytes":  767,
+                      "gitBlob":  "6435dac65a454cb9fbb44c734aee395a2f4c8060",
+                      "sha256":  "55cf6e3ecb81721c89e36c6d5016d7f45e8d36021ad1b0ad38b211e728e7da41"
+                  }
+              ],
+    "httpChecks":  [
+                       {
+                           "method":  "GET",
+                           "path":  "/",
+                           "status":  200,
+                           "bytes":  1911765
+                       },
+                       {
+                           "method":  "HEAD",
+                           "path":  "/",
+                           "status":  200,
+                           "bytes":  0
+                       },
+                       {
+                           "method":  "GET",
+                           "path":  "/assets/ok.js",
+                           "status":  200,
+                           "bytes":  32
+                       },
+                       {
+                           "method":  "GET",
+                           "path":  "/assets/hand-model.js",
+                           "status":  200,
+                           "bytes":  10425505
+                       },
+                       {
+                           "method":  "GET",
+                           "path":  "/assets/hand-wasm.js",
+                           "status":  200,
+                           "bytes":  16011136
+                       },
+                       {
+                           "method":  "GET",
+                           "path":  "/missing.html",
+                           "status":  404,
+                           "bytes":  0
+                       },
+                       {
+                           "method":  "GET",
+                           "path":  "/Serve-Star-Vault.ps1",
+                           "status":  403,
+                           "bytes":  0
+                       },
+                       {
+                           "method":  "POST",
+                           "path":  "/",
+                           "status":  405,
+                           "bytes":  0
+                       }
+                   ],
+    "browserChecks":  [
+                          "3D star map rendered with 78 notes, 6 constellations and 122 links",
+                          "Constellation navigation passed",
+                          "Mouse note selection and detail opening passed",
+                          "Backlink navigation passed",
+                          "Obsidian settings panel passed",
+                          "Camera disabled after initialization",
+                          "No console errors; two upstream MediaPipe graphics warnings observed"
+                      ]
+}

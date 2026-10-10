@@ -172,6 +172,8 @@ class KnowledgeObjectService:
         source_links: Sequence[
             tuple[KnowledgeObjectSourceType | str, int, str]
         ] = (),
+        subject: str = "",
+        subdiscipline: str = "",
     ) -> KnowledgeObjectView:
         """Create one knowledge object and optionally link its sources.
 
@@ -189,6 +191,14 @@ class KnowledgeObjectService:
                 "形成依据不能选择「未知（旧数据）」，请选择明确的依据。"
             )
         normalized_links = self._validate_source_links(source_links)
+        if subject or subdiscipline:
+            # Existing readers and unclassified objects need no learner-profile catalogue.
+            from src.knowledge_taxonomy import normalize_classification
+
+            if normalize_classification(subject, subdiscipline) != (subject, subdiscipline):
+                raise KnowledgeObjectValidationError(
+                    "学科或二级方向不在知识星图分类中，请重新选择。"
+                )
         with self._database.knowledge_transaction() as connection:
             knowledge_object = self._database.create_knowledge_object(
                 kind=kind,
@@ -201,6 +211,12 @@ class KnowledgeObjectService:
                 confirmation_status=KnowledgeConfirmationStatus.UNCONFIRMED,
                 connection=connection,
             )
+            if subject:
+                connection.execute(
+                    "INSERT INTO knowledge_subject_classifications "
+                    "(knowledge_object_id, subject, subdiscipline) VALUES (?, ?, ?)",
+                    (knowledge_object.id, subject, subdiscipline),
+                )
             self._insert_revision(
                 connection,
                 knowledge_object,

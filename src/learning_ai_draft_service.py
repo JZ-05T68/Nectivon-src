@@ -25,6 +25,7 @@ import re
 from typing import Final
 
 from src.ai.completion_stage import CompletionStage, completion_stage_scope
+from src.learning_subject_policy import is_foreign_language_subject
 from src.question_recognition_rules import MATH_NOTATION_RULES
 
 LOGGER = logging.getLogger(__name__)
@@ -466,6 +467,8 @@ class LearningAIDraftService:
     ) -> dict:
         """Generate four editable reference fields once, without judging the student."""
 
+        if is_foreign_language_subject(getattr(question, "subject", "")):
+            return self._language_drafts(question, reference_only=True, image_data=image_data)
         source = _question_with_context(question)
         if not source:
             raise LearningAIDraftError("本题题干为空，无法生成参考版。")
@@ -552,6 +555,8 @@ class LearningAIDraftService:
         ``correction`` is always empty when the verdict is not 错误.
         """
 
+        if is_foreign_language_subject(getattr(question, "subject", "")):
+            return self._language_drafts(question, reference_only=False)
         source_content = ""
         if isinstance(question.ai_draft, dict):
             source_content = _clean_str(question.ai_draft.get("content"))
@@ -747,6 +752,8 @@ class LearningAIDraftService:
 
         if question.teacher_verdict != "incorrect":
             raise LearningAIDraftError("这道题没有判定为错误，不需要生成订正。")
+        if is_foreign_language_subject(getattr(question, "subject", "")):
+            return self._language_drafts(question, reference_only=True)["correction"]
         source_content = ""
         if isinstance(question.ai_draft, dict):
             source_content = _clean_str(question.ai_draft.get("content"))
@@ -791,6 +798,8 @@ class LearningAIDraftService:
     def generate_wing_draft(self, question, wing_kind: str) -> dict:
         """Draft one wing for a question; fields keep the service schema keys."""
 
+        if is_foreign_language_subject(getattr(question, "subject", "")):
+            raise LearningAIDraftError("外语学科只做第一层整理，不生成两翼。")
         if wing_kind not in ("method_trigger", "boundary_counterexample"):
             raise LearningAIDraftError("翼类型无效。")
         source_content = ""
@@ -893,6 +902,8 @@ class LearningAIDraftService:
         rewritten into a pass.
         """
 
+        if is_foreign_language_subject(getattr(question, "subject", "")):
+            return self._review_language_reasoning(question, content)
         if not content.strip():
             raise LearningAIDraftError("自我讲解内容为空。")
         source_content = ""
@@ -1068,6 +1079,113 @@ class LearningAIDraftService:
             "feedback": feedback,
             "improvements": improvements,
             "full_explanation": full_explanation,
+        }
+
+    # ------------------------------------------------------- language layer 1
+    def _language_context(self, question, content: str = "") -> str:
+        """Use the same saved question/provenance and the user's own words."""
+
+        draft = question.ai_draft if isinstance(question.ai_draft, dict) else {}
+        source = _question_with_context(question, _clean_str(draft.get("content")), limit=24001)
+        if not source:
+            raise LearningAIDraftError("本题原文或题目为空，请先核对并补充资料。")
+        if len(source) > 24000:
+            raise LearningAIDraftError("本题外语材料过长，请保留相关原文与当前小问后再讲解。")
+        return (
+            "你是外语学科学习整理助手，只做第一层，完成讲解和整理后结束。"
+            "学科由用户填写并保存，禁止额外进行 AI 学科识别。\n"
+            f"【已保存学科】{question.subject}\n【原文、公共材料及当前题目】\n{source}\n"
+            f"【用户实际作答】\n{question.student_answer or '未提供'}\n"
+            f"【用户提供的对照答案与批改说明】\n{question.teacher_comment or '未提供'}\n"
+            f"【已保存判定】{question.teacher_verdict or '未判定'}\n"
+            f"【已有订正/参考版（可能是 AI 草稿，不是标准答案）】\n"
+            f"{question.correction_note or '未提供'}\n"
+            f"【用户当时的做题思路】\n{content or '未提供'}\n"
+            "用户先独立做题，再对照答案批改订正，最后描述当时的思路。"
+            "根据实际题型调整重点，不强行套阅读理解模式。阅读理解逐题核对原文依据、"
+            "选项与用户原话：作答依据是否成立，词汇理解障碍、同义替换、定位错误、"
+            "选项理解偏差以及是否存在猜测。答对也检查是否真正理解，"
+            "不能只根据正误下结论，更不能没有证据就认定用户是猜的。"
+            "区分已证实的问题、可能的问题和无法判断；对每个诊断引用原文/题号/用户原话，"
+            "没有相应证据时明确说无法判断，可请用户补充原来的依据，不能编造。"
+            "学生自行纠正的口误按纠正后的意思理解。保留英文、日文原句，不把字母当数学变量。"
+            "语法、完形、翻译、写作等按本题语言要求解释。禁止套公式推导、方法归纳、"
+            "举一反三，不进入第二层、第三层、两翼，不安排额外复盘或训练。"
+            "资料不足或答案与原文冲突时说明待核对，不猜唯一答案，不声称联网核验。\n"
+        )
+
+    def _language_drafts(
+        self, question, *, reference_only: bool, image_data: str | None = None,
+    ) -> dict:
+        """Return the existing editable first-layer fields without family suggestions."""
+
+        prompt = self._language_context(question) + (
+            "当前只生成参考讲解，用户尚未描述当时思路，不诊断用户的理解或错因。"
+            "附图如有是本题材料，请核对原文。只返回 JSON："
+            '{"correction":"本题参考答案及原文依据；不足时写明待核对",'
+            '"analysis":"结合题型解释词句、原文与选项的关系",'
+            '"method_tags":["实际题型"],"solution_method":"本题的作答依据与语言要点"}。'
+            "不输出归纳族或二级结论，不虚构学生行为。"
+        )
+        raw = self._complete(
+            prompt, target_refs=(f"question:{question.id}",), max_tokens=4096,
+            image_data=image_data,
+        )
+        data = _parse_json_object(raw)
+        fields = {key: _clean_str(data.get(key))
+                  for key in ("correction", "analysis", "solution_method")}
+        tags = _as_list(data.get("method_tags"))
+        if not all(fields.values()) or not tags:
+            raise LearningAIDraftError("外语参考讲解不完整，本次未写入，请核对原文与题目。")
+        verdict = getattr(question, "teacher_verdict", None) or "none"
+        return {
+            **fields, "method_tags": tags, "original_reference": dict(data),
+            "stem": "", "student_answer": "", "student_answer_gate": "closed",
+            "verdict": verdict, "reason_tags": [], "type_family": None,
+            "method_families": [], "secondary_conclusion": None,
+            "correction": fields["correction"] if reference_only or verdict == "incorrect" else "",
+        }
+
+    def _review_language_reasoning(self, question, content: str) -> dict:
+        """Review actual reasoning using the existing explanation feedback contract."""
+
+        if not content.strip():
+            raise LearningAIDraftError("请先描述你当时的做题思路。")
+        prompt = self._language_context(question, content) + (
+            "审核这份实际思路，不是润色，也不是新的训练任务。"
+            "判定只描述思路的证据充分程度，不是作答对错或掌握评级。"
+            "缺少原文、选项、对照答案或实际依据时明确说明缺什么；"
+            "full_explanation 不得补造未提供的答案。只返回 JSON："
+            '{"verdict":"gaps|basically_clear|complete",'
+            '"what_worked":["有证据支持的理解与依据"],'
+            '"missing":["具体问题或尚缺证据，标明区别"],'
+            '"feedback":"逐题引用用户原话与原文依据说明判断",'
+            '"improvements":["本题需澄清的词句或选项理解"],'
+            '"full_explanation":"结合实际题型的讲解，资料不足时留空"}。'
+        )
+        raw = self._complete(prompt, target_refs=(f"question:{question.id}",), max_tokens=4096)
+        data = _parse_json_object(raw)
+        verdict = _clean_str(data.get("verdict"))
+        if verdict not in ("gaps", "basically_clear", "complete") or not data.get("feedback"):
+            raise LearningAIDraftError("AI 未返回有效的外语思路讲解，本次反馈未保存。")
+        # A correct/incorrect answer is never evidence that the user guessed.
+        # Reject an explicit guessing accusation when their own account contains none;
+        # negative statements such as "不能认定你在猜" remain valid uncertainty feedback.
+        claims = json.dumps(data, ensure_ascii=False)
+        if not re.search(r"猜|蒙|随机|随便|guess|at random", content, re.IGNORECASE):
+            for clause in re.split(r"[。！？\n，；]", claims):
+                if re.search(r"无法|不能|不可|没有依据|无依据|不足以|不应|不是|并非", clause):
+                    continue
+                if re.search(r"(?:你|学生|用户).{0,12}(?:猜|蒙)|猜对|蒙对|靠猜|靠蒙", clause):
+                    raise LearningAIDraftError(
+                        "AI 在缺少你明确描述的情况下认定猜测，本次反馈未保存；"
+                        "你的思路记录保留，请对照原文人工核对。"
+                    )
+        return {
+            "verdict": verdict,
+            **{key: _as_list(data.get(key)) for key in ("what_worked", "missing", "improvements")},
+            "feedback": _clean_str(data.get("feedback")),
+            "full_explanation": _clean_str(data.get("full_explanation")),
         }
 
     # ------------------------------------------------------- open answers

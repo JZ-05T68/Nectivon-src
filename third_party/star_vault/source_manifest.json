@@ -1,0 +1,65 @@
+{
+  "source": "star-vault source snapshot (public distribution authorized by user on 2026-10-10)",
+  "files": [
+    {
+      "path": "assets/hand-model.js",
+      "bytes": 10425505,
+      "sha256": "df83de8a63b93564b91b51fc7121c9df2ad39907d9a617a2daa826a8c2f8d81a"
+    },
+    {
+      "path": "assets/hand-wasm.js",
+      "bytes": 16011136,
+      "sha256": "9fca9da0f2e4a287de3721cba1f383008153e10b94de077bb82c6853e43bfef7"
+    },
+    {
+      "path": "assets/ok.js",
+      "bytes": 32,
+      "sha256": "b143813c66d9c49aa565dc4ae1960c374073a474d24bdcb057a7e5cfe4508eba"
+    },
+    {
+      "path": "index.html",
+      "bytes": 1911765,
+      "sha256": "346ccf264d465edfe7dfbd92bd56a358f0b8f596b3f159c04eef60aaa09fdb9f"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3039,
+      "sha256": "ad9bccd7430f68fe3b93486cf4ab91cf949b5f9d5d221a7e63d207c3ad2b695f"
+    },
+    {
+      "path": "Serve-Star-Vault.ps1",
+      "bytes": 3198,
+      "sha256": "d971aa3e83fdd074d199cdec203389d18925c1ade18c70751836806fc182d1c6"
+    },
+    {
+      "path": "Start-Star-Vault.bat",
+      "bytes": 156,
+      "sha256": "362cba0c906e6044069881eb10c453036e766351549ec249e0a9f1d38c8b877c"
+    },
+    {
+      "path": "verification.json",
+      "bytes": 5390,
+      "sha256": "73e350ecd35fa7d4c4e4ccfb0bfb37827e9e2f1c12a8b5839ac5f7544e8f7f7e"
+    },
+    {
+      "path": "使用说明.txt",
+      "bytes": 6946,
+      "sha256": "23a568ec2bd0a17507c5c13c5c5d43a18873b1775cf26166b891e763fa960c27"
+    },
+    {
+      "path": "启动本地服务-Mac.command",
+      "bytes": 1154,
+      "sha256": "13e62c4d1db82482e2965e4d128aba3fece85f572818b222df3df3989366e3c2"
+    },
+    {
+      "path": "启动本地服务-Windows.bat",
+      "bytes": 767,
+      "sha256": "55cf6e3ecb81721c89e36c6d5016d7f45e8d36021ad1b0ad38b211e728e7da41"
+    },
+    {
+      "path": "复现说明.md",
+      "bytes": 3639,
+      "sha256": "be3d2564dc1a5d5d4ceff10c2c28375b3eb196ca8e0c8308fc6b14b949453a50"
+    }
+  ]
+}

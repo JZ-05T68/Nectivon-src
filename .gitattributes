@@ -4,3 +4,8 @@
 *.cmd text eol=crlf
 # VBS files are UTF-16LE with a BOM; treat them as binary, no normalization.
 *.vbs -text
+# Preserve verified upstream bytes and deterministic generated resources.
+third_party/star_vault/** -text -whitespace
+src/components/knowledge_starmap/** -text
+src/components/knowledge_starmap/index.html -whitespace
+src/components/knowledge_starmap/assets/** -whitespace

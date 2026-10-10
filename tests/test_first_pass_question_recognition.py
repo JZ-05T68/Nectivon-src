@@ -206,13 +206,14 @@ def test_v33_upgrade_keeps_legacy_context_unknown_and_raw_text_intact(tmp_path: 
     Database(path)
     with sqlite3.connect(path) as connection:
         connection.execute("ALTER TABLE question_nodes DROP COLUMN has_shared_stem")
-        connection.execute("DELETE FROM schema_migrations WHERE version=34")
+        connection.execute("DROP TABLE question_knowledge_links")
+        connection.execute("DELETE FROM schema_migrations WHERE version>=34")
     backup = migrate_database(path)
     assert backup is not None and backup.is_file()
     with sqlite3.connect(path) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(question_nodes)")}
         assert "has_shared_stem" in columns
-        assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 34
+        assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 36
 
 
 def test_first_pass_prompt_covers_semantics_and_advanced_mathematics() -> None:

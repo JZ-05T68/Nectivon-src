@@ -100,8 +100,8 @@ scripts/apply_stage4_review_fixes.py
 scripts/audit_stage4_review.py
 scripts/verify_stage4_first_pass.py
 
-# Public source snapshots exclude internal reports and restricted catalogs.
-/docs/
+# Public source: runtime data and catalog inputs requiring separate authorization
+/data/review-exams/
 /src/data/schools.json
 /src/data/undergraduate_majors.json
 /src/data/training_profile_catalog_sources.json

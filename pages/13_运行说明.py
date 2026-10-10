@@ -8,10 +8,11 @@ import streamlit as st
 
 from src import __version__
 from src.config import OFFICIAL_PORT, STAGING_PORT, settings_env_path
+from src.factory_reset_service import FactoryResetError, reset_failed_import_traces
 from src.font_size_preferences import read_font_level, write_font_level
 from src.migrations import SCHEMA_VERSION
 from src.provider_settings_ui import render_provider_settings
-from src.runtime import application_settings
+from src.runtime import application_database, application_settings
 from src.storage_location_service import (
     StorageLocationError,
     relocate_storage,
@@ -30,6 +31,48 @@ st.success(f"服务正常运行：{settings.host}:{settings.port}")
 st.caption("健康检查由本机 Streamlit 内置端点 `/_stcore/health` 提供，不包含用户资料。")
 
 render_provider_settings()
+
+st.subheader("恢复出厂设置")
+st.caption(
+    "仅清除失败的导入历史、失败的导入队列条目和本地日志内容。"
+    "不会删除原 PDF、页面图片、Markdown、文档/页面数据、笔记、学习整理、"
+    "知识串联、备份或其他文件；待处理、中断、已完成和部分完成的导入记录会保留。"
+)
+factory_reset_confirmed = st.checkbox(
+    "我确认清除失败导入记录并清空日志文件内容（保留文件本身）",
+    key="factory_reset_failed_imports_confirmed",
+)
+if st.button(
+    "恢复出厂设置",
+    type="secondary",
+    use_container_width=True,
+    disabled=not factory_reset_confirmed,
+):
+    try:
+        reset_result = reset_failed_import_traces(
+            application_database(), settings.logs_dir
+        )
+    except FactoryResetError as exc:
+        st.error(str(exc))
+    except Exception as exc:
+        LOGGER.exception("恢复出厂设置时清理失败记录未完成")
+        st.error(f"清理失败记录未完成：{exc}")
+    else:
+        st.session_state["factory_reset_last_result"] = reset_result
+
+reset_result = st.session_state.get("factory_reset_last_result")
+if reset_result is not None:
+    st.success(
+        "清理完成：删除失败导入历史 "
+        f"{reset_result.failed_import_records} 条、失败队列条目 "
+        f"{reset_result.failed_queue_entries} 条；清空日志文件 "
+        f"{reset_result.cleared_log_files} 个（{reset_result.cleared_log_bytes} 字节）。"
+    )
+    if reset_result.log_failures:
+        st.warning(
+            "以下日志文件未能清空，请检查文件占用或权限："
+            + "、".join(reset_result.log_failures)
+        )
 
 st.subheader("本地位置")
 st.code(

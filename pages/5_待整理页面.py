@@ -17,6 +17,7 @@ from src.batch_ui import (
 from src.learning_entry_ui import render_join_learning_section
 from src.models import Page, PageStatus
 from src.page_jump_ui import render_page_jump
+from src.review_exam_ui import render_exam_questions, render_exam_scan
 from src.review_shortcuts import review_shortcuts_html
 from src.runtime import (
     application_classification_metadata_service,
@@ -368,24 +369,9 @@ if st.button(
         _go_to_page(continuation_page.id)
     st.rerun()
 
-if st.button("整份资料重新读图并切分", key=f"review_read_document_{document.id}"):
-    from src.runtime import application_page_image_reader
-
-    bar = st.progress(0.0, text="正在逐页直接读图……")
-    try:
-        application_page_image_reader().read_document(
-            document.id,
-            force=True,
-            progress_callback=lambda current, total: bar.progress(
-                current / total, text=f"已处理 {current}/{total} 页",
-            ),
-        )
-    except Exception as exc:
-        LOGGER.exception("整份资料读图失败：document_id=%s", document.id)
-        st.error(str(exc))
-    else:
-        st.session_state[_FLASH_KEY] = ("success", "整份资料已直接读图并切分，已有校对已保留。")
-        st.rerun()
+exam_report = render_exam_scan(document, database)
+if exam_report is not None:
+    render_exam_questions(exam_report, page.id)
 
 image_column, editor_column = st.columns([1, 1], gap="large")
 with image_column:
@@ -421,7 +407,11 @@ with editor_column:
     # Geography G1 WORKFLOW CHANGE 1: the per-question candidate flow is the
     # primary page workflow.  The whole-page Markdown editor is demoted to
     # an advanced expander below (kept for corrections and provenance).
-    render_join_learning_section(page)
+    if exam_report is None:
+        render_join_learning_section(page)
+    else:
+        with st.expander("本页题目候选与原有单页切块入口"):
+            render_join_learning_section(page)
     from src.page_image_ui import render_page_image_blocks
 
     render_page_image_blocks(page, database.image_readings_dir)

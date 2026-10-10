@@ -1,6 +1,7 @@
 """Real Streamlit rerun regressions for the five October review-page issues."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -8,9 +9,18 @@ from streamlit.testing.v1 import AppTest
 import src.learning_entry_ui as entry_ui
 import src.runtime as runtime
 from src.database import Database
+from src.learning_subject_policy import MANUAL_SUBJECT
 from src.learning_workflow_service import QuestionService
 from src.math_formatting_service import display_field, format_candidate_math
 from src.question_candidate_service import QuestionCandidate, QuestionCandidateStore
+
+
+@pytest.fixture(autouse=True)
+def _isolated_subject_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep saved subject names in temporary metadata for AppTest reruns."""
+
+    database = SimpleNamespace(database_path=tmp_path / "metadata" / "knowledge.db")
+    monkeypatch.setattr(runtime, "application_database", lambda: database)
 
 
 def _subject_app(existing_subject: str = "", *, higher: bool = False) -> AppTest:
@@ -57,10 +67,12 @@ def test_subject_survives_widget_cleanup_after_navigation() -> None:
 
 def test_custom_subject_survives_navigation() -> None:
     app = _subject_app(higher=True)
+    app.selectbox[0].select(MANUAL_SUBJECT).run()
     app.text_input[0].set_value("工程力学").run()
     next(b for b in app.button if b.label == "确认学科").click().run()
     app.radio[0].set_value("学习").run()
     app.radio[0].set_value("审核").run()
+    assert app.selectbox[0].value == MANUAL_SUBJECT
     assert app.text_input[0].value == "工程力学"
     assert not next(b for b in app.button if b.label == "加入学习整理").disabled
 

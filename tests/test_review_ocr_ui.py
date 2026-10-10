@@ -139,7 +139,7 @@ def test_review_has_only_direct_image_recognition_controls(
     assert not app.exception
     labels = [button.label for button in app.button]
     assert "重新读图并切分本页" in labels
-    assert "整份资料重新读图并切分" in labels
+    assert "扫描整卷并统一切分题目" in labels
     assert "重新识别" not in labels
     assert "识别这一页的文字" not in labels
     assert engine.calls == []

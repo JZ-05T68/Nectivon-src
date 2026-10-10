@@ -1,4 +1,4 @@
-"""Build the deterministic Nectivon v0.8.6 release archive."""
+"""Build the deterministic Nectivon v0.8.7 release archive."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import zipfile
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT = PROJECT_ROOT / "Nectivon_v0.8.6_release.zip"
-ARCHIVE_ROOT = "Nectivon_v0.8.6"
+DEFAULT_OUTPUT = PROJECT_ROOT / "Nectivon_v0.8.7_release.zip"
+ARCHIVE_ROOT = "Nectivon_v0.8.7"
 ZIP_TIMESTAMP = (2026, 10, 1, 0, 0, 0)
 
 EXCLUDED_DIR_NAMES = {
@@ -44,10 +44,11 @@ EXCLUDED_FILE_SUFFIXES = {
 EXCLUDED_FILE_NAMES = {
     ".coverage",
     ".zcodeignore",
-    "Nectivon_v0.8.6_release.zip",
+    "Nectivon_v0.8.7_release.zip",
 }
 
 TOP_LEVEL_INCLUDE_DIRS = (
+    "third_party",
     "src",
     "pages",
     "tests",
@@ -57,6 +58,7 @@ TOP_LEVEL_INCLUDE_DIRS = (
     ".streamlit",
     "benchmarks",
     "packaging",
+    "docs",
 )
 
 EMPTY_RUNTIME_DIRS = (
@@ -97,17 +99,6 @@ TOP_LEVEL_INCLUDE_FILES = (
 def should_skip(path: Path) -> bool:
     """Return whether a source path is transient or unsafe to ship."""
 
-    relative = path.relative_to(PROJECT_ROOT).as_posix()
-    if relative in {
-        "src/data/schools.json",
-        "src/data/undergraduate_majors.json",
-        "src/data/training_profile_catalog_sources.json",
-    }:
-        return True
-    if path.name == "secrets.toml" or (
-        path.name.startswith(".env") and path.name != ".env.example"
-    ):
-        return True
     if any(part in EXCLUDED_DIR_NAMES for part in path.parts):
         return True
     if path.suffix.lower() in EXCLUDED_FILE_SUFFIXES:
@@ -176,7 +167,7 @@ def build_zip(output: Path) -> Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build Nectivon v0.8.6 release zip")
+    parser = argparse.ArgumentParser(description="Build Nectivon v0.8.7 release zip")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     arguments = parser.parse_args()
     build_zip(arguments.output)

@@ -47,6 +47,7 @@ from src.learning_ai_draft_service import (
     LearningAIDraftError,
     LearningAIDraftService,
 )
+from src.learning_subject_policy import is_foreign_language_subject
 from src.learning_workflow_service import (
     WING_KINDS,
     LearningWorkflowError,
@@ -226,7 +227,7 @@ def _ai_service() -> LearningAIDraftService | None:
 def _question_selectbox(label: str, key: str, *, question_id: int | None = None):
     """Shared question picker; returns the selected QuestionItem or None."""
 
-    questions = question_service.list_question_items()
+    questions = question_service.list_question_items(include_first_layer_only=False)
     if not questions:
         st.caption("还没有整理过的题目。")
         return None
@@ -536,11 +537,13 @@ def _render_saved_question_content(question) -> bool:
     """Keep per-option images visible in every full-question learning view."""
 
     path, regions = _question_visual_source(question)
+    math_notation = not is_foreign_language_subject(question.subject)
     original = (question.ai_draft or {}).get("image_recognized_original", {})
     if (original.get("human_stem_preserved") and original.get("stem")
             and original["stem"] != question.stem_text):
         with st.expander("本次 AI 读图原题（人工修订已保留）"):
-            render_question_content(original["stem"], image_path=path, regions=regions)
+            render_question_content(original["stem"], image_path=path, regions=regions,
+                                    math_notation=math_notation)
     # The read/teach-back view already displayed shared crops with the parent
     # conditions. Count those successful crops so a full-page fallback is not
     # repeated below the child's stem.
@@ -551,7 +554,8 @@ def _render_saved_question_content(question) -> bool:
     if not question.shared_context.strip():
         shown = render_region_images(path, [r for r in regions if r["role"] == "shared"])
     return render_question_content(
-        display_field(question, "stem_text"), image_path=path, regions=regions,
+        question.stem_text if not math_notation else display_field(question, "stem_text"),
+        image_path=path, regions=regions, math_notation=math_notation,
     ) or shown
 
 
@@ -659,6 +663,8 @@ def _render_question_read_view(question, key_prefix: str, edit_flag_key: str) ->
     阅读卡干净，但危险操作不藏没。
     """
 
+    language_only = is_foreign_language_subject(question.subject)
+    render_text = st.markdown if language_only else render_question_math_markdown
     structure = (
         question.ai_draft.get("question_structure", {})
         if isinstance(question.ai_draft, dict)
@@ -673,7 +679,7 @@ def _render_question_read_view(question, key_prefix: str, edit_flag_key: str) ->
         )
     if question.shared_context.strip():
         with st.expander("本小题需要的父题公共条件", expanded=True):
-            render_question_math_markdown(question.shared_context)
+            render_text(question.shared_context)
             source_path, regions = _question_visual_source(question)
             render_region_images(source_path, [r for r in regions if r["role"] == "shared"])
             if question.shared_image_refs:
@@ -719,26 +725,36 @@ def _render_question_read_view(question, key_prefix: str, edit_flag_key: str) ->
         st.caption("订正、解析、题型和方法：AI 参考版，待你核对；可点击「修改」二次修订。")
     st.markdown("**我的作答**")
     if question.student_answer.strip():
-        render_question_math_markdown(display_field(question, "student_answer"))
+        render_text(question.student_answer if language_only
+                    else display_field(question, "student_answer"))
     else:
         st.caption("未记录作答。可以点「修改」补写，或到「待核对」页核对原始页面。")
     verdict_label = VERDICT_LABELS.get(question.teacher_verdict or "none", "未判定")
+    if is_foreign_language_subject(question.subject) and question.teacher_comment:
+        st.markdown("**你提供的对照答案与批改说明**")
+        st.text(question.teacher_comment)
     st.markdown(f"**判定**：{verdict_label}")
     if question.correction_note.strip():
         st.markdown("**订正**")
-        render_question_math_markdown(display_field(question, "correction_note"))
+        render_text(question.correction_note if language_only
+                    else display_field(question, "correction_note"))
     if question.analysis_note.strip():
         st.markdown("**解析**")
-        render_question_math_markdown(display_field(question, "analysis_note"))
+        render_text(question.analysis_note if language_only
+                    else display_field(question, "analysis_note"))
     if question.reason_tags:
         st.markdown("**错因**")
-        render_question_math_markdown(display_field(question, "reason_tags"))
+        render_text("、".join(question.reason_tags) if language_only
+                    else display_field(question, "reason_tags"))
     if question.method_tags:
         st.markdown("**题型**")
-        render_question_math_markdown(display_field(question, "method_tags"))
+        render_text("、".join(question.method_tags) if language_only
+                    else display_field(question, "method_tags"))
     if question.solution_method.strip():
-        st.markdown("**方法**")
-        render_question_math_markdown(display_field(question, "solution_method"))
+        st.markdown("**本题作答依据与语言要点**" if is_foreign_language_subject(question.subject)
+                    else "**方法**")
+        render_text(question.solution_method if language_only
+                    else display_field(question, "solution_method"))
     if not (question.reason_tags or question.method_tags or question.solution_method):
         st.caption("还没有错因、题型和方法（点「修改」补充）。")
     if st.button("修改", key=f"start_edit_{key_prefix}", type="primary"):
@@ -799,6 +815,64 @@ def _render_question_read_view(question, key_prefix: str, edit_flag_key: str) ->
                 st.rerun()
 
 
+def _render_language_reasoning(question, key_prefix: str) -> None:
+    """Use the existing explanation records for first-layer language discussion only."""
+
+    st.markdown("**我当时的做题思路**")
+    st.caption(
+        "先独立做题、对照答案批改订正，再描述当时的依据。"
+        "可直接使用系统输入法语音转文字，识别有误时手动修改。"
+        "在「修改」中保存自己的作答和对照答案；答对的题也可以讲。"
+    )
+    ai = _ai_service()
+    with st.form(f"language_reasoning_{key_prefix}", clear_on_submit=False):
+        content = st.text_area("当时的思路与依据", key=f"language_thought_{key_prefix}")
+        save = st.form_submit_button("保存思路")
+        explain = st.form_submit_button("保存并请 AI 讲解", disabled=ai is None)
+    if save or explain:
+        try:
+            attempt_id = mastery.record_explanation_attempt(question.id, content=content)
+        except LearningWorkflowError as exc:
+            st.error(str(exc))
+        else:
+            if explain and ai is not None:
+                try:
+                    with st.spinner("正在结合原文、答案和你的思路讲解…"):
+                        review = ai.review_explanation_task(question, content)
+                    sections = ["**AI 讲解（待你核对）**", str(review["feedback"])]
+                    for title, field in (("有依据的理解", "what_worked"),
+                                         ("具体问题或待补充依据", "missing"),
+                                         ("本题理解要点", "improvements")):
+                        if review[field]:
+                            sections.append(f"**{title}**\n" + "\n".join(
+                                f"- {item}" for item in review[field]
+                            ))
+                    if review["full_explanation"]:
+                        sections.append("**本题讲解**\n" + review["full_explanation"])
+                    mastery.update_explanation_feedback(attempt_id, "\n\n".join(sections))
+                except Exception as exc:  # noqa: BLE001 - preserve the user's saved words
+                    LOGGER.exception("外语第一层讲解失败")
+                    st.error(
+                        f"思路已保存，但 AI 讲解未完成：{exc}"
+                        if isinstance(exc, LearningAIDraftError)
+                        else "思路已保存，但 AI 讲解未完成，请检查模型配置或稍后重试。"
+                    )
+                else:
+                    st.success("思路与讲解已保存，本题第一层整理结束。")
+            else:
+                st.success("思路已保存。外语题只在第一层整理，不安排后续训练或复盘。")
+    if ai is None:
+        st.caption("AI 尚未配置，可先保存思路并继续人工整理。")
+    attempts = mastery.list_explanation_attempts(question.id)
+    if attempts:
+        with st.expander("已保存的思路与讲解", expanded=True):
+            for attempt in reversed(attempts):
+                st.caption(format_beijing_time(attempt["created_at"]))
+                st.text(attempt["content"])
+                if attempt["feedback"]:
+                    st.markdown(attempt["feedback"])
+
+
 def _render_question_card(question) -> None:
     """One question = READ/VERIFY first; 修改 switches to the edit form."""
 
@@ -812,8 +886,11 @@ def _render_question_card(question) -> None:
         f"　{'已人工修订' if question.user_edited else '未人工修订'}"
     )
     st.caption(_source_context_line(question))
+    language_only = is_foreign_language_subject(question.subject)
     families_of_question = organization.list_families_for_question(question.id)
-    if families_of_question:
+    if language_only:
+        st.caption(f"{question.subject}：只做第一层讲解与整理，完成后结束。")
+    elif families_of_question:
         st.caption(
             "被归入："
             + "；".join(family_picker_label(f) for f in families_of_question)
@@ -825,6 +902,8 @@ def _render_question_card(question) -> None:
     edit_flag_key = f"edit_mode_{key_prefix}"
     if not st.session_state.get(edit_flag_key):
         _render_question_read_view(question, key_prefix, edit_flag_key)
+        if language_only:
+            _render_language_reasoning(question, key_prefix)
         return
     if st.button("返回阅读（不保存本次修改）", key=f"cancel_edit_{key_prefix}"):
         st.session_state.pop(edit_flag_key, None)
@@ -853,6 +932,13 @@ def _render_question_card(question) -> None:
             "如果上方视觉草稿被你删除，这里的 AI 转写内容会一并清空。"
             "原始页面图像始终保留。",
         )
+        teacher_comment = question.teacher_comment
+        if language_only:
+            teacher_comment = st.text_area(
+                "对照答案与批改说明（你提供的答案）", value=question.teacher_comment,
+                key=f"edit_reference_answer_{key_prefix}",
+                help="填写逐题答案及来源。AI 参考讲解不会被当作标准答案。",
+            )
         st.markdown("**③ 判定**")
         verdict = st.selectbox(
             "判定结果",
@@ -894,9 +980,10 @@ def _render_question_card(question) -> None:
             "错因标签（用 、 或 , 分隔）",
             value="、".join(question.reason_tags),
             key=f"edit_reason_{key_prefix}",
-            help="禁止只写「粗心/马虎/计算错误」这类词；要落到具体根因，"
+            help=("只记录有原文和实际思路支持的理解问题；没有依据不认定猜测。" if language_only
+                  else "禁止只写「粗心/马虎/计算错误」这类词；要落到具体根因，"
             "例如：找不到二阶差分规律、不懂得画树状图逆推。"
-            "不能把不会说成漏看，也不要用笼统的知识点掌握不牢代替具体原因。",
+            "不能把不会说成漏看，也不要用笼统的知识点掌握不牢代替具体原因。"),
         )
         st.markdown("**⑦ 题型**")
         method_tags = st.text_input(
@@ -905,13 +992,14 @@ def _render_question_card(question) -> None:
             key=f"edit_type_{key_prefix}",
             help="描述题目属于哪一类；不要在这里写解题步骤。",
         )
-        st.markdown("**⑧ 方法**")
+        st.markdown("**⑧ 本题语言要点**" if language_only else "**⑧ 方法**")
         solution_method = st.text_area(
-            "方法（写明可操作的解题思路）",
+            "本题作答依据与语言要点" if language_only else "方法（写明可操作的解题思路）",
             value=question.solution_method,
             height=100,
             key=f"edit_solution_method_{key_prefix}",
-            help="写下一次遇到同类题能照着做的步骤；与题型分开保存。",
+            help=("只整理本题语言理解与依据，不要求方法归纳。" if language_only
+                  else "写下一次遇到同类题能照着做的步骤；与题型分开保存。"),
         )
         status = st.selectbox(
             "状态",
@@ -942,12 +1030,13 @@ def _render_question_card(question) -> None:
                 solution_method=solution_method,
                 status=status,
             )
+            content_changed = content_changed or teacher_comment != question.teacher_comment
             question_service.update_question_item(
                 question.id,
                 stem_text=stem_text,
                 student_answer=student_answer,
                 teacher_verdict=verdict_value,
-                teacher_comment=question.teacher_comment,
+                teacher_comment=teacher_comment,
                 correction_note=correction_note,
                 analysis_note=analysis_note,
                 reason_tags=normalized_reasons,
@@ -959,6 +1048,11 @@ def _render_question_card(question) -> None:
         except LearningWorkflowError as exc:
             st.error(f"保存失败：{exc}")
         else:
+            if language_only:
+                st.session_state.pop(f"ai_suggestions_{key_prefix}", None)
+                st.session_state["library_flash"] = "已保存。外语题在第一层整理完成后结束。"
+                st.session_state.pop(edit_flag_key, None)
+                st.rerun()
             math_queued = (
                 schedule_math_formatting(database.database_path, question.id, _ai_service())
                 if content_changed else False
@@ -2391,7 +2485,7 @@ with mastery_tab:
     available_subjects = sorted(
         {
             question.subject.strip()
-            for question in question_service.list_question_items()
+            for question in question_service.list_question_items(include_first_layer_only=False)
             if question.subject.strip()
         }
     )
@@ -2411,13 +2505,18 @@ with mastery_tab:
 
     retrieval_service = application_question_source_retrieval_service()
     session_service = application_training_session_service()
-    render_targeted_training_section(
-        targeted_service,
-        current_subject=current_subject,
-        retrieval_service=retrieval_service,
-        learner_profile=active_profile,
-        session_service=session_service,
-    )
+    if available_subjects or not any(
+        is_foreign_language_subject(q.subject) for q in question_service.list_question_items()
+    ):
+        render_targeted_training_section(
+            targeted_service,
+            current_subject=current_subject,
+            retrieval_service=retrieval_service,
+            learner_profile=active_profile,
+            session_service=session_service,
+        )
+    else:
+        st.caption("外语题在第一层讲解与整理完成后结束，不进入掌握训练。")
 
     st.divider()
     st.markdown("**复习计划（按族）**")

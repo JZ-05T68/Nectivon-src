@@ -19,9 +19,9 @@ from src.config import (
 def test_current_application_version_matches_declared_version() -> None:
     settings = Settings(_env_file=None)
 
-    assert settings.app_title == "Nectivon v0.8.6"
-    assert settings.app_version == "0.8.6"
-    assert __version__ == "0.8.6"
+    assert settings.app_title == "Nectivon v0.8.7"
+    assert settings.app_version == "0.8.7"
+    assert __version__ == "0.8.7"
 
 
 def test_official_configuration_accepts_only_loopback_8501() -> None:

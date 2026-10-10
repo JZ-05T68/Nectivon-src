@@ -1,0 +1,97 @@
+/* Nectivon owns imports, persistence, AI and mastery; this component is a view. */
+/* 手势/语音控制（移植自 star-vault）：摄像头面板与手势光标交还给组件脚本控制。 */
+#settingsBtn, #settings, #arBar, #arLayer, #llmPanel { display: none !important; }
+html, body { height: 100%; }
+.plate { top: 24px; }
+#nectivon-error { position: fixed; bottom: 15px; left: 15px; z-index: 100;
+  padding: 12px; color: #fff; background: #663515; border-radius: 8px; }
+
+/* 手势图例只在摄像头开启后出现；窄视口下抬到控制条上方避免叠压。 */
+body.gesture-on .gestures { display: flex; }
+@media (max-width: 1180px) {
+  body.gesture-on .gestures {
+    bottom: 150px;
+    right: 340px;
+    flex-wrap: wrap;
+  }
+}
+
+/* 语音/手势控制条：星图底部居中，布局沿用原 AR 栏的视觉语言。
+   宽度避让右下角摄像头面板（约 292px）与左下角手势图例（图例抬高于控制条上方）。 */
+.nv-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  max-width: min(560px, calc(100vw - 640px));
+  padding: 7px 14px;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  background: rgba(10, 16, 36, 0.62);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--starlight);
+  font-size: 12px;
+}
+.nv-bar input[type='text'] {
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.nv-btn {
+  flex: none;
+  padding: 5px 14px;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  background: none;
+  color: var(--starlight);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+.nv-btn:hover { border-color: var(--dust); }
+.nv-btn.on {
+  border-color: rgba(227, 197, 138, 0.7);
+  color: var(--brass);
+  background: rgba(227, 197, 138, 0.1);
+}
+.nv-sep {
+  flex: none;
+  width: 1px;
+  height: 14px;
+  background: var(--hair);
+}
+.nv-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--dust);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nv-opt:hover { color: var(--starlight); }
+.nv-opt input { accent-color: #e3c58a; margin: 0; }
+
+/* 详情展开时让位，与原版 AR 栏行为一致；Esc 或空格语音仍可用。 */
+.folio.open ~ .nv-bar { visibility: hidden; }
+
+/* 极窄视口：竖排并抬到摄像头面板上方，避免与其或图例叠压。 */
+@media (max-width: 760px) {
+  .nv-bar {
+    left: auto;
+    right: 12px;
+    bottom: 300px;
+    transform: none;
+    flex-direction: column;
+    align-items: flex-end;
+    max-width: 240px;
+    border-radius: 10px;
+  }
+}

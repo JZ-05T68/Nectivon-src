@@ -1,4 +1,4 @@
-"""Read-only v34 demo structure validation; never proof of public-content consent."""
+"""Read-only v36 demo structure validation; never proof of public-content consent."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class HostedStorageError(RuntimeError):
         super().__init__(f"Hosted 存储不可用（{code.value}）。")
 
 
-# Column inventory from the existing v1-v32 migrations, including FTS5 shadow
+# Column inventory from the existing v1-v36 migrations, including FTS5 shadow
 # tables. No DDL or second migration engine. Unknown/missing storage is rejected.
 V16_COLUMNS = {
     "agent_conversations": "id title created_at updated_at".split(),
@@ -117,6 +117,12 @@ V16_COLUMNS = {
     ).split(),
     "question_family_members": (
         "id family_id question_id relation created_at provenance"
+    ).split(),
+    "question_knowledge_links": (
+        "question_id knowledge_object_id note created_at"
+    ).split(),
+    "knowledge_subject_classifications": (
+        "knowledge_object_id subject subdiscipline"
     ).split(),
     "question_group_materials": (
         "id group_id material_kind material_label content_text page_id region created_at"
@@ -359,13 +365,13 @@ def validate_identity(connection: sqlite3.Connection, expected_uuid: str) -> Non
     # v0.8.6: the hosted demo seed tracks the local schema. Bumping this pin
     # requires rebuilding the
     # demo artifact; the pin itself exists to detect silent seed drift.
-    if SCHEMA_VERSION != 34:
+    if SCHEMA_VERSION != 36:
         raise HostedStorageError(StorageFailure.SCHEMA)
     versions = tuple(
         row[0]
         for row in connection.execute("SELECT version FROM schema_migrations ORDER BY version")
     )
-    if versions != tuple(range(1, 35)) or any(type(value) is not int for value in versions):
+    if versions != tuple(range(1, 37)) or any(type(value) is not int for value in versions):
         raise HostedStorageError(StorageFailure.SCHEMA)
     rows = connection.execute("SELECT id, kb_uuid FROM knowledge_base_meta").fetchall()
     if rows != [(1, expected_uuid)] or str(UUID(expected_uuid)) != expected_uuid:

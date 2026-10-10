@@ -6,14 +6,32 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import src.runtime as runtime
-from src.learning_subject_policy import normalize_subject_name, subject_selection_policy
-from src.training_profile_models import BasicEducationProfile, EducationType, LearnerProfile
+from src.learning_subject_policy import (
+    MANUAL_SUBJECT,
+    UNIVERSITY_SUBJECTS,
+    normalize_subject_name,
+    read_saved_subject,
+    subject_selection_policy,
+)
+from src.training_profile_models import (
+    BasicEducationProfile,
+    EducationType,
+    HigherEducationProfile,
+    LearnerProfile,
+)
 
 PRIMARY = ("语文", "数学", "英语")
 FIRST = (*PRIMARY, "历史", "政治", "地理", "生物")
 SECOND = (*FIRST, "物理")
 THIRD = (*PRIMARY, "物理", "化学", "历史", "政治")
 HIGH = (*THIRD, "地理", "生物")
+
+
+@pytest.fixture(autouse=True)
+def subject_metadata(monkeypatch, tmp_path):
+    database = SimpleNamespace(database_path=tmp_path / "database" / "knowledge.db")
+    monkeypatch.setattr(runtime, "application_database", lambda: database)
+    return database
 
 
 def _basic(
@@ -79,7 +97,7 @@ def test_actual_picker_has_exact_grade_subjects(profile_source, stage, grade, ex
     profile_source["profile"] = _basic(stage, grade)
     app = _app()
     assert not app.exception
-    assert tuple(app.selectbox[0].options) == expected
+    assert tuple(app.selectbox[0].options) == (*expected, MANUAL_SUBJECT)
     assert app.selectbox[0].value is None
     assert not app.text_input
     assert _join(app).disabled
@@ -92,7 +110,7 @@ def test_actual_picker_has_exact_grade_subjects(profile_source, stage, grade, ex
 def test_high_school_advanced_subject_requires_confirmation(profile_source, strong, competition):
     profile_source["profile"] = _basic("高中", "高一", strong=strong, competition=competition)
     app = _app()
-    assert tuple(app.selectbox[0].options) == (*HIGH, "强基/竞赛")
+    assert tuple(app.selectbox[0].options) == (*HIGH, "强基/竞赛", MANUAL_SUBJECT)
     assert not app.text_input
     app.selectbox[0].select("强基/竞赛").run()
     assert app.text_input[0].label == "填写强基/竞赛学科或方向"
@@ -121,12 +139,12 @@ def test_junior_three_removes_geography_then_high_school_restores_it(profile_sou
     profile_source["profile"] = _basic("初中", "初三")
     app.run()
     assert not app.exception
-    assert tuple(app.selectbox[0].options) == THIRD
+    assert tuple(app.selectbox[0].options) == (*THIRD, MANUAL_SUBJECT)
     assert app.selectbox[0].value is None
     assert _join(app).disabled
     profile_source["profile"] = _basic("高中", "高一")
     app.run()
-    assert tuple(app.selectbox[0].options) == HIGH
+    assert tuple(app.selectbox[0].options) == (*HIGH, MANUAL_SUBJECT)
     app.selectbox[0].select("生物").run()
     assert not _join(app).disabled
 
@@ -151,39 +169,81 @@ def test_turning_off_advanced_training_invalidates_manual_selection(profile_sour
     profile_source["profile"] = _basic("高中", "高二")
     app.run()
     assert not app.exception
-    assert tuple(app.selectbox[0].options) == HIGH
+    assert tuple(app.selectbox[0].options) == (*HIGH, MANUAL_SUBJECT)
     assert app.selectbox[0].value is None
     assert not app.text_input
     assert _join(app).disabled
 
 
-def test_higher_education_manual_confirmation_survives_navigation_per_document(profile_source):
+def test_higher_education_lists_official_discipline_classification(profile_source):
     profile_source["profile"] = LearnerProfile(education_type=EducationType.HIGHER)
     app = _app()
-    assert not app.selectbox
-    assert app.text_input[0].label == "本次整理学科（人工填写）"
-    app.text_input[0].set_value("  理论力学  ").run()
+    assert not app.exception
+    options = tuple(app.selectbox[0].options)
+    assert "计算机科学与技术" in options
+    assert "心理学" in options
+    assert options[-1] == MANUAL_SUBJECT
+    assert len(options) == len(set(options))
+    assert not app.text_input
+    assert _join(app).disabled
+    app.selectbox[0].select("心理学").run()
+    assert not app.text_input
+    assert not _join(app).disabled
+
+
+def test_higher_education_saved_major_or_discipline_ranks_first(profile_source):
+    profile_source["profile"] = LearnerProfile(
+        education_type=EducationType.HIGHER,
+        higher=HigherEducationProfile(
+            school="测试大学",
+            education_level="研究生",
+            discipline_category="04 教育学",
+            discipline_first_level="0402 心理学",
+        ),
+    )
+    assert subject_selection_policy(profile_source["profile"]).subjects[0] == "心理学"
+    profile_source["profile"] = LearnerProfile(
+        education_type=EducationType.HIGHER,
+        higher=HigherEducationProfile(
+            school="测试大学",
+            education_level="本科",
+            major="计算机科学与技术",
+        ),
+    )
+    app = _app()
+    assert app.selectbox[0].options[0] == "计算机科学与技术"
+
+
+def test_higher_education_manual_fill_requires_confirmation_and_survives_navigation(
+    profile_source,
+):
+    profile_source["profile"] = LearnerProfile(education_type=EducationType.HIGHER)
+    app = _app()
+    app.selectbox[0].select(MANUAL_SUBJECT).run()
+    assert app.text_input[0].label == "填写自定义学科或方向"
+    app.text_input[0].set_value("  高等数学  ").run()
     assert _join(app).disabled
     _confirm(app).click().run()
     assert not _join(app).disabled
     app.radio[0].set_value("学习").run()
     app.radio[0].set_value("审核").run()
-    assert app.text_input[0].value == "理论力学"
+    assert app.selectbox[0].value == MANUAL_SUBJECT
+    assert app.text_input[0].value == "高等数学"
     assert not _join(app).disabled
     app.radio[1].set_value(2).run()
-    assert not app.text_input[0].value
+    assert app.selectbox[0].value is None
+    assert not app.text_input
     assert _join(app).disabled
     app.radio[1].set_value(1).run()
-    assert app.text_input[0].value == "理论力学"
+    assert app.selectbox[0].value == MANUAL_SUBJECT
+    assert app.text_input[0].value == "高等数学"
     assert not _join(app).disabled
-    app.text_input[0].set_value("高等数学").run()
-    assert _join(app).disabled
-    app.text_input[0].set_value("   ").run()
-    assert _confirm(app).disabled
-    assert _join(app).disabled
+    app.selectbox[0].select("心理学").run()
+    assert not app.text_input
+    assert not _join(app).disabled
 
 
-def test_new_manual_mode_requires_reconfirmation(profile_source):
+def test_switching_to_higher_education_requires_fresh_selection(profile_source):
     profile_source["profile"] = _basic("高中", "高三", competition=True)
     app = _app()
     app.selectbox[0].select("强基/竞赛").run()
@@ -193,19 +253,27 @@ def test_new_manual_mode_requires_reconfirmation(profile_source):
     profile_source["profile"] = LearnerProfile(education_type=EducationType.HIGHER)
     app.run()
     assert not app.exception
-    assert not app.selectbox
+    assert app.selectbox[0].value is None
     assert _join(app).disabled
-    _confirm(app).click().run()
+    app.selectbox[0].select("计算机科学与技术").run()
     assert not _join(app).disabled
 
 
 def test_saved_higher_subject_prefills_but_still_requires_confirmation(profile_source):
     profile_source["profile"] = LearnerProfile(education_type=EducationType.HIGHER)
     app = _app("材料力学")
+    assert app.selectbox[0].value == MANUAL_SUBJECT
     assert app.text_input[0].value == "材料力学"
     assert _join(app).disabled
     _confirm(app).click().run()
     assert not _join(app).disabled
+
+
+def test_university_subject_classification_matches_official_catalog():
+    assert len(UNIVERSITY_SUBJECTS) == len(set(UNIVERSITY_SUBJECTS))
+    assert "计算机科学与技术" in UNIVERSITY_SUBJECTS
+    assert "心理学" in UNIVERSITY_SUBJECTS
+    assert MANUAL_SUBJECT not in UNIVERSITY_SUBJECTS
 
 
 def test_existing_political_subject_is_offered_without_rewriting_user_record(profile_source):
@@ -240,3 +308,19 @@ def test_profile_read_failure_has_visible_manual_fallback(monkeypatch):
     app.text_input[0].set_value("数学").run()
     _confirm(app).click().run()
     assert not _join(app).disabled
+
+
+def test_language_subject_persists_across_new_sessions_and_imports(
+    profile_source, subject_metadata,
+):
+    app = _app()
+    app.selectbox[0].select(MANUAL_SUBJECT).run()
+    app.text_input[0].set_value("日语阅读").run()
+    assert _join(app).disabled
+    _confirm(app).click().run()
+    assert read_saved_subject(subject_metadata.database_path) == "日语阅读"
+    new_session = _app()
+    assert new_session.text_input[0].value == "日语阅读"
+    assert not _join(new_session).disabled
+    new_session.text_input[0].set_value("英语").run()
+    assert _join(new_session).disabled

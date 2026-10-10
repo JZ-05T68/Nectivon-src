@@ -78,12 +78,14 @@ def _coalesce_overlapping_figures(regions: list[dict]) -> list[dict]:
 
 def render_question_content(
     text: str, *, image_path: Path | str | None = None, regions: list[dict] | None = None,
+    math_notation: bool = True,
 ) -> bool:
     """Place each original option diagram immediately below its own label/text."""
 
     regions = normalize_regions(regions or [])
+    render_text = render_question_math_markdown if math_notation else st.markdown
     if not regions:
-        render_question_math_markdown(text)
+        render_text(text)
         return False
     parts = re.split(r"(?m)^(?=[A-Z][.．、]\s)", format_multiple_choice_lines(text))
     option_parts: list[tuple[str, str]] = []
@@ -95,10 +97,10 @@ def render_question_content(
         elif part.strip():
             stem_parts.append(part.strip())
     if stem_parts:
-        render_question_math_markdown("\n\n".join(stem_parts))
+        render_text("\n\n".join(stem_parts))
     shown = render_region_images(image_path, [r for r in regions if r["role"] == "stem"])
     for label, part in option_parts:
-        render_question_math_markdown(part)
+        render_text(part)
         shown = render_region_images(
             image_path, [r for r in regions
                          if r["role"] == "option" and r["option_label"] == label],
@@ -108,7 +110,7 @@ def render_question_content(
                         - present_labels):
         # Editing only the sentence must not silently discard the original
         # graphical options, which are stored separately from editable text.
-        render_question_math_markdown(f"{label}. （见原图）")
+        render_text(f"{label}. （见原图）")
         shown = render_region_images(
             image_path, [r for r in regions
                          if r["role"] == "option" and r["option_label"] == label],

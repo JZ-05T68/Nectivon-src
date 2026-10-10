@@ -15,6 +15,8 @@ import src.backup_service as backup_module
 from src.backup_service import BackupError, BackupService, validate_backup
 from src.database import Database
 from src.evidence_basket_service import EvidenceBasketService
+from src.knowledge_graph_service import KnowledgeGraphService
+from src.knowledge_object_service import KnowledgeObjectService
 from src.migrations import SCHEMA_VERSION
 from src.models import PageStatus
 
@@ -127,7 +129,7 @@ def test_normal_backup_captures_database_assets_hashes_and_all_metadata(
     assert validation.database_summary.integrity_check == "ok"
     assert validation.database_summary.foreign_key_violations == 0
     assert validation.database_summary.evidence == 1
-    assert result.manifest["schema_version"] == 34
+    assert result.manifest["schema_version"] == SCHEMA_VERSION
     assert result.manifest["statistics"] == {
         "documents": 1,
         "pages": 1,
@@ -340,9 +342,25 @@ def test_patch_upgrade_can_restore_older_same_minor_backup(tmp_path: Path) -> No
 
     result = target.restore_backup(backup, service_is_running=lambda: False)
 
-    assert result.database_summary.schema_version == 34
+    assert result.database_summary.schema_version == SCHEMA_VERSION
     assert (target.raw_dir / "manual.pdf").read_bytes() == b"v0.1.1"
     assert result.pre_restore_backup is not None
+
+
+def test_backup_restores_knowledge_subject_and_second_level_direction(tmp_path: Path) -> None:
+    source = _library(tmp_path / "source")
+    database = Database(source.database_path)
+    knowledge = KnowledgeObjectService(database).create(
+        kind="concept", title="对称加密", content="同一个密钥用于加密和解密。",
+        epistemic_basis="personal_judgment", subject="网络安全", subdiscipline="密码学",
+    ).knowledge_object
+    backup = source.create_backup().backup_path
+    target = _library(tmp_path / "target")
+    target.restore_backup(backup, service_is_running=lambda: False)
+    restored = Database(target.database_path)
+    assert KnowledgeObjectService(restored).get(knowledge.id).content == knowledge.content
+    tags = KnowledgeGraphService(restored).snapshot().nodes[f"knowledge:{knowledge.id}"]["tags"]
+    assert tags == ["网络安全/密码学"]
 
 
 def test_restore_rebases_paths_preserves_all_counts_and_creates_prebackup(

@@ -199,7 +199,7 @@ def test_empty_home_makes_add_document_the_obvious_first_step(
     visible = "\n".join(item.value for item in home.markdown)
     assert "第 1 步：添加资料" in visible
     assert all(text in visible for text in ("添加资料", "让 Agent 阅读", "开始提问"))
-    assert "Nectivon v0.8.6" in visible
+    assert "Nectivon v0.8.7" in visible
     assert not home.text_input
     assert not home.metric
     assert [button.label for button in home.button] == ["添加资料"]
@@ -464,7 +464,7 @@ def test_sidebar_uses_direct_links_instead_of_source_page_rerun_buttons(
     assert not home.exception
     assert not home.sidebar.button
     links = {link.label: link.proto for link in home.sidebar.get("page_link")}
-    assert len(links) == 10
+    assert len(links) == 11
     assert "训练配置" not in links
     assert links["首页"].page == ""
     assert links["首页"].disabled
@@ -472,14 +472,14 @@ def test_sidebar_uses_direct_links_instead_of_source_page_rerun_buttons(
         ("知识", "知识记忆"), ("对话", "知识Agent"),
         ("文件", "我的资料"), ("设置", "运行说明"),
         ("添加文件", "导入资料"), ("待核对", "待整理页面"),
-        ("学习整理", "学习整理"),
+        ("学习整理", "学习整理"), ("知识串联", "知识串联"),
         ("备份与修复", "系统维护"),
     ):
         assert links[label].page == route
         assert links[label].page_script_hash
         assert not links[label].external
         assert not links[label].disabled
-    assert len({link.page_script_hash for link in links.values()}) == 10
+    assert len({link.page_script_hash for link in links.values()}) == 11
 
 
 def test_direct_reader_entry_keeps_native_sidebar_destinations(

@@ -51,7 +51,7 @@ from src.migrations import SCHEMA_VERSION  # noqa: E402
 #: ``app_version`` truth (``src/__init__.py`` + git tag), intentionally distinct
 #: from the Hosted API path version (``/v0.6``) and the SQLite schema version
 #: (v15) — the gate never conflates those dimensions.
-EXPECTED_VERSION: Final[str] = "0.8.6"
+EXPECTED_VERSION: Final[str] = "0.8.7"
 #: Active development milestone that may legitimately be displayed by
 #: explicitly sanctioned pages (v0.6.1 Competition Demo Experience) while the
 #: global ``app_version`` stays at the released version.

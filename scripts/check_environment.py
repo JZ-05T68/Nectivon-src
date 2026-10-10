@@ -1,4 +1,4 @@
-"""Nectivon v0.8.6 Environment and Provider Configuration Diagnostic Tool."""
+"""Nectivon v0.8.7 Environment and Provider Configuration Diagnostic Tool."""
 
 from __future__ import annotations
 

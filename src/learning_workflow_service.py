@@ -41,6 +41,7 @@ from typing import Final, Literal, Protocol
 import jieba
 
 from src.database import Database, DatabaseError, _tokenize_for_fts
+from src.learning_subject_policy import is_foreign_language_subject
 
 LOGGER = logging.getLogger(__name__)
 
@@ -760,7 +761,8 @@ class QuestionService:
         return None
 
     def list_question_items(
-        self, *, question_kind: str | None = None, limit: int | None = None
+        self, *, question_kind: str | None = None, limit: int | None = None,
+        include_first_layer_only: bool = True,
     ) -> list[QuestionItem]:
         """List organized questions (newest first), optionally by kind.
 
@@ -784,7 +786,8 @@ class QuestionService:
             parameters.append(limit)
         with self._database._connection() as connection:
             rows = connection.execute(sql, tuple(parameters)).fetchall()
-        return [self._from_row(row) for row in rows]
+        return [self._from_row(row) for row in rows
+                if include_first_layer_only or not is_foreign_language_subject(row["subject"])]
 
     def search_questions(self, term: str) -> list[QuestionItem]:
         """FTS search over organized question stems (same tokenizer as pages)."""
@@ -1173,6 +1176,8 @@ class QuestionOrganizationService:
         """Rank existing families against one question's stem/tags locally."""
 
         question = QuestionService(self._database).get_question_item(question_id)
+        if is_foreign_language_subject(question.subject):
+            return []
         probe = " ".join([question.stem_text, *question.method_tags, *question.reason_tags])
         probe_keywords = _keywords(probe)
         with self._database._connection() as connection:
@@ -1226,9 +1231,11 @@ class QuestionOrganizationService:
             ).fetchone()
             _require(family is not None, f"题型族不存在或已停用：{family_id}")
             question = connection.execute(
-                "SELECT id FROM question_items WHERE id = ?", (question_id,)
+                "SELECT id, subject FROM question_items WHERE id = ?", (question_id,)
             ).fetchone()
             _require(question is not None, f"整理题目不存在：{question_id}")
+            _require(not is_foreign_language_subject(question["subject"]),
+                     "外语学科只做第一层整理，不加入归纳族。")
             connection.execute(
                 """
                 INSERT INTO question_family_members(
@@ -1345,6 +1352,7 @@ class QuestionOrganizationService:
                 member_count=int(row["member_count"]),
             )
             for row in rows
+            if not row["member_count"] or self.list_family_members(int(row["id"]))
         ]
 
     def list_family_members(self, family_id: int) -> list[tuple[str, QuestionItem, str]]:
@@ -1373,6 +1381,7 @@ class QuestionOrganizationService:
                 str(row["member_provenance"] or ""),
             )
             for row in rows
+            if not is_foreign_language_subject(row["subject"])
         ]
 
     def list_families_for_question(self, question_id: int) -> list[QuestionFamily]:
@@ -1485,11 +1494,13 @@ class QuestionOrganizationService:
         rejected = self.rejected_family_ids(question_id)
         with self._database._connection() as connection:
             question_row = connection.execute(
-                "SELECT id, method_tags, stem_text FROM question_items WHERE id = ?",
+                "SELECT id, subject, method_tags, stem_text FROM question_items WHERE id = ?",
                 (question_id,),
             ).fetchone()
             if question_row is None:
                 raise LearningWorkflowError(f"整理题目不存在：{question_id}")
+            if is_foreign_language_subject(question_row["subject"]):
+                return created
             existing_type = connection.execute(
                 """
                 SELECT f.id FROM question_family_members fm
@@ -1779,12 +1790,15 @@ class QuestionOrganizationService:
         kind_labels = {"type": "题型", "method": "方法"}
         with self._database._connection() as connection:
             question_row = connection.execute(
-                "SELECT id, method_tags, reason_tags, stem_text "
+                "SELECT id, subject, method_tags, reason_tags, stem_text "
                 "FROM question_items WHERE id = ?",
                 (question_id,),
             ).fetchone()
             if question_row is None:
                 raise LearningWorkflowError(f"整理题目不存在：{question_id}")
+            if is_foreign_language_subject(question_row["subject"]):
+                return {"auto": [], "auto_labels": [], "auto_reasons": {},
+                        "recommended": [], "new_drafts": []}
             existing = {
                 kind: {
                     int(row["id"])
@@ -2050,7 +2064,7 @@ class QuestionOrganizationService:
         """
 
         sql = (
-            "SELECT r.*, q.stem_text AS stem_text "
+            "SELECT r.*, q.subject, q.stem_text AS stem_text "
             "FROM family_review_items r "
             "JOIN question_items q ON q.id = r.question_id"
         )
@@ -2071,7 +2085,7 @@ class QuestionOrganizationService:
         parameters.append(limit)
         with self._database._connection() as connection:
             rows = connection.execute(sql, tuple(parameters)).fetchall()
-        return [dict(row) for row in rows]
+        return [dict(row) for row in rows if not is_foreign_language_subject(row["subject"])]
 
     def list_review_groups(
         self, *, status: str = "pending"
@@ -2185,6 +2199,12 @@ class QuestionOrganizationService:
                 str(row["status"]) == "pending",
                 "这条建议已经处理过了。",
             )
+            for qid in [int(row["question_id"]), *(also_question_ids or [])]:
+                _require(
+                    not is_foreign_language_subject(
+                        QuestionService(self._database).get_question_item(qid).subject,
+                    ), "外语学科只做第一层整理，不加入归纳族。",
+                )
             kind = str(row["suggestion_kind"])
             title = str(row["title"])
             description = str(row["description"])
@@ -2598,6 +2618,11 @@ class MasteryService:
         practiced_at: str | None = None,
     ) -> int:
         _require(outcome in _OUTCOMES, "练习结果必须是 correct/incorrect/partial。")
+        _require(
+            not is_foreign_language_subject(
+                QuestionService(self._database).get_question_item(question_id).subject,
+            ), "外语学科在第一层整理结束，不安排掌握训练。",
+        )
         timestamp = practiced_at or _utc_now()
         with self._database._connection() as connection:
             question = connection.execute(
@@ -2742,7 +2767,15 @@ class MasteryService:
                 ORDER BY p.next_review_at IS NULL, p.next_review_at, p.family_id
                 """
             ).fetchall()
-        return [dict(row) for row in rows]
+            members = connection.execute(
+                "SELECT m.family_id, q.subject FROM question_family_members m "
+                "JOIN question_items q ON q.id = m.question_id",
+            ).fetchall()
+        foreign = {row["family_id"] for row in members
+                   if is_foreign_language_subject(row["subject"])}
+        regular = {row["family_id"] for row in members
+                   if not is_foreign_language_subject(row["subject"])}
+        return [dict(row) for row in rows if row["family_id"] not in foreign - regular]
 
     def bump_family_profile(
         self, family_id: int, *, outcome: str, weak_points: list[str] | None = None
@@ -2958,6 +2991,11 @@ class MasteryService:
         _require(
             event_type in self.EVIDENCE_EVENT_LABELS,
             f"证据类型无效：{event_type}",
+        )
+        _require(
+            not is_foreign_language_subject(
+                QuestionService(self._database).get_question_item(question_id).subject,
+            ), "外语学科在第一层整理结束，不安排训练或复盘。",
         )
         _require(
             source in ("system_training", "user_manual", "ai_generated"),
@@ -3197,6 +3235,11 @@ class MasteryService:
         (§8); “AI 推荐你练习” style empty reasons are impossible here.
         """
 
+        _require(
+            not is_foreign_language_subject(
+                QuestionService(self._database).get_question_item(question_id).subject,
+            ), "外语学科在第一层整理结束，没有后续训练任务。",
+        )
         states = self.mastery_states(question_id)
         with self._database._connection() as connection:
             question = connection.execute(
@@ -3419,7 +3462,7 @@ class MasteryService:
                 """
                 SELECT e.id, e.question_id, e.result, e.independence,
                        e.hint_used, e.next_review_at, e.review_status,
-                       e.created_at, substr(q.stem_text, 1, 60) AS stem,
+                       e.created_at, q.subject, substr(q.stem_text, 1, 60) AS stem,
                        f.title AS family_title
                 FROM mastery_evidence e
                 JOIN question_items q ON q.id = e.question_id
@@ -3430,12 +3473,15 @@ class MasteryService:
                   AND e.next_review_at <= ?
                 ORDER BY CASE WHEN e.result = 'incorrect' THEN 0 ELSE 1 END,
                          e.hint_used DESC, e.next_review_at, e.id
-                LIMIT ?
                 """,
-                (now, limit),
+                (now,),
             ).fetchall()
         items: list[dict[str, object]] = []
         for row in rows:
+            if is_foreign_language_subject(row["subject"]):
+                continue
+            if len(items) >= limit:
+                break
             if str(row["result"]) == "incorrect":
                 why = "上次没有做对，今天是最适合再试一次的时间。"
             elif int(row["hint_used"]) or str(row["independence"]) in (
@@ -4116,9 +4162,11 @@ class TwoWingsService:
         if target_layer == "question":
             _require(question_id is not None, "question 目标必须提供 question_id。")
             row = connection.execute(
-                "SELECT id FROM question_items WHERE id = ?", (question_id,)
+                "SELECT id, subject FROM question_items WHERE id = ?", (question_id,)
             ).fetchone()
             _require(row is not None, f"整理题目不存在：{question_id}")
+            _require(not is_foreign_language_subject(row["subject"]),
+                     "外语学科只做第一层整理，不进入两翼。")
             return question_id, None
         _require(family_id is not None, "family 目标必须提供 family_id。")
         row = connection.execute(

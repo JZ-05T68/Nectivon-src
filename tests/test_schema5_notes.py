@@ -226,7 +226,7 @@ def _seed_document_and_page(database_path: Path) -> None:
 
 
 def test_schema_version_and_notes_structure(tmp_path: Path) -> None:
-    assert SCHEMA_VERSION == 34
+    assert SCHEMA_VERSION == 36
     database_path = _fresh_database(tmp_path)
     with sqlite3.connect(database_path) as connection:
         columns = {row[1]: row for row in connection.execute("PRAGMA table_info(notes)")}

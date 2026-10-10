@@ -163,4 +163,4 @@ def test_migrating_v23_database_adds_chat_tables(tmp_path: Path) -> None:
     assert question_turn.content == "问"
     assert answer_turn is not None and answer_turn.content == "答"
     assert reopened.last_backup_path is None or migrate_database is not None
-    assert SCHEMA_VERSION == 34
+    assert SCHEMA_VERSION == 36

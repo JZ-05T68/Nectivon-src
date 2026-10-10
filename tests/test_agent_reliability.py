@@ -433,7 +433,7 @@ def test_static_dependency_and_single_row_audit_schema_invariants() -> None:
     # v0.8.6 review note: bumping past v17 adds the legacy-import ledger
     # (v18) and the learning-workflow layer (v19) only; the agent-layer
     # import hygiene and migration-text invariants below are unchanged.
-    assert SCHEMA_VERSION == 34
+    assert SCHEMA_VERSION == 36
     source_root = Path("src")
     agent_root = source_root / "agent"
 

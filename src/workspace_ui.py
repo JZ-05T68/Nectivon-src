@@ -23,8 +23,9 @@ _NAVIGATION = (
         ("pages/17_我的资料.py", "文件", "folder_open"),
         ("pages/13_运行说明.py", "设置", "settings"),
     )),
-    ("学习整理", (
+    ("学习", (
         ("pages/18_学习整理.py", "学习整理", "school"),
+        ("pages/20_知识串联.py", "知识串联", "hub"),
     )),
     ("工具", (
         ("pages/1_导入资料.py", "添加文件", "upload_file"),

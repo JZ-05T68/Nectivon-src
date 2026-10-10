@@ -34,9 +34,9 @@ from src.config import OfficialEndpointError, Settings
 
 
 def test_release_gate_targets_current_version() -> None:
-    # Overnight round: dev line bumped to 0.8.6 everywhere (src/__init__,
+    # Overnight round: dev line bumped to 0.8.7 everywhere (src/__init__,
     # release gate, CHANGELOG, READMEs) as one atomic version move.
-    assert EXPECTED_VERSION == "0.8.6"
+    assert EXPECTED_VERSION == "0.8.7"
 
 
 def test_all_pass_report_returns_zero_and_clear_summary() -> None:
@@ -417,6 +417,6 @@ def test_gate_does_not_confuse_api_schema_and_display_versions(
 def test_milestone_pages_policy_only_covers_the_competition_agent_page() -> None:
     assert MILESTONE_PAGES == frozenset({"0_知识Agent.py"})
     assert ACTIVE_MILESTONE_VERSION == "0.6.1"
-    # Overnight round: the dev line moved to 0.8.6 (src + release gate +
+    # Overnight round: the dev line moved to 0.8.7 (src + release gate +
     # CHANGELOG together). Pin the EXPECTED_VERSION to the dev-line value.
-    assert EXPECTED_VERSION == "0.8.6"
+    assert EXPECTED_VERSION == "0.8.7"
