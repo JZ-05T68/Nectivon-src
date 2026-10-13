@@ -20,9 +20,16 @@ from src import __version__  # noqa: E402
 
 # Nectivon 语音/手势控制条：替换 star-vault 语音层里挂在 AR 栏上的装配段。
 # 生成的控制条不依赖 AR/LLM 面板，手势开关代理回星图自带的开/关摄像头按钮；
-# 其余语音识别、👌手势触发与指令解析逐字保留上游实现。
+# 识别与指令解析沿用上游实现，控件布局由 Nectivon 管理。
 _NECTIVON_BUILDUI = """    /* ===== 装配（Nectivon 自带控制条，不依赖 AR 栏） ===== */
     function buildUI() {
+      var footer = document.createElement('div');
+      footer.id = 'nectivonFooter';
+      footer.className = 'nv-footer';
+      var legend = document.getElementById('gestures');
+      if (legend) footer.appendChild(legend);
+      document.body.appendChild(footer);
+
       var bar = document.createElement('div');
       bar.id = 'nectivonVoiceBar';
       bar.className = 'nv-bar';
@@ -48,6 +55,12 @@ _NECTIVON_BUILDUI = """    /* ===== 装配（Nectivon 自带控制条，不依�
       elMic.textContent = '🎤 说话（按住空格）';
       bar.appendChild(elMic);
 
+      var options = document.createElement('div');
+      options.id = 'nectivonVoiceOptions';
+      options.className = 'nv-options';
+      options.setAttribute('role', 'group');
+      options.setAttribute('aria-label', '语音选项');
+
       elText = document.createElement('span');
       elText.className = 'v-text';
       elText.id = 'vText';
@@ -62,7 +75,7 @@ _NECTIVON_BUILDUI = """    /* ===== 装配（Nectivon 自带控制条，不依�
       elRead.checked = true;
       lab.appendChild(elRead);
       lab.appendChild(document.createTextNode('朗读'));
-      bar.appendChild(lab);
+      options.appendChild(lab);
 
       var lab2 = document.createElement('label');
       lab2.className = 'nv-opt';
@@ -72,7 +85,7 @@ _NECTIVON_BUILDUI = """    /* ===== 装配（Nectivon 自带控制条，不依�
       lab2.appendChild(elOk);
       elOk.checked = true;
       lab2.appendChild(document.createTextNode('👌手势'));
-      bar.appendChild(lab2);
+      options.appendChild(lab2);
 
       elInput = document.createElement('input');
       elInput.className = 'v-input';
@@ -82,7 +95,14 @@ _NECTIVON_BUILDUI = """    /* ===== 装配（Nectivon 自带控制条，不依�
       elInput.hidden = !!SR;
       bar.appendChild(elInput);
 
-      document.body.appendChild(bar);
+      footer.appendChild(bar);
+      document.body.appendChild(options);
+      // 两排控件在同一容器中排版，实际高度同时用于星图与摄像头的避让。
+      new ResizeObserver(function () {
+        document.documentElement.style.setProperty('--nv-footer-height',
+          Math.ceil(footer.getBoundingClientRect().height) + 'px');
+        window.dispatchEvent(new Event('resize'));
+      }).observe(footer);
 
       // 手势开关代理到星图自带的开启/关闭摄像头按钮，状态跟随 body.gesture-on。
       function syncGestureBtn() {
@@ -143,6 +163,193 @@ _NECTIVON_BUILDUI = """    /* ===== 装配（Nectivon 自带控制条，不依�
         var os = g.start.bind(g);
         g.start = function () { return os().then(function (r) { hookLandmarks(); return r; }); };
       }
+    }
+
+"""
+
+# Nectivon 星图关系动作：语音/打字「连接/断开」两个知识点星子之间的关联。
+# 指令解析在浏览器本地完成；动作只经 bridge 发回父页面持久化，组件不直接写库。
+_RELATE_LAYER = """    /* Nectivon 星图关系动作：改变星子之间的关联（经父页面确认后持久化） */
+    var RELATE_TYPES = [
+      ['派生自', 'derived_from'], ['来源于', 'derived_from'], ['源于', 'derived_from'],
+      ['源自', 'derived_from'],
+      ['依赖于', 'requires'], ['依赖', 'requires'], ['取决于', 'requires'], ['前置', 'requires'],
+      ['支持', 'supports'], ['印证', 'supports'], ['佐证', 'supports'],
+      ['相矛盾', 'contradicts'], ['矛盾', 'contradicts'],
+      ['冲突', 'contradicts'], ['相悖', 'contradicts'],
+      ['的实例', 'example_of'], ['的特例', 'example_of'], ['的例子', 'example_of']
+    ];
+    var RELATE_LABELS = { derived_from: '派生自', requires: '依赖', supports: '支持',
+      contradicts: '相矛盾', example_of: '是…的实例', relates_to: '相关' };
+    var RELATE_LINK_HEAD = /^(连接|连上|关联|连起来|联系起来|接起来|建立关系|加上关系|连线|链接)/;
+    var RELATE_UNLINK_HEAD = /^(断开|断掉|解除|取消关系|删除关系|拆掉关系|拆掉)/;
+    var RELATE_TAIL = /(连接起来|连起来|联系起来|建立关系|连接|关联|断开|解除)$/;
+    var RELATE_SKIP = [
+      /^(搜索|搜一下|搜搜|查找|查一下|找一下|找找|哪里有|有没有)/,
+      /^(打开|展开|点开|看一下|看一看|看一眼|讲讲|讲一下|说说)/,
+      /^(跳到|进入|切换到|定位到|读一下|念一下|朗读|读出来)/,
+      /^(收起|回到|下一个|上一个|放大|缩小)/
+    ];
+    var RELATE_JOIN = /[和与跟同及]/;
+
+    function relateSkipped(text) {
+      for (var i = 0; i < RELATE_SKIP.length; i++) {
+        if (RELATE_SKIP[i].test(text)) return true;
+      }
+      return false;
+    }
+
+    function relateTrimSide(text) {
+      return String(text || '').replace(
+        /^(的|了|是|把|将|与|和|跟|同|及)+|(的|了|是|了|与|和|跟|同|及)+$/g, '');
+    }
+    function relateHit(name) {
+      var text = relateTrimSide(name);
+      if (!text) return { node: null, score: 0 };
+      var hit = Commands.find(text);
+      return hit && hit.node && hit.score >= 0.62 ? hit : { node: null, score: 0 };
+    }
+    function relateSides(text) {
+      // 在每个连接词处尝试切分，取两侧都能命中且最低分最高的切法，避免标题含「和」时切错
+      var best = null;
+      for (var i = 0; i < text.length; i++) {
+        if (!RELATE_JOIN.test(text.charAt(i))) continue;
+        var left = relateHit(text.slice(0, i)), right = relateHit(text.slice(i + 1));
+        if (!left.node || !right.node) continue;
+        var low = Math.min(left.score, right.score);
+        if (!best || low > best.low) best = { a: left.node, b: right.node, low: low };
+      }
+      return best;
+    }
+    function relateTypedWord(text) {
+      for (var i = 0; i < RELATE_TYPES.length; i++) {
+        var at = text.indexOf(RELATE_TYPES[i][0]);
+        if (at > 0 && at + RELATE_TYPES[i][0].length < text.length) {
+          return { at: at, word: RELATE_TYPES[i][0], type: RELATE_TYPES[i][1] };
+        }
+      }
+      return null;
+    }
+    function parseRelate(text) {
+      var t = String(text || '').replace(PUNC, '').trim();
+      if (!t || relateSkipped(t)) return null;
+      t = t.replace(/^(请|帮我|我想|我要|麻烦)/, '').replace(/(一下|那个|这个)$/, '').trim();
+      var unlink = false, verbless = null, typed = null;
+      if (RELATE_UNLINK_HEAD.test(t)) {
+        unlink = true;
+        verbless = t.replace(RELATE_UNLINK_HEAD, '');
+      }
+      else if (RELATE_LINK_HEAD.test(t)) verbless = t.replace(RELATE_LINK_HEAD, '');
+      else if (RELATE_TAIL.test(t) && RELATE_TAIL.exec(t)[0].length < t.length) {
+        var word = RELATE_TAIL.exec(t)[0];
+        unlink = /^(断开|解除)$/.test(word);
+        verbless = t.slice(0, t.length - word.length);
+      } else typed = relateTypedWord(t);
+      if (unlink) typed = null;
+      var pair = null;
+      if (typed) {
+        var left = relateHit(t.slice(0, typed.at));
+        var right = relateHit(t.slice(typed.at + typed.word.length));
+        if (left.node && right.node) pair = { a: left.node, b: right.node };
+      } else if (verbless !== null) {
+        pair = relateSides(verbless.trim());
+        if (!pair) {
+          var other = relateHit(verbless.trim());
+          var anchor = S.state.selected || S.state.hovered;
+          if (other.node && anchor && !anchor.hub) pair = { a: anchor, b: other.node };
+        }
+      }
+      if (!pair || pair.a.id === pair.b.id) return null;
+      return { act: unlink ? 'unlink' : 'link', a: pair.a, b: pair.b,
+        relation_type: unlink || !typed ? 'relates_to' : typed.type };
+    }
+    function doRelate(cmd) {
+      if (!window.nectivonRelationChange) { toast('这个版本不支持星图关系动作'); return; }
+      window.nectivonRelationChange({
+        action: cmd.act, source: cmd.a.id, target: cmd.b.id,
+        relation_type: cmd.relation_type, source_title: cmd.a.title, target_title: cmd.b.title
+      });
+      var label = RELATE_LABELS[cmd.relation_type] || '相关';
+      if (cmd.act === 'unlink') {
+        toast('断开请求待确认：《' + cmd.a.title + '》 ↔ 《' + cmd.b.title + '》');
+        if (readOn) Commands.speak('断开请求已发出，请在页面上确认');
+      } else {
+        toast('已连接：《' + cmd.a.title + '》 ' + label + ' 《' + cmd.b.title + '》');
+        if (readOn) Commands.speak('已连接：' + cmd.a.title + label + cmd.b.title);
+      }
+    }
+
+    /* —— 手势连接/断开：依次停留选中两颗星，再比 👍 连接、✌️ 断开 —— */
+    var relateFrames = 0, relateKind = '', relateCooldown = 0;
+    function relateDist(h, a, b) {
+      var dx = h[a].x - h[b].x, dy = h[a].y - h[b].y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+    function relatePalmSize(h) { return Math.max(relateDist(h, 0, 9), 0.04); }
+    function relateExtended(h, tip, pip, ratio) {
+      return relateDist(h, 0, tip) > relatePalmSize(h) * ratio
+        && relateDist(h, 0, tip) > relateDist(h, 0, pip);
+    }
+    function relateFolded(h, tip, pip) {
+      return !relateExtended(h, tip, pip, 1.15);
+    }
+    function relateThumbsUp(h) {
+      var size = relatePalmSize(h);
+      if (relateDist(h, 0, 4) < size * 1.4) return false;
+      if (h[4].y > h[2].y) return false;
+      return relateFolded(h, 8, 6) && relateFolded(h, 12, 10)
+        && relateFolded(h, 16, 14) && relateFolded(h, 20, 18);
+    }
+    function relatePeace(h) {
+      if (!relateExtended(h, 8, 6, 1.3)) return false;
+      if (!relateExtended(h, 12, 10, 1.3)) return false;
+      if (relateDist(h, 8, 12) < relatePalmSize(h) * 0.4) return false;
+      return relateFolded(h, 16, 14) && relateFolded(h, 20, 18);
+    }
+    function relateGesture(lms) {
+      if (!lms || lms.length !== 1 || !lms[0] || lms[0].length < 21) return '';
+      var h = lms[0];
+      if (okGesture(lms)) return '';
+      if (relateThumbsUp(h)) return 'link';
+      if (relatePeace(h)) return 'unlink';
+      return '';
+    }
+    // 关系手势不再被上游误当成握拳，双手缩放仍由上游处理。
+    window.nectivonRelationPose = relateGesture;
+    function relateSend(kind, a, b) {
+      window.nectivonRelationChange({
+        action: kind, source: a.id, target: b.id, relation_type: 'relates_to',
+        source_title: a.title, target_title: b.title
+      });
+      if (kind === 'unlink') {
+        toast('断开请求待确认：《' + a.title + '》 ↔ 《' + b.title + '》');
+      } else {
+        toast('连接请求已发出：《' + a.title + '》 ↔ 《' + b.title + '》');
+      }
+    }
+    function relateApply(kind) {
+      if (!window.nectivonRelationChange) { toast('这个版本不支持星图关系动作'); return; }
+      var current = S.state.selected;
+      var previous = window.nectivonPreviousSelected && window.nectivonPreviousSelected();
+      if (!current || current.hub || !previous || previous.hub) {
+        toast('先依次停留选中两颗星，再比手势'); return;
+      }
+      if (current.id === previous.id) { toast('两颗星需要不同，先停留选中另一颗'); return; }
+      relateSend(kind, previous, current);
+    }
+    function relateFrame(lms) {
+      if (relateCooldown > 0) { relateCooldown--; return; }
+      if (!lms || !lms.length || !lms[0] || lms[0].length < 21) {
+        relateFrames = 0; relateKind = ''; return;
+      }
+      var kind = relateGesture(lms);
+      if (kind !== relateKind) { relateKind = kind; relateFrames = kind ? 1 : 0; return; }
+      if (!kind) return;
+      relateFrames++;
+      if (relateFrames < 4) return;
+      relateFrames = 0; relateKind = '';
+      relateCooldown = 45;
+      relateApply(kind);
     }
 
 """
@@ -285,6 +492,49 @@ _VOICE_LAYER_TWEAKS = (
         "      var hit = target ? Commands.find(target) : { node: null, score: 0 };",
         "      var hit = target ? Commands.find(target, lastAlts) : { node: null, score: 0 };",
     ),
+    # 星图关系动作：注入 连接/断开 指令的解析与执行，并挂入统一 parse/run。
+    (
+        "    /* ============ 意图解析 ============ */",
+        _RELATE_LAYER + "    /* ============ 意图解析 ============ */",
+    ),
+    (
+        "      var isSearch = /(搜索|搜一下|搜搜|查找|查一下|找一下|找找|哪里有"
+        "|有没有)/.test(low);",
+        "      var relate = parseRelate(t);\n"
+        "      if (relate) return relate;\n"
+        "      var isSearch = /(搜索|搜一下|搜搜|查找|查一下|找一下|找找|哪里有"
+        "|有没有)/.test(low);",
+    ),
+    (
+        "        case 'search': doSearch(cmd); break;",
+        "        case 'search': doSearch(cmd); break;\n"
+        "        case 'link': case 'unlink': doRelate(cmd); break;",
+    ),
+    # 手势连接/断开：复用语音层既有的 detectForVideo 钩子，在每帧检测 👍/✌️。
+    (
+        "    function onFrame(lms) {\n"
+        "      if (!okOn) return;",
+        "    function onFrame(lms) {\n"
+        "      relateFrame(lms);\n"
+        "      if (!okOn) return;",
+    ),
+    (
+        "          try { onFrame(r && r.landmarks); } catch (e) {}",
+        "          try { onFrame(r && r.landmarks); } catch (e) {\n"
+        "            console.error('Nectivon 手势帧处理失败', e);\n"
+        "            if (!lm.__nvFrameError) {\n"
+        "              lm.__nvFrameError = true;\n"
+        "              toast('手势处理遇到问题，请关闭手势后重新开启');\n"
+        "            }\n"
+        "          }",
+    ),
+    (
+        "        lm.__vHook = true;\n      } catch (e) {}",
+        "        lm.__vHook = true;\n      } catch (e) {\n"
+        "        console.error('Nectivon 手势检测回调安装失败', e);\n"
+        "        toast('手势检测未就绪，请关闭手势后重新开启');\n"
+        "      }",
+    ),
 )
 
 
@@ -340,14 +590,62 @@ def build_component(destination: Path | None = None) -> Path:
     replacements = {
         "async function wG(){": "async function wG(){return await window.nectivonInitialPayload;",
         "function c9(e){": "function c9(e){window.nectivonSelected(e);",
+        # 为底部说明与控制条留出真实空间，渲染、选星和摄像头光标使用同一高度。
+        "i*window.innerHeight,t);this.o.onPoint(a,o)":
+            "i*window.nectivonMapHeight(),t);this.o.onPoint(a,o)",
+        "1.6/(innerWidth/innerHeight)": "1.6/(innerWidth/window.nectivonMapHeight())",
+        "Math.min(innerHeight-r-16,a)": "Math.min(window.nectivonMapHeight()-r-16,a)",
+        "o=(1-m9.y)/2*innerHeight": "o=(1-m9.y)/2*window.nectivonMapHeight()",
+        "I7.width(innerWidth).height(innerHeight),W7.setSize(innerWidth*H7,innerHeight*H7)":
+            "I7.width(innerWidth).height(window.nectivonMapHeight()),"
+            "W7.setSize(innerWidth*H7,window.nectivonMapHeight()*H7)",
+        # 拇指朝上会被上游识别为握拳；关系手势先消费，避免展开详情干扰动作。
+        "let r=n[0],i=this.stablePose(u7(r)),a=d7(r);":
+            "let relationPose=window.nectivonRelationPose?.(n);"
+            "if(relationPose){this.history=[],this.prevPalm=null,"
+            "this.setPose(relationPose===`link`?`relate`:`unrelate`),"
+            "this.o.onStatus(relationPose===`link`?`拇指朝上：连接两星`:"
+            "`二指张开：断开待确认`,relationPose);return}"
+            "let r=n[0],i=this.stablePose(u7(r)),a=d7(r);",
         "function l9(e){": "function l9(e){return '';",
         "window.__starmap={graph:I7,": "window.__starmap={setPayload:D9,graph:I7,",
+        # Retain saved relation metadata and recognise shared-subject endpoints.
+        "p.push({source:t.source,target:t.target,"
+        "kind:u.get(t.source)===u.get(t.target)?`note`:`bridge`})":
+            "p.push({...t,kind:t.cross_subject||"
+            "u.get(t.source)!==u.get(t.target)?`bridge`:`note`})",
+        # Existing knowledge relations across subjects need a visible direct line.
+        "e.baseAlpha={tag:.1,note:.34,bridge:.16,xtag:.05}[e.kind]":
+            "e.baseAlpha=e.cross_subject?0.48:{tag:.1,note:.34,bridge:.16,xtag:.05}[e.kind]",
+        # Count shared nodes in every connected subject, including secondary hubs.
+        "s.forEach(e=>d.set(e.cat,(d.get(e.cat)||0)+1));":
+            "s.forEach(e=>d.set(e.cat,(d.get(e.cat)||0)+1));"
+            "for(let e of l){let t=e.target.slice(4);d.set(t,(d.get(t)||0)+1)}",
+        # Hide empty groups, including groups edited in the renderer's settings.
+        # A shared node's secondary group remains visible through its cross-tag edge.
+        "let f=[...n.filter(e=>!e.hidden),a,o].filter(e=>!e.special||d.get(e.id));":
+            "let occupiedTags=new Set(l.map(e=>e.target)),"
+            "f=[...n.filter(e=>!e.hidden),a,o].filter("
+            "e=>d.get(e.id)||occupiedTags.has(`hub:${e.id}`));",
+        # Detach removed sprites before the CSS label renderer can reattach old labels.
+        "for(let[e,t]of n)E7.has(e)||t.labelEl?.remove();":
+            "for(let[e,t]of n)if(!E7.has(e)){"
+            "t.sprite?.removeFromParent();t.labelEl?.remove();}",
         # 手势入口保持上游原样：用户已明确要求在知识串联中启用手势与语音控制。
         "C7.mode===`live`?null:EG(w9())": "null",
         "local:{canWatch:rX,": "local:{canWatch:false,",
         "async pick(){let e=await T9.pick();": "async pick(){return null;let e=await T9.pick();",
         "async fromFiles(e){let t=await T9.fromFileList(e);":
             "async fromFiles(e){return null;let t=await T9.fromFileList(e);",
+        # 图例补充 Nectivon 关系手势（👍 连接 / ✌️ 断开需确认），沿用上游条目样式。
+        "    <li data-g=\"zoom\"><span class=\"g-icon\" aria-hidden=\"true\">🙌</span>"
+        "<span>双手张开合拢<br /><em>缩放</em></span></li>\n  </ol>":
+            "    <li data-g=\"zoom\"><span class=\"g-icon\" aria-hidden=\"true\">🙌</span>"
+            "<span>双手张开合拢<br /><em>缩放</em></span></li>\n"
+            "    <li data-g=\"relate\"><span class=\"g-icon\" aria-hidden=\"true\">👍</span>"
+            "<span>选中两星拇指朝上<br /><em>连接两星</em></span></li>\n"
+            "    <li data-g=\"unrelate\"><span class=\"g-icon\" aria-hidden=\"true\">✌️</span>"
+            "<span>选中两星二指张开<br /><em>断开（需确认）</em></span></li>\n  </ol>",
     }
     for before, after in replacements.items():
         if html.count(before) != 1:

@@ -9,9 +9,11 @@ import streamlit as st
 from src import __version__
 from src.knowledge_graph_service import KnowledgeGraphService
 from src.knowledge_graph_ui import (
+    apply_star_relation_command,
     render_graph_details,
     render_graph_editor,
     render_material_mining,
+    render_pending_relation_removal,
 )
 from src.knowledge_starmap_component import render_starmap
 from src.runtime import application_database
@@ -56,6 +58,10 @@ else:
                "底部控制条或按住空格说话——直接说出节点标题或内容的一部分（题干、知识点、页面文字均可）"
                "即可选中对应节点，也说「下一个星座」「回到全景」（首次使用需允许麦克风；"
                "语音识别由浏览器提供，Chrome/Edge 需联网；打字输入随时可用）。")
+    st.caption("星图动作可直接改变知识点之间的关系：说或输入「连接 A 和 B」「A 派生自 B」"
+               "（也支持 支持/矛盾/依赖/实例）即可连线；「断开 A 和 B」需在页面点击确认后才会删除。"
+               "只说一个名字时，配对当前选中的星。手势操作请先依次用食指停留选中两颗知识点星，"
+               "再拇指朝上连接，或二指张开请求断开。")
     roots = [None, *graph.primary_subjects()]
     if st.session_state.get("graph_nebula_subject") not in roots:
         st.session_state["graph_nebula_subject"] = None
@@ -65,11 +71,15 @@ else:
     st.caption("选择一级学科查看其二级方向；方向尚未确定的节点进入「待细分」。")
     event = render_starmap(graph.star_payload(subject=subject))
     identifiers = list(graph.nodes)
-    if isinstance(event, dict) and event.get("node_id") in graph.nodes:
-        event_id = event["node_id"]
-        if event != st.session_state.get("graph_last_star_event"):
-            st.session_state["graph_node_picker"] = event_id
-            st.session_state["graph_last_star_event"] = event
+    if isinstance(event, dict) and event != st.session_state.get("graph_last_star_event"):
+        st.session_state["graph_last_star_event"] = event
+        request = event.get("relation")
+        if isinstance(request, dict):
+            apply_star_relation_command(database, request)
+        elif event.get("node_id") in graph.nodes:
+            st.session_state["graph_node_picker"] = event["node_id"]
+    # 断开反馈紧跟星图，避免被较长的节点正文推到页面深处。
+    render_pending_relation_removal(database)
     if st.session_state.get("graph_node_picker") not in graph.nodes:
         st.session_state["graph_node_picker"] = identifiers[0]
     selected = st.selectbox("查看节点", identifiers,
@@ -77,6 +87,9 @@ else:
                             key="graph_node_picker")
     with st.container(key="graph_details"):
         render_graph_details(database, graph, selected)
+relation_notice = st.session_state.pop("graph_relation_notice", None)
+if relation_notice:
+    st.toast(relation_notice[1], icon=relation_notice[0])
 mining_saved = st.session_state.pop("graph_mining_saved", None)
 if mining_saved:
     st.success(mining_saved)

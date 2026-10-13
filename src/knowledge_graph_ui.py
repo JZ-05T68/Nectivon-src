@@ -21,7 +21,7 @@ from src.knowledge_mining_service import (
     KnowledgeMiningError,
     save_mining_draft,
 )
-from src.knowledge_object_service import KnowledgeObjectService
+from src.knowledge_object_service import KnowledgeObjectError, KnowledgeObjectService
 from src.learning_workflow_service import QuestionService
 from src.math_display import render_math_markdown
 from src.models import KnowledgeEpistemicBasis, KnowledgeRelationType
@@ -148,6 +148,102 @@ def render_graph_details(database: Database, graph: KnowledgeGraph, selected: st
                   on_click=_select_node, args=(other,))
     if st.button("前往学习整理", key="graph_learning"):
         st.switch_page("pages/18_学习整理.py")
+
+
+def _knowledge_identifier(raw: object) -> int | None:
+    """Return the knowledge object id behind a star id, or None for other kinds."""
+
+    if not isinstance(raw, str) or not raw.startswith("knowledge:"):
+        return None
+    try:
+        return int(raw.split(":", 1)[1])
+    except ValueError:
+        return None
+
+def apply_star_relation_command(database: Database, request: dict) -> None:
+    """Apply one 连接/断开 command issued inside the star map.
+
+    Connecting applies at once because it is easily reversible; removal always
+    waits for the explicit on-page confirmation (automation boundary: the user
+    confirms irreversible deletions, a spoken or typed command alone never
+    deletes a saved relation).
+    """
+
+    action = request.get("action")
+    source_id = _knowledge_identifier(request.get("source"))
+    target_id = _knowledge_identifier(request.get("target"))
+    source_title = str(request.get("source_title") or request.get("source") or "起点")
+    target_title = str(request.get("target_title") or request.get("target") or "终点")
+    if action not in ("link", "unlink") or source_id is None or target_id is None:
+        st.toast("星图关系动作目前只支持知识点星子；题目与来源连线由本地资料自动生成。",
+                 icon="⚠️")
+        return
+    service = KnowledgeObjectService(database)
+    if action == "link":
+        relation_type = str(request.get("relation_type")
+                            or KnowledgeRelationType.RELATES_TO.value)
+        try:
+            KnowledgeRelationType(relation_type)
+            service.add_relation(source_id, target_id, relation_type=relation_type,
+                                 description="星图动作")
+        except KnowledgeObjectError as exc:
+            st.toast(f"星图连接未保存:{exc}", icon="⚠️")
+            return
+        except Exception as exc:  # noqa: BLE001 - keep the map usable on local failures
+            LOGGER.exception("星图动作保存知识关系失败")
+            st.toast(f"星图连接未保存:{exc}", icon="⚠️")
+            return
+        label = KnowledgeRelationType(relation_type).label
+        st.session_state["graph_relation_notice"] = (
+            "✅", f"已连接:{source_title} {label} {target_title}")
+        st.rerun()
+        return
+    try:
+        matching = [relation for relation in service.relations(source_id)
+                    if {relation.source_ko_id, relation.target_ko_id} == {source_id, target_id}]
+    except KnowledgeObjectError as exc:
+        st.toast(f"星图断开未执行:{exc}", icon="⚠️")
+        return
+    if not matching:
+        st.toast("这两颗星之间没有已保存的关系。", icon="⚠️")
+        return
+    st.session_state["graph_pending_unlink"] = {
+        "relation_ids": [relation.id for relation in matching],
+        "source_title": source_title,
+        "target_title": target_title,
+    }
+    st.rerun()
+
+def render_pending_relation_removal(database: Database) -> None:
+    """Ask for explicit confirmation before removing star-map relations."""
+
+    pending = st.session_state.get("graph_pending_unlink")
+    if not pending:
+        return
+    ids = list(pending.get("relation_ids", ()))
+    st.warning(
+        f"待确认断开:{pending.get('source_title', '')} ↔ {pending.get('target_title', '')}"
+        f"(共 {len(ids)} 条关系)。删除后需要重新建立。"
+    )
+    confirm, cancel = st.columns(2)
+    if confirm.button("确认断开", key="graph_unlink_confirm", type="primary"):
+        service = KnowledgeObjectService(database)
+        removed = 0
+        for relation_id in ids:
+            try:
+                service.remove_relation(relation_id)
+            except KnowledgeObjectError:
+                LOGGER.exception("星图动作断开知识关系失败:relation_id=%s", relation_id)
+            else:
+                removed += 1
+        st.session_state.pop("graph_pending_unlink", None)
+        if removed:
+            st.session_state["graph_relation_notice"] = ("✅", f"已断开 {removed} 条关系。")
+            st.rerun()
+        st.toast("这些关系已不存在,无需断开。", icon="⚠️")
+    if cancel.button("取消", key="graph_unlink_cancel"):
+        st.session_state.pop("graph_pending_unlink", None)
+        st.toast("已保留现有关系。", icon="✅")
 
 
 def render_material_mining(database: Database) -> None:

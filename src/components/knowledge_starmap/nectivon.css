@@ -2,40 +2,80 @@
 /* 手势/语音控制（移植自 star-vault）：摄像头面板与手势光标交还给组件脚本控制。 */
 #settingsBtn, #settings, #arBar, #arLayer, #llmPanel { display: none !important; }
 html, body { height: 100%; }
+:root { --nv-footer-height: 104px; }
+#sky { bottom: var(--nv-footer-height); overflow: hidden; }
 .plate { top: 24px; }
 #nectivon-error { position: fixed; bottom: 15px; left: 15px; z-index: 100;
   padding: 12px; color: #fff; background: #663515; border-radius: 8px; }
 
-/* 手势图例只在摄像头开启后出现；窄视口下抬到控制条上方避免叠压。 */
-body.gesture-on .gestures { display: flex; }
-@media (max-width: 1180px) {
-  body.gesture-on .gestures {
-    bottom: 150px;
-    right: 340px;
-    flex-wrap: wrap;
-  }
+/* 星图下方：七项说明合为一排，窄屏横向滚动，不折成两行。 */
+.nv-footer {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 12px 10px;
+  border-top: 1px solid var(--hair);
+  background: #080d1c;
+}
+.nv-footer .gestures {
+  position: static;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 3px;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0;
+}
+.nv-footer .gestures li {
+  flex: none;
+  padding: 6px 7px;
+  gap: 7px;
+  white-space: nowrap;
+}
+.keys { display: none; }
+.lens { bottom: calc(var(--nv-footer-height) + 12px); }
+.edge { top: calc((100% - var(--nv-footer-height)) / 2); }
+.folio { top: 68px; max-height: calc(100vh - var(--nv-footer-height) - 320px); }
+
+/* 朗读与手势语音选项保留在星图右上角。 */
+.nv-options {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 36px);
+  padding: 7px 12px;
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  background: rgba(10, 16, 36, 0.82);
+  color: var(--starlight);
+  font-size: 12px;
 }
 
-/* 语音/手势控制条：星图底部居中，布局沿用原 AR 栏的视觉语言。
-   宽度避让右下角摄像头面板（约 292px）与左下角手势图例（图例抬高于控制条上方）。 */
+/* 蓝框：紧贴说明行下方居中，正常文档流保证两排不会遮挡。 */
 .nv-bar {
-  position: fixed;
-  left: 50%;
-  bottom: 22px;
-  transform: translateX(-50%);
+  position: static;
   z-index: 6;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-wrap: wrap;
   gap: 6px 12px;
-  max-width: min(560px, calc(100vw - 640px));
+  width: max-content;
+  max-width: 100%;
   padding: 7px 14px;
   border: 1px solid var(--hair);
   border-radius: 999px;
   background: rgba(10, 16, 36, 0.62);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
   color: var(--starlight);
   font-size: 12px;
 }
@@ -44,6 +84,13 @@ body.gesture-on .gestures { display: flex; }
   -webkit-user-select: text;
   user-select: text;
 }
+/* 语音反馈紧跟说话按钮，整组按实际宽度居中；长文本不会撑出页脚。 */
+.nv-bar .v-text {
+  min-width: 0;
+  max-width: min(320px, calc(100vw - 60px));
+}
+/* 页面通用语音增强会包裹输入框；隐藏打字框时也隐藏其附加麦克风。 */
+.nv-bar .nectivon-voice-inline:has(input[hidden]) { display: none; }
 .nv-btn {
   flex: none;
   padding: 5px 14px;
@@ -79,19 +126,20 @@ body.gesture-on .gestures { display: flex; }
 .nv-opt:hover { color: var(--starlight); }
 .nv-opt input { accent-color: #e3c58a; margin: 0; }
 
-/* 详情展开时让位，与原版 AR 栏行为一致；Esc 或空格语音仍可用。 */
-.folio.open ~ .nv-bar { visibility: hidden; }
-
-/* 极窄视口：竖排并抬到摄像头面板上方，避免与其或图例叠压。 */
+/* 窄屏仍保留说明在上、按钮在下的排列；摄像头跟随实际页脚高度避让。 */
 @media (max-width: 760px) {
-  .nv-bar {
-    left: auto;
+  .nv-footer { padding-inline: 8px; }
+  .nv-footer .gestures { width: 100%; }
+  .nv-options {
+    top: 10px;
     right: 12px;
-    bottom: 300px;
-    transform: none;
-    flex-direction: column;
-    align-items: flex-end;
-    max-width: 240px;
-    border-radius: 10px;
+    gap: 8px;
+    max-width: calc(100vw - 24px);
+  }
+  .lens { right: 12px; width: min(200px, calc(100vw - 24px)); }
+  .nv-bar { border-radius: 14px; }
+  .nv-bar .v-input {
+    flex-basis: 100%;
+    min-width: 0;
   }
 }

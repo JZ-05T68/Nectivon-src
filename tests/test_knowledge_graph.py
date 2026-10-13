@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
+import subprocess
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -427,3 +429,115 @@ def test_star_nebulae_group_by_subject(tmp_path) -> None:
              for note in KnowledgeGraphService(database).snapshot()
              .star_payload()["vault"]["notes"]}
     assert tags2[f"knowledge:{unlinked.id}"] == []  # 渲染端归入「未归类」星云
+
+
+def _run_page_with_star_event(assets, monkeypatch, request: dict) -> AppTest:
+    """Run the real page once with the starmap returning one relation event."""
+
+    database, _, _ = assets
+    monkeypatch.setattr(runtime, "application_database", lambda: database)
+    seen = {"calls": 0}
+
+    def fake_render(payload: dict) -> dict | None:
+        seen["calls"] += 1
+        return {"relation": request, "event_id": "test:1"} if seen["calls"] == 1 else None
+
+    monkeypatch.setattr(component, "render_starmap", fake_render)
+    return AppTest.from_file(
+        str(Path(__file__).parents[1] / "pages/20_知识串联.py")
+    ).run(timeout=30)
+
+
+def test_star_relation_command_links_knowledge_stars(assets, monkeypatch) -> None:
+    database, _, knowledge_id = assets
+    service = KnowledgeObjectService(database)
+    source = service.create(
+        kind="concept", title="反馈控制", content="按偏差调节系统",
+        epistemic_basis="personal_judgment").knowledge_object
+    app = _run_page_with_star_event(assets, monkeypatch, {
+        "action": "link", "source": f"knowledge:{source.id}",
+        "target": f"knowledge:{knowledge_id}", "relation_type": "derived_from",
+        "source_title": "反馈控制", "target_title": "定义域",
+    })
+    assert not app.exception
+    relations = [relation for relation in service.relations(knowledge_id)
+                 if {relation.source_ko_id, relation.target_ko_id}
+                 == {source.id, knowledge_id}]
+    assert len(relations) == 1
+    assert relations[0].source_ko_id == source.id
+    assert relations[0].relation_type.value == "derived_from"
+    assert relations[0].description == "星图动作"
+
+
+def test_star_relation_command_repeats_are_idempotent(assets, monkeypatch) -> None:
+    database, _, knowledge_id = assets
+    service = KnowledgeObjectService(database)
+    source = service.create(
+        kind="concept", title="反馈控制", content="按偏差调节系统",
+        epistemic_basis="personal_judgment").knowledge_object
+    request = {
+        "action": "link", "source": f"knowledge:{source.id}",
+        "target": f"knowledge:{knowledge_id}", "relation_type": "relates_to",
+        "source_title": "反馈控制", "target_title": "定义域",
+    }
+    _run_page_with_star_event(assets, monkeypatch, request)
+    app = _run_page_with_star_event(assets, monkeypatch, request)
+    assert not app.exception
+    assert len(service.relations(knowledge_id)) == 1  # 同一条命令重复下达不产生重复关系
+
+
+def test_star_relation_unlink_waits_for_explicit_confirmation(assets, monkeypatch) -> None:
+    database, _, knowledge_id = assets
+    service = KnowledgeObjectService(database)
+    source = service.create(
+        kind="concept", title="反馈控制", content="按偏差调节系统",
+        epistemic_basis="personal_judgment").knowledge_object
+    relation = service.add_relation(source.id, knowledge_id,
+                                    relation_type="relates_to", description="星图动作")
+    app = _run_page_with_star_event(assets, monkeypatch, {
+        "action": "unlink", "source": f"knowledge:{source.id}",
+        "target": f"knowledge:{knowledge_id}", "relation_type": "relates_to",
+        "source_title": "反馈控制", "target_title": "定义域",
+    })
+    assert not app.exception
+    assert app.session_state["graph_pending_unlink"]["relation_ids"] == [relation.id]
+    assert database.get_knowledge_relation(relation.id) is not None  # 未确认前不删除
+    next(button for button in app.button if button.label == "取消").click().run()
+    assert database.get_knowledge_relation(relation.id) is not None
+    assert "graph_pending_unlink" not in app.session_state
+    app = _run_page_with_star_event(assets, monkeypatch, {
+        "action": "unlink", "source": f"knowledge:{source.id}",
+        "target": f"knowledge:{knowledge_id}", "relation_type": "relates_to",
+        "source_title": "反馈控制", "target_title": "定义域",
+    })
+    next(button for button in app.button if button.label == "确认断开").click().run(timeout=30)
+    assert not app.exception
+    assert database.get_knowledge_relation(relation.id) is None
+    assert "graph_pending_unlink" not in app.session_state
+
+
+def test_star_relation_command_rejects_non_knowledge_stars(assets, monkeypatch) -> None:
+    database, question_id, _ = assets
+    app = _run_page_with_star_event(assets, monkeypatch, {
+        "action": "link", "source": f"question:{question_id}",
+        "target": "knowledge:999999", "relation_type": "relates_to",
+        "source_title": "题目", "target_title": "知识点",
+    })
+    assert not app.exception
+    assert "graph_pending_unlink" not in app.session_state
+    with database._connection() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM knowledge_relations").fetchone()[0] == 0
+    assert any("知识点" in toast.value for toast in app.toast)
+
+
+def test_star_relation_command_layer_passes_node_checks() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for starmap relation command checks")
+    script = Path(__file__).parent / "js/starmap_relation_commands.test.cjs"
+    result = subprocess.run(
+        [node, "--test", str(script)], capture_output=True, text=True,
+        encoding="utf-8", timeout=30, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

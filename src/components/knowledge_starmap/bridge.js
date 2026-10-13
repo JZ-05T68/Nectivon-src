@@ -8,12 +8,28 @@
   let initialized = false;
   let revision = "";
   let sequence = 0;
+  let lastSelected = null;
+  let previousSelected = null;
+  window.nectivonMapHeight = () => Math.max(240, window.innerHeight - (
+    parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--nv-footer-height')) || 0
+  ));
   window.nectivonInitialPayload = new Promise(resolve => { resolveInitial = resolve; });
+  // 星图手势连接/断开需要"上一颗选中的星"；这里随每次选中滚动记录，不发额外消息。
+  window.nectivonPreviousSelected = () => previousSelected;
   window.nectivonSelected = node => {
     const id = node && !node.hub ? node.id : null;
     if (!id) return;
+    if (lastSelected && lastSelected.id !== id) previousSelected = lastSelected;
+    lastSelected = node;
     send("streamlit:setComponentValue", {
       value: {node_id: id, event_id: `${Date.now()}:${++sequence}`}, dataType: "json"
+    });
+  };
+  // 星图关系动作（连接/断开）交回父页面持久化；本组件从不直接写库。
+  window.nectivonRelationChange = request => {
+    if (!request || !request.action) return;
+    send("streamlit:setComponentValue", {
+      value: {relation: request, event_id: `${Date.now()}:${++sequence}`}, dataType: "json"
     });
   };
   window.addEventListener("message", event => {
