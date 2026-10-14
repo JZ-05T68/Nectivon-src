@@ -661,11 +661,15 @@ def test_star_relation_command_rejects_non_knowledge_stars(assets, monkeypatch) 
     assert any("知识点" in toast.value for toast in app.toast)
 
 
-def test_star_relation_command_layer_passes_node_checks() -> None:
+@pytest.mark.parametrize("filename", [
+    "starmap_relation_commands.test.cjs", "knowledge_starmap.test.cjs",
+    "starmap_selection.test.cjs",
+])
+def test_star_relation_command_layer_passes_node_checks(filename: str) -> None:
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is required for starmap relation command checks")
-    script = Path(__file__).parent / "js/starmap_relation_commands.test.cjs"
+    script = Path(__file__).parent / "js" / filename
     result = subprocess.run(
         [node, "--test", str(script)], capture_output=True, text=True,
         encoding="utf-8", timeout=30, check=False,

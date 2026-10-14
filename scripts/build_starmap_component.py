@@ -288,6 +288,7 @@ _RELATE_LAYER = """    /* Nectivon 星图关系动作：改变星子之间的关
     var relatePanel = null, relateText = null;
     function relateReset() {
       relateSource = null; relateAction = '';
+      S.state.relationSelecting = false;
       relateFrames = 0; relateKind = ''; relateFrameNode = '';
       if (relatePanel) relatePanel.hidden = true;
     }
@@ -362,6 +363,7 @@ _RELATE_LAYER = """    /* Nectivon 星图关系动作：改变星子之间的关
       }
       if (!relateSource) {
         relateSource = { id: current.id, title: current.title }; relateAction = kind;
+        S.state.relationSelecting = true;
         var pose = kind === 'link' ? '👍 拇指朝上' : '✌️ 二指张开';
         var message = '已锁定第一颗星《' + current.title
           + '》，请松开手势，再用食指选中第二颗知识点星，并再次比 ' + pose;
@@ -398,6 +400,21 @@ _RELATE_LAYER = """    /* Nectivon 星图关系动作：改变星子之间的关
 """
 
 _ASSET_FILES = ("hand-model.js", "hand-wasm.js", "ok.js")
+
+# Mouse clicks use the same screen-space picker as gestures, even if a hub covers a star.
+# ForceGraph suppresses these callbacks after dragging, so rotation remains unchanged.
+_STAR_SELECTION_HELPERS = """function nectivonSelectStar(node) {
+  i9();
+  if (!node) { d9(); c9(null); return; }
+  if (node.hub) { n9(k7.indexOf(node.cat)); return; }
+  $.selected === node ? u9(node) : c9(node);
+}
+function nectivonMousePick(event, fallback = null) {
+  const rect = g7('sky').getBoundingClientRect();
+  const node = h9(event.clientX - rect.left, event.clientY - rect.top, 18) || fallback;
+  nectivonSelectStar(node);
+}
+"""
 
 # 语音层逐字锚定改造：每条锚点在上游语音 IIFE 中必须恰好出现一次，变化即报错。
 # 1) 说话前显式申请麦克风权限（触发浏览器授权提示），被拒时给出指引并回退打字；
@@ -633,6 +650,25 @@ def build_component(destination: Path | None = None) -> Path:
     replacements = {
         "async function wG(){": "async function wG(){return await window.nectivonInitialPayload;",
         "function c9(e){": "function c9(e){window.nectivonSelected(e);",
+        # Dimming unrelated nodes is presentation, never an eligibility rule for selection.
+        "if(n.alpha<.5||(m9.set(n.x,n.y,n.z).project(B7),m9.z>1))continue;":
+            "if((m9.set(n.x,n.y,n.z).project(B7),m9.z>1))continue;",
+        "function h9(": _STAR_SELECTION_HELPERS + "function h9(",
+        # A nebula's larger sprite must not outweigh a nearer knowledge star.
+        "s=Math.hypot(a-e,o-t)-(n.hub?12:0);": "s=Math.hypot(a-e,o-t);",
+        ".onNodeClick(e=>{if(i9(),e.hub){n9(k7.indexOf(e.cat));return}"
+        "$.selected===e?u9(e):c9(e)}).onBackgroundClick(()=>{i9(),d9(),c9(null)})":
+            ".onNodeClick((node,event)=>nectivonMousePick(event,node))"
+            ".onBackgroundClick(nectivonMousePick)"
+            ".onLinkClick((link,event)=>nectivonMousePick(event))",
+        # While choosing a second endpoint, knowledge stars in all subjects stay readable.
+        "s&&(i=n===s||c?.has(n.id)?1:Math.min(i,.22)),n.alpha+=":
+            "s&&(i=n===s||c?.has(n.id)?1:Math.min(i,.22));"
+            "let relationCandidate=$.relationSelecting&&String(n.id).startsWith(`knowledge:`);"
+            "relationCandidate&&(i=1);n.alpha+=",
+        "let m=n.hub||o===n.cat&&n.alpha>.5||n===s||n===l||!!(s&&c?.has(n.id))||d<1;":
+            "let m=relationCandidate||n.hub||o===n.cat&&n.alpha>.5||n===s||n===l||"
+            "!!(s&&c?.has(n.id))||d<1;",
         # 为底部说明与控制条留出真实空间，渲染、选星和摄像头光标使用同一高度。
         "i*window.innerHeight,t);this.o.onPoint(a,o)":
             "i*window.nectivonMapHeight(),t);this.o.onPoint(a,o)",

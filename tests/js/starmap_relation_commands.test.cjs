@@ -183,6 +183,7 @@ test('first pose locks only one star; second selection and pose request confirma
   e.context.S.state.selected = null;
   release(e);
   assert.equal(e.context.relateSource.id, 'knowledge:1', 'source survives selection clearing');
+  assert.equal(e.context.S.state.relationSelecting, true);
   e.context.S.state.selected = NODES['knowledge:2'];
   hold(e, thumbsUp());
   assert.equal(e.events.length, 1);
@@ -372,9 +373,11 @@ test('progress stays visible, cancel and graph updates clear the locked source',
   panel.children[1].click();
   assert.equal(panel.hidden, true);
   assert.equal(e.context.relateSource, null);
+  assert.equal(e.context.S.state.relationSelecting, false);
   release(e); hold(e, peace());
   listeners['nectivon:payload-changed']();
   assert.equal(e.context.relateSource, null);
+  assert.equal(e.context.S.state.relationSelecting, false);
   assert.equal(panel.hidden, true);
   assert.equal(e.events.length, 0);
 });
