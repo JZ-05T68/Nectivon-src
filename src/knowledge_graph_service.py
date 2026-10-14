@@ -32,10 +32,11 @@ class KnowledgeGraph:
     shown: int
 
     def primary_subjects(self) -> tuple[str, ...]:
-        """Return featured nebulae and every represented subject without a top-seven cap."""
+        """Return only represented subjects, keeping known order and custom labels."""
 
         roots = {tag.split("/", 1)[0] for node in self.nodes.values() for tag in node["tags"]}
-        return tuple(dict.fromkeys((*FEATURED_SUBJECTS, *sorted(roots))))
+        return (*(root for root in FEATURED_SUBJECTS if root in roots),
+                *sorted(roots.difference(FEATURED_SUBJECTS)))
 
     def star_payload(self, *, subject: str | None = None) -> dict[str, Any]:
         """Adapt to star-vault's in-memory note contract; never write a vault."""
@@ -48,16 +49,20 @@ class KnowledgeGraph:
                                      if tag.split("/", 1)[0] == subject])
                      for node in notes
                      if any(tag.split("/", 1)[0] == subject for tag in node["tags"])]
+            tags = {tag for node in notes for tag in node["tags"]}
             children = tuple(dict.fromkeys((
-                *(f"{subject}/{child}" for child in SECONDARY_SUBJECTS.get(subject, ())),
-                *sorted({tag for node in notes for tag in node["tags"] if "/" in tag}),
+                *(f"{subject}/{child}" for child in SECONDARY_SUBJECTS.get(subject, ())
+                  if f"{subject}/{child}" in tags),
+                *sorted(tag for tag in tags if "/" in tag),
             )))
             groups = [self._star_group(tag, tag.split("/", 1)[1]) for tag in children]
-            groups.append(self._star_group(subject, "待细分"))
+            if subject in tags:
+                groups.append(self._star_group(subject, "待细分"))
         else:
             groups = [self._star_group(root, root) for root in self.primary_subjects()]
         identifiers = {node["id"] for node in notes}
-        links = [link for link in self.links
+        links = [dict(link, cross_subject=True) if self._cross_subject_link(link) else link
+                 for link in self.links
                  if link["source"] in identifiers and link["target"] in identifiers]
         return {
             "mode": "nectivon", "vaultName": (f"{subject} · 二级星云" if subject else
@@ -69,6 +74,15 @@ class KnowledgeGraph:
                       "stats": {"notes": len(notes), "links": len(links),
                                 "unresolved": 0}},
         }
+
+    def _cross_subject_link(self, link: dict[str, str]) -> bool:
+        """Mark saved relations spanning subjects, including multi-subject endpoints."""
+
+        if not all(link[end].startswith("knowledge:") for end in ("source", "target")):
+            return False
+        roots = [{tag.split("/", 1)[0] for tag in self.nodes[link[end]]["tags"]}
+                 for end in ("source", "target")]
+        return bool(roots[0] and roots[1] and len(roots[0] | roots[1]) > 1)
 
     @staticmethod
     def _star_group(tag: str, name: str) -> dict[str, Any]:
@@ -231,7 +245,7 @@ class KnowledgeGraphService:
         }
         for row in connection.execute("SELECT * FROM knowledge_subject_classifications"):
             tag = row["subject"] + (f"/{row['subdiscipline']}" if row["subdiscipline"] else "")
-            owner_subjects[f"knowledge:{row['knowledge_object_id']}"] = {tag}
+            owner_subjects.setdefault(f"knowledge:{row['knowledge_object_id']}", set()).add(tag)
         for row in connection.execute(
                 "SELECT knowledge_object_id, question_id FROM question_knowledge_links"):
             subject = question_subjects.get(row["question_id"])

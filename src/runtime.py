@@ -128,6 +128,18 @@ def application_settings() -> Settings:
     return settings
 
 
+def application_pages_dir() -> Path:
+    """Return the pages root without the settings side effects.
+
+    User-attached answer uploads live inside this tree, next to the page
+    images, so they ride along with backups and storage relocation. Unlike
+    ``application_settings`` this never creates directories or reconfigures
+    logging, which keeps AppTest fixtures free to stub it.
+    """
+
+    return runtime_settings().pages_dir
+
+
 @lru_cache(maxsize=1)
 def application_database() -> Database:
     """Return the process-wide initialized SQLite database."""

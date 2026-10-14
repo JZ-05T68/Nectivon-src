@@ -888,8 +888,8 @@ body:has(.folio.open) .settings-btn { visibility: hidden; }
     <li data-g="fist"><span class="g-icon" aria-hidden="true">✊</span><span>握拳<br /><em>展开详情</em></span></li>
     <li data-g="swipe"><span class="g-icon" aria-hidden="true">👋</span><span>快速左右挥手<br /><em>翻到下一个星座</em></span></li>
     <li data-g="zoom"><span class="g-icon" aria-hidden="true">🙌</span><span>双手张开合拢<br /><em>缩放</em></span></li>
-    <li data-g="relate"><span class="g-icon" aria-hidden="true">👍</span><span>选中两星拇指朝上<br /><em>连接两星</em></span></li>
-    <li data-g="unrelate"><span class="g-icon" aria-hidden="true">✌️</span><span>选中两星二指张开<br /><em>断开（需确认）</em></span></li>
+    <li data-g="relate"><span class="g-icon" aria-hidden="true">👍</span><span>选一星比 👍，再选一星比 👍<br /><em>最后确认连接</em></span></li>
+    <li data-g="unrelate"><span class="g-icon" aria-hidden="true">✌️</span><span>选一星比 ✌️，再选一星比 ✌️<br /><em>最后确认断开</em></span></li>
   </ol>
 
   <p class="keys">拖动旋转，滚轮缩放，← → 切换星座，Esc 关闭</p>
@@ -7186,6 +7186,7 @@ $&`).replace(/(?:^|\n)([\t ].*)(?:([\n\t ]*)\n(?![\n\t ]))?/g,`$1$2`).replace(/\
     }
     function doRelate(cmd) {
       if (!window.nectivonRelationChange) { toast('这个版本不支持星图关系动作'); return; }
+      relateReset();
       window.nectivonRelationChange({
         action: cmd.act, source: cmd.a.id, target: cmd.b.id,
         relation_type: cmd.relation_type, source_title: cmd.a.title, target_title: cmd.b.title
@@ -7200,8 +7201,33 @@ $&`).replace(/(?:^|\n)([\t ].*)(?:([\n\t ]*)\n(?![\n\t ]))?/g,`$1$2`).replace(/\
       }
     }
 
-    /* —— 手势连接/断开：依次停留选中两颗星，再比 👍 连接、✌️ 断开 —— */
+    /* —— 手势连接/断开：选星 → 手势锁定起点 → 再选星和同一手势 → 页面确认 —— */
     var relateFrames = 0, relateKind = '', relateCooldown = 0;
+    var relateSource = null, relateAction = '', relateReleased = true, relateFrameNode = '';
+    var relatePanel = null, relateText = null;
+    function relateReset() {
+      relateSource = null; relateAction = '';
+      relateFrames = 0; relateKind = ''; relateFrameNode = '';
+      if (relatePanel) relatePanel.hidden = true;
+    }
+    function relateBuildUI(footer) {
+      relatePanel = document.createElement('div');
+      relatePanel.id = 'nectivonRelationProgress';
+      relatePanel.className = 'nv-relation-progress';
+      relatePanel.hidden = true;
+      relateText = document.createElement('span');
+      relateText.setAttribute('role', 'status');
+      relateText.setAttribute('aria-live', 'polite');
+      var cancel = document.createElement('button');
+      cancel.type = 'button'; cancel.className = 'nv-btn';
+      cancel.textContent = '取消这次操作';
+      cancel.addEventListener('click', function () {
+        relateReset(); toast('已取消，请重新选择第一颗知识点星');
+      });
+      relatePanel.appendChild(relateText); relatePanel.appendChild(cancel);
+      footer.appendChild(relatePanel);
+      window.addEventListener('nectivon:payload-changed', relateReset);
+    }
     function relateDist(h, a, b) {
       var dx = h[a].x - h[b].x, dy = h[a].y - h[b].y;
       return Math.sqrt(dx * dx + dy * dy);
@@ -7240,36 +7266,51 @@ $&`).replace(/(?:^|\n)([\t ].*)(?:([\n\t ]*)\n(?![\n\t ]))?/g,`$1$2`).replace(/\
     function relateSend(kind, a, b) {
       window.nectivonRelationChange({
         action: kind, source: a.id, target: b.id, relation_type: 'relates_to',
-        source_title: a.title, target_title: b.title
+        source_title: a.title, target_title: b.title, require_confirmation: true
       });
-      if (kind === 'unlink') {
-        toast('断开请求待确认：《' + a.title + '》 ↔ 《' + b.title + '》');
-      } else {
-        toast('连接请求已发出：《' + a.title + '》 ↔ 《' + b.title + '》');
-      }
+      var label = kind === 'unlink' ? '断开' : '连接';
+      toast('两星已选好：《' + a.title + '》 ↔ 《' + b.title
+        + '》。请在星图下方点击「确认' + label + '」');
+      if (readOn) Commands.speak('两星已选好，请在星图下方确认' + label);
     }
     function relateApply(kind) {
       if (!window.nectivonRelationChange) { toast('这个版本不支持星图关系动作'); return; }
       var current = S.state.selected;
-      var previous = window.nectivonPreviousSelected && window.nectivonPreviousSelected();
-      if (!current || current.hub || !previous || previous.hub) {
-        toast('先依次停留选中两颗星，再比手势'); return;
+      if (!current || current.hub || !String(current.id).startsWith('knowledge:')) {
+        toast('请先用食指停留选中一颗知识点星，再比对应手势'); return;
       }
-      if (current.id === previous.id) { toast('两颗星需要不同，先停留选中另一颗'); return; }
-      relateSend(kind, previous, current);
+      if (!relateSource) {
+        relateSource = { id: current.id, title: current.title }; relateAction = kind;
+        var pose = kind === 'link' ? '👍 拇指朝上' : '✌️ 二指张开';
+        var message = '已锁定第一颗星《' + current.title
+          + '》，请松开手势，再用食指选中第二颗知识点星，并再次比 ' + pose;
+        if (relatePanel) { relateText.textContent = message; relatePanel.hidden = false; }
+        toast(message);
+        if (readOn) Commands.speak('已锁定第一颗星，请选择第二颗星并重复相同手势');
+        return;
+      }
+      if (kind !== relateAction) { toast('请重复第一步的相同手势，或取消后重新开始'); return; }
+      if (current.id === relateSource.id) { toast('两颗星需要不同，请选中第二颗知识点星'); return; }
+      relateSend(kind, relateSource, current);
+      relateReset();
     }
     function relateFrame(lms) {
-      if (relateCooldown > 0) { relateCooldown--; return; }
-      if (!lms || !lms.length || !lms[0] || lms[0].length < 21) {
-        relateFrames = 0; relateKind = ''; return;
-      }
       var kind = relateGesture(lms);
-      if (kind !== relateKind) { relateKind = kind; relateFrames = kind ? 1 : 0; return; }
-      if (!kind) return;
+      if (relateCooldown > 0) relateCooldown--;
+      if (!kind) {
+        relateReleased = true;
+        relateFrames = 0; relateKind = ''; relateFrameNode = ''; return;
+      }
+      if (!relateReleased || relateCooldown > 0) return;
+      var node = S.state.selected, id = node ? node.id : '';
+      if (kind !== relateKind || id !== relateFrameNode) {
+        relateKind = kind; relateFrameNode = id; relateFrames = 1; return;
+      }
       relateFrames++;
       if (relateFrames < 4) return;
       relateFrames = 0; relateKind = '';
       relateCooldown = 45;
+      relateReleased = false;
       relateApply(kind);
     }
 
@@ -7532,6 +7573,7 @@ $&`).replace(/(?:^|\n)([\t ].*)(?:([\n\t ]*)\n(?![\n\t ]))?/g,`$1$2`).replace(/\
       var legend = document.getElementById('gestures');
       if (legend) footer.appendChild(legend);
       document.body.appendChild(footer);
+      relateBuildUI(footer);
 
       var bar = document.createElement('div');
       bar.id = 'nectivonVoiceBar';
@@ -7610,6 +7652,7 @@ $&`).replace(/(?:^|\n)([\t ].*)(?:([\n\t ]*)\n(?![\n\t ]))?/g,`$1$2`).replace(/\
       // 手势开关代理到星图自带的开启/关闭摄像头按钮，状态跟随 body.gesture-on。
       function syncGestureBtn() {
         var on = document.body.classList.contains('gesture-on');
+        if (!on) relateReset();
         elGesture.textContent = on ? '✋ 关闭手势' : '✋ 开启手势';
         elGesture.classList.toggle('on', on);
         var status = document.getElementById('lensStatus');

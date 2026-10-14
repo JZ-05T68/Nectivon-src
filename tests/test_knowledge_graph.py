@@ -121,6 +121,99 @@ def test_shared_knowledge_relations_keep_direction_and_type(assets) -> None:
             "note": "前置条件"} in edges
 
 
+@pytest.mark.parametrize("shared_subjects", [False, True])
+def test_cross_subject_relation_survives_reopening_without_duplicating_knowledge(
+    tmp_path, shared_subjects,
+) -> None:
+    database = Database(tmp_path / "knowledge.db")
+    service = KnowledgeObjectService(database)
+    source = service.create(
+        kind="concept", title="微积分", content="变化率与积分", epistemic_basis="personal_judgment",
+        classifications=(("数学", "微积分"),),
+    ).knowledge_object
+    target_subjects = (("物理", "力学"),)
+    if shared_subjects:
+        # Both primary locations can be mathematics while the relation spans physics too.
+        target_subjects += (("数学", "微积分"),)
+    target = service.create(
+        kind="concept", title="运动分析", content="用微积分分析速度",
+        epistemic_basis="personal_judgment",
+        classifications=target_subjects,
+    ).knowledge_object
+    unrelated = service.create(
+        kind="concept", title="化学", content="未确认与上述知识点的关系",
+        epistemic_basis="personal_judgment", subject="化学",
+    ).knowledge_object
+    relation = service.add_relation(
+        target.id, source.id, relation_type="requires", description="运动分析需要微积分",
+    )
+    reopened = Database(database.database_path)
+    graph = KnowledgeGraphService(reopened).snapshot()
+    payload = graph.star_payload()
+    assert payload["vault"]["links"] == [{
+        "source": f"knowledge:{target.id}", "target": f"knowledge:{source.id}",
+        "label": "依赖", "note": "运动分析需要微积分", "cross_subject": True,
+    }]
+    assert "cross_subject" not in graph.links[0]  # Projection never mutates stored relations.
+    assert len(payload["vault"]["notes"]) == 3
+    assert all(f"knowledge:{unrelated.id}" not in (link["source"], link["target"])
+               for link in payload["vault"]["links"])
+    assert service.get(source.id) == source and service.get(target.id) == target
+    assert service.relations(source.id) == [relation]
+    # A search that hides one endpoint cannot leave a dangling visual line.
+    assert KnowledgeGraphService(reopened).snapshot(query="运动分析").star_payload()[
+        "vault"]["links"] == []
+
+
+def test_same_subject_relation_and_source_links_keep_their_existing_projection(assets) -> None:
+    database, _, knowledge_id = assets
+    service = KnowledgeObjectService(database)
+    first = service.create(
+        kind="concept", title="导数", content="同学科知识", epistemic_basis="personal_judgment",
+        subject="数学", subdiscipline="微积分",
+    ).knowledge_object
+    second = service.create(
+        kind="concept", title="矩阵", content="同学科另一方向", epistemic_basis="personal_judgment",
+        subject="数学", subdiscipline="线性代数",
+    ).knowledge_object
+    service.add_relation(first.id, second.id, relation_type="relates_to", description="已核对关系")
+    service.add_relation(second.id, knowledge_id, relation_type="relates_to")
+    graph = KnowledgeGraphService(database).snapshot()
+    assert graph.star_payload()["vault"]["links"] == graph.links
+
+
+def test_cross_subject_relation_editor_saves_explicit_endpoints(assets, monkeypatch) -> None:
+    database, _, _ = assets
+    service = KnowledgeObjectService(database)
+    source = service.create(
+        kind="concept", title="微积分", content="数学知识", epistemic_basis="personal_judgment",
+        subject="数学", subdiscipline="微积分",
+    ).knowledge_object
+    target = service.create(
+        kind="concept", title="运动分析", content="物理知识", epistemic_basis="personal_judgment",
+        subject="物理", subdiscipline="力学",
+    ).knowledge_object
+    monkeypatch.setattr(runtime, "application_database", lambda: database)
+    monkeypatch.setattr(component, "render_starmap", lambda payload: None)
+    app = AppTest.from_file(str(Path(__file__).parents[1] / "pages/20_知识串联.py")).run(timeout=30)
+    source_picker = next(value for value in app.selectbox if value.label == "起点知识点")
+    target_picker = next(value for value in app.selectbox if value.label == "终点知识点")
+    assert any("数学" in option for option in source_picker.options)
+    assert any("物理" in option for option in target_picker.options)
+    source_picker.set_value(f"knowledge:{target.id}")
+    target_picker.set_value(f"knowledge:{source.id}")
+    next(value for value in app.text_input if value.label == "关系说明").set_value(
+        "运动分析需要微积分")
+    assert service.relations(target.id) == []
+    next(button for button in app.button if button.label == "保存知识关系").click().run(timeout=30)
+    assert not app.exception
+    relation = service.relations(target.id)[0]
+    assert relation.source_ko_id == target.id and relation.target_ko_id == source.id
+    assert relation.description == "运动分析需要微积分"
+    payload = KnowledgeGraphService(database).snapshot().star_payload()
+    assert any(link.get("cross_subject") for link in payload["vault"]["links"])
+
+
 def test_search_and_cap_preserve_sources_and_never_seed_demo(assets, tmp_path) -> None:
     database, _, _ = assets
     graph = KnowledgeGraphService(database).snapshot(query="取值范围", limit=3)
@@ -484,6 +577,43 @@ def test_star_relation_command_repeats_are_idempotent(assets, monkeypatch) -> No
     app = _run_page_with_star_event(assets, monkeypatch, request)
     assert not app.exception
     assert len(service.relations(knowledge_id)) == 1  # 同一条命令重复下达不产生重复关系
+
+
+@pytest.mark.parametrize("confirm", [True, False])
+def test_sequential_gesture_link_waits_for_confirmation(assets, monkeypatch, confirm) -> None:
+    database, _, knowledge_id = assets
+    service = KnowledgeObjectService(database)
+    source = service.create(
+        kind="concept", title="反馈控制", content="按偏差调节系统",
+        epistemic_basis="personal_judgment").knowledge_object
+    app = _run_page_with_star_event(assets, monkeypatch, {
+        "action": "link", "source": f"knowledge:{source.id}",
+        "target": f"knowledge:{knowledge_id}", "relation_type": "relates_to",
+        "source_title": "反馈控制", "target_title": "定义域", "require_confirmation": True,
+    })
+    assert not app.exception
+    assert not service.relations(knowledge_id)
+    assert app.session_state["graph_pending_link"]["require_confirmation"] is False
+    assert any("待确认连接" in item.value for item in app.info)
+    label = "确认连接" if confirm else "取消"
+    next(button for button in app.button if button.label == label).click().run(timeout=30)
+    assert not app.exception
+    assert "graph_pending_link" not in app.session_state
+    assert len(service.relations(knowledge_id)) == int(confirm)
+
+
+@pytest.mark.parametrize("target", ["knowledge:999999", "same"])
+def test_sequential_gesture_rejects_missing_or_same_star(assets, monkeypatch, target) -> None:
+    database, _, knowledge_id = assets
+    source = f"knowledge:{knowledge_id}"
+    app = _run_page_with_star_event(assets, monkeypatch, {
+        "action": "link", "source": source, "target": source if target == "same" else target,
+        "require_confirmation": True,
+    })
+    assert not app.exception
+    assert "graph_pending_link" not in app.session_state
+    assert not KnowledgeObjectService(database).relations(knowledge_id)
+    assert any("不同且仍存在" in toast.value for toast in app.toast)
 
 
 def test_star_relation_unlink_waits_for_explicit_confirmation(assets, monkeypatch) -> None:

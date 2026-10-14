@@ -142,6 +142,74 @@ def test_save_draft_writes_sources_relations_and_feed_star_map(material) -> None
                for edge in graph.links)
 
 
+def test_multi_subject_draft_saves_one_point_with_shared_sources(material) -> None:
+    database, document, page_one, _ = material
+    payload = {"knowledge_points": [{
+        "title": "反馈控制", "content": "反馈减小误差。", "pages": [1],
+        "classifications": [
+            {"subject": "控制科学与工程", "subdiscipline": "自动控制原理"},
+            {"subject": "数学", "subdiscipline": "微积分"},
+            {"subject": "电气工程", "subdiscipline": "电力系统"},
+            {"subject": "数学", "subdiscipline": "微积分"},
+            {"subject": "虚构学科", "subdiscipline": "微积分"},
+            "invalid item",
+        ],
+    }]}
+    provider = FakeProvider(text=json.dumps(payload, ensure_ascii=False))
+    draft = KnowledgeMiningAIService(provider).mine_document(database, document.id)
+    assert draft.points[0].subject_classifications == (
+        ("控制科学与工程", "自动控制原理"), ("数学", "微积分"), ("电气工程", "电力系统"),
+    )
+    assert "不按学科拆成重复知识点" in provider.prompt
+    assert KnowledgeObjectService(database).count() == 0
+    saved = save_mining_draft(database, draft)
+    assert len(saved.knowledge_ids) == 1 and KnowledgeObjectService(database).count() == 1
+    graph = KnowledgeGraphService(Database(database.database_path)).snapshot()
+    expected = {"控制科学与工程/自动控制原理", "数学/微积分", "电气工程/电力系统"}
+    assert set(graph.nodes[f"knowledge:{saved.knowledge_ids[0]}"]["tags"]) == expected
+    assert set(graph.nodes[f"page:{page_one.id}"]["tags"]) == expected
+    assert set(graph.nodes[f"document:{document.id}"]["tags"]) == expected
+    assert len([node for node in graph.nodes.values() if node["entity_kind"] == "knowledge"]) == 1
+
+
+@pytest.mark.parametrize("value", [None, "数学", {}, 7])
+def test_malformed_multi_classification_keeps_legacy_subject(material, value) -> None:
+    database, document, *_ = material
+    payload = {"knowledge_points": [{
+        "title": "反馈", "content": "内容", "subject": "数学", "classifications": value,
+    }]}
+    draft = KnowledgeMiningAIService(FakeProvider(text=json.dumps(payload))).mine_document(
+        database, document.id)
+    assert draft.points[0].subject_classifications == (("数学", ""),)
+
+
+def test_mined_cross_subject_relation_keeps_explicit_point_endpoints(material) -> None:
+    database, document, *_ = material
+    payload = {
+        "knowledge_points": [
+            {"title": "微积分", "content": "变化率分析", "pages": [1],
+             "classifications": [{"subject": "数学", "subdiscipline": "微积分"}]},
+            {"title": "运动分析", "content": "微积分用于运动分析", "pages": [1],
+             "classifications": [{"subject": "物理", "subdiscipline": "力学"}]},
+        ],
+        "relations": [{"from_title": "运动分析", "to_title": "微积分", "type": "requires",
+                       "description": "原文说明运动分析需要微积分"}],
+    }
+    provider = FakeProvider(text=json.dumps(payload, ensure_ascii=False))
+    draft = KnowledgeMiningAIService(provider).mine_document(database, document.id)
+    assert "不因学科不同遗漏关系" in provider.prompt
+    assert KnowledgeObjectService(database).count() == 0
+    saved = save_mining_draft(database, draft)
+    assert len(saved.knowledge_ids) == 2 and saved.relation_count == 1
+    graph = KnowledgeGraphService(Database(database.database_path)).snapshot().star_payload()
+    relations = [link for link in graph["vault"]["links"] if link.get("cross_subject")]
+    assert relations == [{
+        "source": f"knowledge:{saved.knowledge_ids[1]}",
+        "target": f"knowledge:{saved.knowledge_ids[0]}",
+        "label": "依赖", "note": "原文说明运动分析需要微积分", "cross_subject": True,
+    }]
+
+
 def test_mining_failure_paths(material) -> None:
     database, document, *_ = material
     service = KnowledgeMiningAIService(FakeProvider(error=AIUnavailableError("AI 未启用")))

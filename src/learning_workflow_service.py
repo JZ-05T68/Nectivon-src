@@ -438,6 +438,30 @@ class QuestionService:
             )
         return self.get_question_item(question_id)
 
+    def update_answer_material(
+        self, question_id: int, answer_material: dict | None
+    ) -> QuestionItem:
+        """Update only the ``ai_draft.answer_material`` attachment block.
+
+        Attaching 我的作答 images (uploads / 原卷截图) is an attachment
+        event like the visual binding, not a text-content edit — it must
+        NOT flip ``user_edited``.  The rest of ``ai_draft`` (including the
+        AI visual binding) is preserved verbatim.
+        """
+
+        existing = self.get_question_item(question_id)
+        draft = dict(existing.ai_draft) if isinstance(existing.ai_draft, dict) else {}
+        if answer_material is None:
+            draft.pop("answer_material", None)
+        else:
+            draft["answer_material"] = answer_material
+        with self._database._connection() as connection:
+            connection.execute(
+                "UPDATE question_items SET ai_draft = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(draft, ensure_ascii=False), _utc_now(), question_id),
+            )
+        return self.get_question_item(question_id)
+
     def backfill_visual_material_from_candidates(
         self, question_id: int, candidate_store
     ) -> dict[str, object]:

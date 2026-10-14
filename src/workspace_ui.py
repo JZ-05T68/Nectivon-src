@@ -12,6 +12,7 @@ import streamlit as st
 from src import __version__, config
 from src.font_size_preferences import font_size_css, read_font_level
 from src.time_display import beijing_now
+from src.voice_input_ui import render_voice_input
 
 _STYLE_PATH = Path(__file__).with_name("workspace.css")
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -70,6 +71,7 @@ def render_workspace(current: str) -> None:
     except Exception:  # noqa: BLE001 - the shared shell must remain available
         font_level = 3
     st.markdown(font_size_css(font_level), unsafe_allow_html=True)
+    render_voice_input()
     with st.sidebar:
         st.markdown(
             '<div class="ekb-brand"><span class="ekb-brand-mark">N</span>'

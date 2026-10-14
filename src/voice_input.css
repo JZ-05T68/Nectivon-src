@@ -1,0 +1,25 @@
+[data-testid="stElementContainer"]:has([data-nectivon-voice-installer]) { display: none; }
+.nectivon-voice-host { position: relative !important; }
+.nectivon-voice-inline { display: inline-flex; min-width: 0; vertical-align: middle; }
+input.nectivon-voice-field, textarea.nectivon-voice-field {
+  padding-right: 42px !important;
+}
+.nectivon-voice-button {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; padding: 6px; margin: 0;
+  border: 0; border-radius: 8px; background: transparent; color: #147d68;
+  cursor: pointer; z-index: 2; line-height: 1;
+}
+.nectivon-voice-button svg { width: 20px; height: 20px; pointer-events: none; }
+.nectivon-voice-button:hover { background: #ddefe8; }
+.nectivon-voice-button:focus-visible { outline: 2px solid #147d68; outline-offset: 1px; }
+.nectivon-voice-button[aria-pressed="true"] { color: #b3261e; background: #fce8e6; }
+.nectivon-voice-multiline > .nectivon-voice-button { top: 5px; transform: none; }
+.nectivon-voice-status {
+  position: fixed; right: 20px; bottom: 20px; z-index: 1000001;
+  max-width: min(420px, calc(100vw - 40px)); padding: 12px 16px;
+  border: 1px solid #bcd9d0; border-radius: 10px; background: #f6fffa;
+  color: #21483e; box-shadow: 0 3px 16px #0002; font: 14px/1.6 sans-serif;
+}
+.nectivon-voice-status[hidden] { display: none; }

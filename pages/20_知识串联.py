@@ -24,7 +24,7 @@ st.set_page_config(page_title=f"知识串联 · Nectivon v{__version__}", page_i
 render_workspace("pages/20_知识串联.py")
 st.title("知识串联")
 st.caption("知识星图 · 把题目、知识点、归纳族和来源连起来，沿用学习整理中的掌握记录；"
-           "一级学科组成大星云，可展开查看二级方向；未标学科的节点归入「未归类」。")
+           "按已保存的学科组成星云；未标学科的节点归入「未归类」。")
 
 saved_node = st.session_state.pop("graph_saved_knowledge_node", None)
 if saved_node:
@@ -60,16 +60,10 @@ else:
                "语音识别由浏览器提供，Chrome/Edge 需联网；打字输入随时可用）。")
     st.caption("星图动作可直接改变知识点之间的关系：说或输入「连接 A 和 B」「A 派生自 B」"
                "（也支持 支持/矛盾/依赖/实例）即可连线；「断开 A 和 B」需在页面点击确认后才会删除。"
-               "只说一个名字时，配对当前选中的星。手势操作请先依次用食指停留选中两颗知识点星，"
-               "再拇指朝上连接，或二指张开请求断开。")
-    roots = [None, *graph.primary_subjects()]
-    if st.session_state.get("graph_nebula_subject") not in roots:
-        st.session_state["graph_nebula_subject"] = None
-    subject = st.selectbox("展开一级星云", roots,
-                           format_func=lambda value: value or "一级星云全景",
-                           key="graph_nebula_subject")
-    st.caption("选择一级学科查看其二级方向；方向尚未确定的节点进入「待细分」。")
-    event = render_starmap(graph.star_payload(subject=subject))
+               "只说一个名字时，配对当前选中的星。手势操作：先用食指停留选中第一颗知识点星，"
+               "比 👍 连接或 ✌️ 断开；收到锁定提示后松开手势，再选第二颗星并重复相同手势，"
+               "最后在星图下方确认。")
+    event = render_starmap(graph.star_payload())
     identifiers = list(graph.nodes)
     if isinstance(event, dict) and event != st.session_state.get("graph_last_star_event"):
         st.session_state["graph_last_star_event"] = event

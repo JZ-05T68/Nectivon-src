@@ -24,6 +24,14 @@ from src.migrations import SCHEMA_VERSION, migrate_database
     ("心理学", "数据库", ("心理学", "")),
     (None, "数据库", ("", "")),
     ("虚构学科", "密码学", ("", "")),
+    ("数学", "微积分", ("数学", "微积分")),
+    ("英语", "阅读理解", ("英语", "阅读理解")),
+    ("日语", "听力理解", ("日语", "听力理解")),
+    ("机械工程", "机械设计", ("机械工程", "机械设计")),
+    ("电气工程", "电力系统", ("电气工程", "电力系统")),
+    ("法学", "刑法", ("法学", "刑法")),
+    ("临床医学", "内科学", ("临床医学", "内科学")),
+    ("英语", "机械设计", ("英语", "")),
 ])
 def test_ai_classification_validates_parent_child_pairs(subject, child, expected) -> None:
     assert normalize_classification(subject, child) == expected
@@ -34,6 +42,10 @@ def test_existing_custom_subjects_and_directions_remain_available() -> None:
     assert subject_tag("心理学/自定义方向") == "心理学/自定义方向"
     assert subject_tag("数据结构") == "计算机/数据结构与算法"
     assert subject_tag("网络空间安全") == "网络安全"
+    assert subject_tag("英语/语法") == "英语/语法"
+    assert subject_tag("日语/语法") == "日语/语法"
+    assert subject_tag("语法") == "语法"
+    assert subject_tag("阅读理解") == "阅读理解"
 
 
 def test_nebulae_include_all_subjects_and_drill_down_without_changing_nodes() -> None:
@@ -55,10 +67,63 @@ def test_nebulae_include_all_subjects_and_drill_down_without_changing_nodes() ->
     assert detail["vault"]["links"] == [links[0]]
     assert detail["vault"]["notes"][-1]["tags"] == ["计算机/数据库"]
     groups = detail["config"]["constellations"]["groups"]
-    assert {group["name"] for group in groups} >= {"数据库", "人工智能", "待细分"}
+    assert [group["name"] for group in groups] == ["数据库", "待细分"]
     assert nodes["document:1"]["tags"] == ["计算机/数据库", "心理学/认知心理学"]
     with pytest.raises(ValueError, match="不存在"):
         graph.star_payload(subject="不存在")
+
+
+def test_empty_subjects_and_directions_are_hidden_without_losing_unclassified_nodes() -> None:
+    nodes = {
+        "knowledge:1": {"id": "knowledge:1", "tags": ["英语/阅读理解"]},
+        "knowledge:2": {"id": "knowledge:2", "tags": []},
+    }
+    graph = KnowledgeGraph(nodes, [], 2, 2)
+    assert graph.primary_subjects() == ("英语",)
+    overview = graph.star_payload()
+    assert [group["name"] for group in overview["config"]["constellations"]["groups"]] == [
+        "英语"]
+    assert overview["vault"]["notes"] == list(nodes.values())
+    detail = graph.star_payload(subject="英语")
+    assert [group["name"] for group in detail["config"]["constellations"]["groups"]] == [
+        "阅读理解"]
+    assert [note["id"] for note in detail["vault"]["notes"]] == ["knowledge:1"]
+    empty = KnowledgeGraph({}, [], 0, 0)
+    assert empty.primary_subjects() == ()
+    assert empty.star_payload()["config"]["constellations"]["groups"] == []
+
+
+def test_custom_directions_and_shared_nodes_keep_their_groups_and_links() -> None:
+    nodes = {
+        "knowledge:1": {"id": "knowledge:1", "tags": ["日语/自定义方向"]},
+        "document:1": {"id": "document:1", "tags": ["日语/自定义方向", "英语/阅读理解"]},
+    }
+    links = [{"source": "knowledge:1", "target": "document:1"}]
+    graph = KnowledgeGraph(nodes, links, 2, 2)
+    overview = graph.star_payload()
+    assert {group["name"] for group in overview["config"]["constellations"]["groups"]} == {
+        "日语", "英语"}
+    detail = graph.star_payload(subject="日语")
+    assert [group["name"] for group in detail["config"]["constellations"]["groups"]] == [
+        "自定义方向"]
+    assert detail["vault"]["links"] == links
+    assert nodes["document:1"]["tags"] == ["日语/自定义方向", "英语/阅读理解"]
+
+
+@pytest.mark.parametrize(("subject", "child"), [
+    ("英语", "阅读理解"), ("日语", "语法"), ("机械工程", "机械设计"),
+    ("应用经济学", "金融学"),
+])
+def test_new_classifications_persist_and_appear_after_reopening(tmp_path, subject, child) -> None:
+    database = Database(tmp_path / "knowledge.db")
+    knowledge = KnowledgeObjectService(database).create(
+        kind="concept", title="分类示例", content="用户保存的内容",
+        epistemic_basis="personal_judgment", subject=subject, subdiscipline=child,
+    ).knowledge_object
+    graph = KnowledgeGraphService(Database(database.database_path)).snapshot()
+    assert graph.nodes[f"knowledge:{knowledge.id}"]["tags"] == [f"{subject}/{child}"]
+    groups = graph.star_payload(subject=subject)["config"]["constellations"]["groups"]
+    assert [group["name"] for group in groups] == [child]
 
 
 def test_v35_upgrade_keeps_existing_knowledge_and_creates_verified_backup(tmp_path) -> None:
@@ -68,7 +133,7 @@ def test_v35_upgrade_keeps_existing_knowledge_and_creates_verified_backup(tmp_pa
     ).knowledge_object
     with database._connection() as connection:
         connection.execute("DROP TABLE knowledge_subject_classifications")
-        connection.execute("DELETE FROM schema_migrations WHERE version=36")
+        connection.execute("DELETE FROM schema_migrations WHERE version>=36")
     backup = migrate_database(database.database_path)
     assert backup is not None
     with sqlite3.connect(backup) as connection:
@@ -104,7 +169,7 @@ def test_classification_and_knowledge_creation_roll_back_together(tmp_path, monk
             assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
 
 
-def test_offline_ui_expands_second_level_nebulae(tmp_path, monkeypatch) -> None:
+def test_offline_ui_shows_overview_without_extra_subject_controls(tmp_path, monkeypatch) -> None:
     database = Database(tmp_path / "knowledge.db")
     KnowledgeObjectService(database).create(
         kind="concept", title="索引", content="数据库索引", epistemic_basis="personal_judgment",
@@ -116,11 +181,25 @@ def test_offline_ui_expands_second_level_nebulae(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(component, "render_starmap", lambda payload: captured.append(payload))
     app = AppTest.from_file(str(Path(__file__).parents[1] / "pages/20_知识串联.py")).run(timeout=30)
     assert not app.exception
-    assert app.selectbox(key="graph_nebula_subject").options == [
-        "一级星云全景", "计算机", "心理学", "网络安全"]
-    app.selectbox(key="graph_nebula_subject").select("计算机").run(timeout=30)
-    assert not app.exception
-    assert captured[-1]["vaultName"] == "计算机 · 二级星云"
-    assert captured[-1]["config"]["constellations"]["groups"][6]["name"] == "数据库"
+    assert all(selectbox.key != "graph_nebula_subject" for selectbox in app.selectbox)
+    assert not any("选择一级学科" in caption.value for caption in app.caption)
+    assert captured[-1]["vaultName"] == "Nectivon 知识星图"
+    assert [group["name"] for group in captured[-1]["config"]["constellations"]["groups"]] == [
+        "计算机"]
     assert KnowledgeGraphService(database).snapshot().nodes["knowledge:1"]["tags"] == [
         "计算机/数据库"]
+    KnowledgeObjectService(database).create(
+        kind="concept", title="阅读依据", content="英语阅读理解",
+        epistemic_basis="personal_judgment",
+        subject="英语", subdiscipline="阅读理解")
+    # A selection left by the removed control must not filter the current overview.
+    app.session_state["graph_nebula_subject"] = "计算机"
+    app.run(timeout=30)
+    assert not app.exception
+    assert [group["name"] for group in captured[-1]["config"]["constellations"]["groups"]] == [
+        "计算机", "英语"]
+    app.text_input(key="graph_query").set_value("英语阅读").run(timeout=30)
+    assert not app.exception
+    assert captured[-1]["vaultName"] == "Nectivon 知识星图"
+    assert [group["name"] for group in captured[-1]["config"]["constellations"]["groups"]] == [
+        "英语"]

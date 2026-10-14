@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 LOGGER = logging.getLogger(__name__)
-SCHEMA_VERSION = 36
+SCHEMA_VERSION = 37
 
 # 仅用于 Phase 2B-V 失败注入验证；生产运行时恒为 None，永不触发。
 _V10_INJECTION_POINT: str | None = None
@@ -225,6 +225,9 @@ def migrate_database(database_path: Path) -> Path | None:
         if current_version < 36:
             _apply_version_thirty_six(connection)
             current_version = 36
+        if current_version < 37:
+            _apply_version_thirty_seven(connection)
+            current_version = 37
         if current_version >= 17:
             _validate_version_fifteen_schema(connection)
             _validate_version_sixteen_schema(connection)
@@ -267,6 +270,8 @@ def migrate_database(database_path: Path) -> Path | None:
             _validate_version_thirty_five_schema(connection)
         if current_version >= 36:
             _validate_version_thirty_six_schema(connection)
+        if current_version >= 37:
+            _validate_version_thirty_seven_schema(connection)
         connection.execute("PRAGMA foreign_keys = ON")
         _validate_database_integrity(connection, stage="迁移后")
     except Exception as exc:
@@ -4749,6 +4754,46 @@ def _validate_version_thirty_six_schema(connection: sqlite3.Connection) -> None:
         ("knowledge_objects", "knowledge_object_id", "id", "CASCADE"),
     }:
         raise MigrationError("v36 校验失败：知识点学科分类表结构或引用约束不完整。")
+
+
+def _apply_version_thirty_seven(connection: sqlite3.Connection) -> None:
+    """Allow several confirmed classifications while preserving every v36 row."""
+
+    _validate_version_thirty_six_schema(connection)
+    with connection:
+        connection.execute("BEGIN")
+        connection.execute(
+            "CREATE TABLE knowledge_subject_classifications_v37 ("
+            "knowledge_object_id INTEGER NOT NULL "
+            "REFERENCES knowledge_objects(id) ON DELETE CASCADE, "
+            "subject TEXT NOT NULL CHECK(length(subject) BETWEEN 1 AND 120), "
+            "subdiscipline TEXT NOT NULL DEFAULT '' CHECK(length(subdiscipline) <= 120), "
+            "PRIMARY KEY (knowledge_object_id, subject, subdiscipline))"
+        )
+        connection.execute(
+            "INSERT INTO knowledge_subject_classifications_v37 "
+            "SELECT knowledge_object_id, subject, subdiscipline "
+            "FROM knowledge_subject_classifications"
+        )
+        connection.execute("DROP TABLE knowledge_subject_classifications")
+        connection.execute(
+            "ALTER TABLE knowledge_subject_classifications_v37 "
+            "RENAME TO knowledge_subject_classifications"
+        )
+        _validate_version_thirty_seven_schema(connection)
+        connection.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (37, ?)", (_utc_now(),)
+        )
+
+
+def _validate_version_thirty_seven_schema(connection: sqlite3.Connection) -> None:
+    """Check the composite key so an apparent upgrade cannot discard subjects."""
+
+    _validate_version_thirty_six_schema(connection)
+    primary_key = {row[1]: row[5] for row in connection.execute(
+        "PRAGMA table_info(knowledge_subject_classifications)")}
+    if primary_key != {"knowledge_object_id": 1, "subject": 2, "subdiscipline": 3}:
+        raise MigrationError("v37 校验失败：知识点多学科分类缺少完整的唯一约束。")
 
 
 def _utc_now() -> str:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from collections.abc import Callable
 from pathlib import Path
 
 import streamlit as st
@@ -101,30 +102,59 @@ def render_question_image_editor(
             st.error(f"题目图片处理失败：{exc}")
 
 
-def render_question_crop_editor(
-    source: Path | str, *, page_id: int, number: str, regions: list[dict], key: str,
+def render_crop_editor(
+    source: Path | str, *, page_id: int, regions: list[dict], key: str,
+    number: str = "", scope: str | None = None,
+    default_role: str = "stem", roles: list[str] | None = None,
+    title: str = "查看原始扫描大图／修改截图方框",
+    caption: str = (
+        "在原始大图上移动或调整方框，也可拖出新范围；不同图片使用不同颜色。"
+        "保存后同步本题所有位置。"
+    ),
+    open_label: str = "打开截图方框编辑",
+    toast: str = "截图方框已保存，已同步本题关联图片。",
+    on_saved: Callable[[QuestionRegionStore], None] | None = None,
 ) -> None:
-    """Edit differently colored rectangles on the untouched full-size source scan."""
+    """Edit colored rectangles on the untouched full-size source scan.
 
-    if not Path(source).is_file() or not number.strip():
+    ``scope`` overrides the printed-question-number scope so a caller can keep
+    its own box list (e.g. 作答截图) separate from the question-stem crops.
+    ``on_saved`` runs after a successful commit and receives the store, so the
+    caller can persist the freshly resolved references right away.
+    """
+
+    if not Path(source).is_file():
         return
-    with st.expander("查看原始扫描大图／修改截图方框"):
-        st.caption("在原始大图上移动或调整方框，也可拖出新范围；不同图片使用不同颜色。保存后同步本题所有位置。")
-        if not st.checkbox("打开截图方框编辑", key=f"{key}_open"):
+    if scope is None and not number.strip():
+        return
+    with st.expander(title):
+        st.caption(caption)
+        if not st.checkbox(open_label, key=f"{key}_open"):
             return
         try:
-            store = QuestionRegionStore(source, number, regions)
+            store = QuestionRegionStore(source, number, regions, scope=scope)
             state = store.state()
             value = _crop_component(
                 original=_data_url(store.source.read_bytes()), source_hash=store.source_sha256,
                 scope=store.scope, revision=state["revision"], regions=state["regions"],
                 colors=BOX_COLORS, key=f"{key}_boxes", default=None,
+                default_role=default_role, roles=roles,
             )
             if _new_event(value, key):
                 st.session_state[f"{key}_consumed"] = value["request_id"]
                 _check_event(value, store, state["revision"])
                 store.save_regions(value.get("regions"), expected_revision=state["revision"])
-                st.toast("截图方框已保存，已同步本题关联图片。")
+                if on_saved is not None:
+                    on_saved(store)
+                st.toast(toast)
                 st.rerun()
         except (OSError, QuestionImageError) as exc:
             st.error(f"截图范围处理失败：{exc}")
+
+
+def render_question_crop_editor(
+    source: Path | str, *, page_id: int, number: str, regions: list[dict], key: str,
+) -> None:
+    """Edit differently colored rectangles on the untouched full-size source scan."""
+
+    render_crop_editor(source, page_id=page_id, number=number, regions=regions, key=key)

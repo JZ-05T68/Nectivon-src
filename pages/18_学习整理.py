@@ -26,6 +26,7 @@ from pathlib import Path
 import streamlit as st
 
 from src import __version__
+from src.answer_image_ui import render_answer_edit_hint, render_answer_image_section
 from src.display_labels import (
     BOUNDARY_COUNTEREXAMPLE_FIELD_LABELS,
     CONFIDENCE_LABELS,
@@ -69,6 +70,7 @@ from src.question_content_ui import render_question_content, render_region_image
 from src.question_visual_regions import crop_region, normalize_regions
 from src.runtime import (
     application_database,
+    application_pages_dir,
     application_question_source_retrieval_service,
     application_targeted_training_service,
     application_training_profile_service,
@@ -729,6 +731,10 @@ def _render_question_read_view(question, key_prefix: str, edit_flag_key: str) ->
                     else display_field(question, "student_answer"))
     else:
         st.caption("未记录作答。可以点「修改」补写，或到「待核对」页核对原始页面。")
+    render_answer_image_section(
+        question, question_service=question_service, database=database,
+        pages_dir=application_pages_dir(), key_prefix=key_prefix,
+    )
     verdict_label = VERDICT_LABELS.get(question.teacher_verdict or "none", "未判定")
     if is_foreign_language_subject(question.subject) and question.teacher_comment:
         st.markdown("**你提供的对照答案与批改说明**")
@@ -931,6 +937,10 @@ def _render_question_card(question) -> None:
             "AI 的推导和图表解析不会自动进入这里；"
             "如果上方视觉草稿被你删除，这里的 AI 转写内容会一并清空。"
             "原始页面图像始终保留。",
+        )
+        render_answer_edit_hint(
+            question, database=database,
+            pages_dir=application_pages_dir(), key_prefix=key_prefix,
         )
         teacher_comment = question.teacher_comment
         if language_only:

@@ -30,6 +30,7 @@ _PAGE_CHAR_CAP = 1600
 _TOTAL_CHAR_CAP = 24000
 _MAX_POINTS = 40
 _MAX_RELATIONS = 80
+_MAX_CLASSIFICATIONS = 8
 
 _IMPORTANCE_LEVELS = {"primary", "secondary", "normal"}
 _RELATION_TYPES = {item.value for item in KnowledgeRelationType}
@@ -40,15 +41,19 @@ _PROMPT = r"""你是知识整理助手。从给定资料原文中归纳知识点
 - 每个知识点包含 title（简短名称）、content（用资料原文语言概括，含关键定义、公式或条件）、
   importance（primary=全文核心，secondary=次要支撑，normal=一般提及）、
   pages（该知识点出现的页码数组，用资料标注的页码）；
-- 每个知识点还包含 subject（一级学科）、subdiscipline（二级方向），从下方分类目录选取；
+- 每个知识点还包含 classifications 数组，每项含 subject（一级学科）、
+  subdiscipline（二级方向），从下方分类目录选取；一个知识点明确涉及多个学科时，
+  列出原文支持的各项分类，保留同一个知识点，不按学科拆成重复知识点；
   网络安全单独归入「网络安全」，不并入「计算机」；不能判断时字段留空，
   二级方向必须属于所选一级学科，原文不支持细分时只填一级学科；
 - 关系只允许以下 type：requires=前置知识、supports=支撑、derived_from=由…导出、
   example_of=…的例子、relates_to=相关；
 - 关系的 from_title 与 to_title 必须与某个知识点的 title 完全一致，不能指向不存在的知识点；
+- 关系不限于同一学科，保留原文明确支持的跨学科知识点关系；
+  不因学科不同遗漏关系，也不因学科有关联就假定所有知识点之间都有关系；
 - 优先给出核心知识点和明确写出的关系，宁缺毋滥；
 - 返回一个 JSON 对象：{"knowledge_points":[{"title":"","content":"","importance":"",
-  "pages":[1],"subject":"","subdiscipline":""}],
+  "pages":[1],"classifications":[{"subject":"","subdiscipline":""}]}],
   "relations":[{"from_title":"","to_title":"","type":"","description":""}]}，
   不要输出 JSON 以外的任何文字。
 """
@@ -69,6 +74,14 @@ class MinedKnowledgePoint:
     page_numbers: tuple[int, ...] = ()
     subject: str = ""
     subdiscipline: str = ""
+    classifications: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def subject_classifications(self) -> tuple[tuple[str, str], ...]:
+        """Merge older single-subject drafts with the current classification list."""
+
+        primary = ((self.subject, self.subdiscipline),) if self.subject else ()
+        return tuple(dict.fromkeys((*primary, *self.classifications)))
 
 
 @dataclass(frozen=True)
@@ -178,7 +191,7 @@ def save_mining_draft(
             kind="concept", title=point.title, content=point.content,
             importance=point.importance, epistemic_basis="source_derived",
             source_links=source_links,
-            subject=point.subject, subdiscipline=point.subdiscipline,
+            classifications=point.subject_classifications,
         )
         title_to_id[point.title] = view.knowledge_object.id
         knowledge_ids.append(view.knowledge_object.id)
@@ -232,10 +245,23 @@ def _normalize_payload(
                 numbers.append(page_number)
         subject, subdiscipline = normalize_classification(
             item.get("subject", ""), item.get("subdiscipline", ""))
+        classifications: list[tuple[str, str]] = []
+        raw_classifications = item.get("classifications")
+        if isinstance(raw_classifications, list):
+            for classification in raw_classifications[:_MAX_CLASSIFICATIONS]:
+                if not isinstance(classification, dict):
+                    continue
+                pair = normalize_classification(
+                    classification.get("subject", ""),
+                    classification.get("subdiscipline", ""),
+                )
+                if pair[0] and pair not in classifications:
+                    classifications.append(pair)
         points.append(MinedKnowledgePoint(
             title=title, content=content, importance=importance,
             page_ids=tuple(page_ids[n] for n in numbers), page_numbers=tuple(numbers),
             subject=subject, subdiscipline=subdiscipline,
+            classifications=tuple(classifications),
         ))
 
     relations: list[MinedKnowledgeRelation] = []

@@ -129,14 +129,18 @@ class Database:
 
     def __init__(
         self, database_path: Path | str, *, image_readings_dir: Path | None = None,
+        initialize_schema: bool = True,
     ) -> None:
+        """Open local storage; only prevalidated read-only Hosted seeds skip upgrades."""
+
         self.database_path = Path(database_path)
         self.image_readings_dir = (
             image_readings_dir or self.database_path.parent.parent / "agent-readings"
         )
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.last_backup_path: Path | None = None
-        self.initialize()
+        if initialize_schema:
+            self.initialize()
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:

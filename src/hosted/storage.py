@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -187,8 +188,16 @@ def _initialize_runtime(settings: HostedSettings) -> HostedStorage:
     migration_logger.addFilter(diagnostics)
     observer: sqlite3.Connection | None = None
     try:
-        # Both seed and existing branches passed exact v13 before this constructor.
-        database = Database(target)
+        # Both branches were fully validated. The read-only v36 seed has identical
+        # columns; keep it intact instead of running a local write-schema upgrade.
+        with closing(sqlite3.connect(target.as_uri() + "?mode=ro", uri=True)) as schema:
+            legacy_seed = schema.execute(
+                "SELECT max(version) FROM schema_migrations",
+            ).fetchone()[0] == 36
+        database = Database(target, initialize_schema=not legacy_seed)
+        if legacy_seed:
+            with database._connection() as connection:
+                connection.execute("PRAGMA journal_mode = WAL")
         if database.last_backup_path is not None or backup_dir.exists():
             raise HostedStorageError(StorageFailure.INITIALIZATION)
         _validate_layout(settings)

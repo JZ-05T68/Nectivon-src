@@ -10,8 +10,13 @@
     el('figure').replaceChildren(...regions.map((r,i)=>{const o=document.createElement('option');o.value=r.id;o.textContent=`图 ${i+1}${r.role==='option'?' · 选项 '+r.option_label:''}`;o.style.color=color(i);return o;}));
     el('figure').value=selected||'';const r=current();el('remove').disabled=!r;
     el('role').disabled=el('description').disabled=el('option').disabled=!r;
-    el('role').value=r?.role||'stem';el('option').value=r?.option_label||'A';el('description').value=r?.description||'';
+    el('role').value=r?.role||args.default_role||'stem';el('option').value=r?.option_label||'A';el('description').value=r?.description||'';
     el('optionLabel').hidden=r?.role!=='option';
+  }
+  function applyRoles() {
+    const allowed=args.roles||[];
+    for(const option of el('role').options)option.hidden=allowed.length>0&&!allowed.includes(option.value);
+    el('roleLabel').hidden=allowed.length===1;
   }
   function redraw() {
     if(!ready)return;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(image,0,0);
@@ -48,14 +53,14 @@
   canvas.onpointermove=e=>{if(!drag)return;const p=point(e);if(drag.kind==='add')drag.point=p;else {const r=regions.find(r=>r.id===drag.id);r.bounds=drag.kind==='move'?G.move(drag.bounds,p.x-drag.start.x,p.y-drag.start.y,size()):G.resize(drag.bounds,drag.kind,p,size());}redraw();};
   canvas.onpointerup=e=>{
     if(!drag)return;canvas.onpointermove(e);
-    if(drag.kind==='add'){const b=G.bounds(drag.start,drag.point,size());if(b[2]-b[0]>=4&&b[3]-b[1]>=4){const id=crypto.randomUUID().replaceAll('-','');regions.push({id,bounds:b,role:'stem',option_label:'',description:''});selected=id;changed();setMode('adjust');}}
+    if(drag.kind==='add'){const b=G.bounds(drag.start,drag.point,size());if(b[2]-b[0]>=4&&b[3]-b[1]>=4){const id=crypto.randomUUID().replaceAll('-','');regions.push({id,bounds:b,role:args.default_role||'stem',option_label:'',description:''});selected=id;changed();setMode('adjust');}}
     else if(JSON.stringify(current().bounds)!==JSON.stringify(drag.bounds))changed();
     drag=null;controls();redraw();
   };
   canvas.onpointercancel=()=>{if(drag?.id){regions.find(r=>r.id===drag.id).bounds=drag.bounds;}drag=null;redraw();};
   el('save').onclick=()=>{if(!ready||!dirty)return;post({type:'streamlit:setComponentValue',dataType:'json',value:{request_id:Date.now()+'-'+Math.random().toString(36).slice(2),source_hash:args.source_hash,scope:args.scope,revision:args.revision,regions}});status('正在保存…');};
   window.addEventListener('message',e=>{
-    if(e.data?.type!=='streamlit:render')return;args=e.data.args||{};const next=[args.source_hash,args.scope,args.revision].join(':');if(signature===next){zoom();return;}signature=next;ready=false;dirty=false;el('save').disabled=true;
+    if(e.data?.type!=='streamlit:render')return;args=e.data.args||{};applyRoles();const next=[args.source_hash,args.scope,args.revision].join(':');if(signature===next){zoom();return;}signature=next;ready=false;dirty=false;el('save').disabled=true;
     image.onload=()=>{regions=structuredClone(args.regions||[]);initial=structuredClone(regions);selected=regions[0]?.id;canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;autoFit=true;fit();ready=true;controls();setMode(regions.length?'adjust':'add');zoom();status('当前只标示本题的截图范围。原始扫描图保持原样。');};
     image.onerror=()=>{signature='';status('原图加载失败，请重新打开工具。');};image.src=args.original;
   });

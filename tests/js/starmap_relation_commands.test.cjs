@@ -57,7 +57,7 @@ function openHand() {
   h[20] = lm(0.65, 0.47); h[18] = lm(0.6, 0.57);
   return h;
 }
-function makeEnvironment({selected = null, hovered = null, previous = null} = {}) {
+function makeEnvironment({selected = null, hovered = null} = {}) {
   const events = [], toasts = [];
   const context = vm.createContext({
     PUNC,
@@ -82,7 +82,6 @@ function makeEnvironment({selected = null, hovered = null, previous = null} = {}
     stopListen: () => events.push({voice: 'stop'}),
     window: {
       nectivonRelationChange: request => events.push({request}),
-      nectivonPreviousSelected: () => previous,
     },
   });
   vm.runInContext(okDetector + layer + frameHook, context);
@@ -157,7 +156,7 @@ test('doRelate sends the action to the page and announces pending removal', () =
   assert.match(e.toasts[1], /待确认/);
 });
 
-test('thumbs-up links and peace unlinks the two dwell-selected stars', () => {
+test('unchanged relation gestures stay separate from navigation and voice gestures', () => {
   assert.equal(makeEnvironment().context.relateGesture([thumbsUp()]), 'link');
   assert.equal(makeEnvironment().context.relateGesture([peace()]), 'unlink');
   assert.equal(makeEnvironment().context.relateGesture([openHand()]), '');
@@ -168,17 +167,31 @@ test('thumbs-up links and peace unlinks the two dwell-selected stars', () => {
   assert.equal(makeEnvironment().context.relateGesture([baseHand()]), '');
 });
 
-test('holding a pose four frames fires once between the last two selections', () => {
-  const e = makeEnvironment({selected: NODES['knowledge:2'],
-    previous: NODES['knowledge:1']});
+function hold(e, hand, frames = 4) {
+  for (let i = 0; i < frames; i++) e.context.relateFrame([hand]);
+}
+function release(e) { hold(e, baseHand(), 45); }
+
+test('first pose locks only one star; second selection and pose request confirmation', () => {
+  const e = makeEnvironment({selected: NODES['knowledge:1']});
   for (let i = 0; i < 3; i++) e.context.relateFrame([thumbsUp()]);
   assert.equal(e.events.length, 0, 'needs a stable pose, not a flicker');
   e.context.relateFrame([thumbsUp()]);
+  assert.equal(e.events.length, 0, 'first gesture never writes a relation');
+  assert.equal(e.context.relateSource.id, 'knowledge:1');
+  assert.match(e.toasts[0], /已锁定第一颗星/);
+  e.context.S.state.selected = null;
+  release(e);
+  assert.equal(e.context.relateSource.id, 'knowledge:1', 'source survives selection clearing');
+  e.context.S.state.selected = NODES['knowledge:2'];
+  hold(e, thumbsUp());
   assert.equal(e.events.length, 1);
   assert.equal(e.events[0].request.action, 'link');
-  assert.equal(e.events[0].request.source, 'knowledge:1', 'earlier selection is source');
+  assert.equal(e.events[0].request.source, 'knowledge:1', 'locked source stays the source');
   assert.equal(e.events[0].request.target, 'knowledge:2');
-  assert.match(e.toasts[0], /连接请求已发出/);
+  assert.equal(e.events[0].request.require_confirmation, true);
+  assert.match(e.toasts.at(-1), /确认连接/);
+  assert.equal(e.context.relateSource, null);
   for (let i = 0; i < 6; i++) e.context.relateFrame([thumbsUp()]);
   assert.equal(e.events.length, 1, 'cooldown suppresses immediate retrigger');
 });
@@ -194,9 +207,7 @@ test('real landmarker hook sends both relation gestures through the Streamlit br
     '../../src/components/knowledge_starmap/bridge.js'), 'utf8'), e.context);
   const a = NODES['knowledge:1'], b = NODES['knowledge:2'];
   e.context.window.nectivonSelected(a);
-  e.context.window.nectivonSelected(b);
-  e.context.window.nectivonSelected(b); // Repeated dwell on the same star preserves the pair.
-  e.context.S.state.selected = b;
+  e.context.S.state.selected = a;
   let hand = thumbsUp();
   const landmarker = {detectForVideo: () => ({landmarks: [hand]})};
   e.context.S.gesture = {landmarker};
@@ -204,6 +215,14 @@ test('real landmarker hook sends both relation gestures through the Streamlit br
   e.context.hookLandmarks(); // Repeated startup must not wrap the detector twice.
   for (let i = 0; i < 4; i++) landmarker.detectForVideo({}, i);
   let requests = messages.filter(message => message.value?.relation);
+  assert.equal(requests.length, 0, 'first detected pose only locks the source');
+  hand = baseHand();
+  for (let i = 0; i < 45; i++) landmarker.detectForVideo({}, i);
+  e.context.window.nectivonSelected(b);
+  e.context.S.state.selected = b;
+  hand = thumbsUp();
+  for (let i = 0; i < 4; i++) landmarker.detectForVideo({}, i);
+  requests = messages.filter(message => message.value?.relation);
   assert.equal(requests.length, 1, 'real OK detector must not throw inside the hook');
   assert.equal(requests[0].value.relation.action, 'link');
   assert.equal(requests[0].value.relation.source, a.id);
@@ -212,15 +231,24 @@ test('real landmarker hook sends both relation gestures through the Streamlit br
   for (let i = 0; i < 45; i++) landmarker.detectForVideo({}, i);
   hand = peace();
   for (let i = 0; i < 4; i++) landmarker.detectForVideo({}, i);
+  assert.equal(messages.filter(message => message.value?.relation).length, 1);
+  hand = baseHand();
+  for (let i = 0; i < 45; i++) landmarker.detectForVideo({}, i);
+  e.context.S.state.selected = a;
+  hand = peace();
+  for (let i = 0; i < 4; i++) landmarker.detectForVideo({}, i);
   requests = messages.filter(message => message.value?.relation);
   assert.equal(requests.length, 2);
   assert.equal(requests[1].value.relation.action, 'unlink');
-  assert.match(e.toasts.at(-1), /待确认/);
+  assert.equal(requests[1].value.relation.source, b.id);
+  assert.equal(requests[1].value.relation.target, a.id);
+  assert.equal(requests[1].value.relation.require_confirmation, true);
+  assert.match(e.toasts.at(-1), /确认断开/);
   assert.equal(e.events.filter(event => event.voice).length, 0);
 });
 
 test('two hands and malformed frames never trigger relation actions', () => {
-  const e = makeEnvironment({selected: NODES['knowledge:2'], previous: NODES['knowledge:1']});
+  const e = makeEnvironment({selected: NODES['knowledge:2']});
   for (const frame of [null, [], [[]], [thumbsUp(), openHand()]]) {
     for (let i = 0; i < 5; i++) e.context.onFrame(frame);
   }
@@ -252,19 +280,22 @@ test('renderer consumes relation poses before its fist/detail handler', () => {
   }
 });
 
-test('peace gesture requests unlink between the same pair', () => {
-  const e = makeEnvironment({selected: NODES['knowledge:2'],
-    previous: NODES['knowledge:1']});
-  for (let i = 0; i < 4; i++) e.context.relateFrame([peace()]);
+test('peace gesture locks the first star and requests unlink after the second', () => {
+  const e = makeEnvironment({selected: NODES['knowledge:1']});
+  hold(e, peace());
+  assert.equal(e.events.length, 0);
+  release(e);
+  e.context.S.state.selected = NODES['knowledge:2'];
+  hold(e, peace());
   assert.equal(e.events[0].request.action, 'unlink');
   assert.deepEqual([e.events[0].request.source, e.events[0].request.target].sort(),
     ['knowledge:1', 'knowledge:2']);
-  assert.match(e.toasts[0], /待确认/);
+  assert.equal(e.events[0].request.require_confirmation, true);
+  assert.match(e.toasts.at(-1), /确认断开/);
 });
 
-test('pose switch resets the stability count and missing pairs never fire', () => {
-  const e = makeEnvironment({selected: NODES['knowledge:2'],
-    previous: NODES['knowledge:1']});
+test('pose switch resets stability; missing selection never locks a source', () => {
+  const e = makeEnvironment({selected: NODES['knowledge:2']});
   e.context.relateFrame([thumbsUp()]);
   e.context.relateFrame([thumbsUp()]);
   e.context.relateFrame([peace()]);
@@ -272,14 +303,78 @@ test('pose switch resets the stability count and missing pairs never fire', () =
   e.context.relateFrame([peace()]);
   assert.equal(e.events.length, 0, 'switching pose restarts the count');
   e.context.relateFrame([peace()]);
-  assert.equal(e.events.length, 1);
-  const none = makeEnvironment({selected: null, previous: null});
+  assert.equal(e.events.length, 0);
+  assert.equal(e.context.relateAction, 'unlink');
+  const none = makeEnvironment();
   for (let i = 0; i < 4; i++) none.context.relateFrame([thumbsUp()]);
   assert.equal(none.events.length, 0);
-  assert.match(none.toasts[0], /停留选中两颗/);
-  const same = makeEnvironment({selected: NODES['knowledge:2'],
-    previous: NODES['knowledge:2']});
-  for (let i = 0; i < 4; i++) same.context.relateFrame([peace()]);
+  assert.match(none.toasts[0], /停留选中一颗知识点/);
+});
+
+test('same star and changing action preserve the locked source without sending', () => {
+  const same = makeEnvironment({selected: NODES['knowledge:1']});
+  hold(same, peace()); release(same); hold(same, peace());
   assert.equal(same.events.length, 0);
-  assert.match(same.toasts[0], /不同/);
+  assert.match(same.toasts.at(-1), /不同/);
+  release(same);
+  same.context.S.state.selected = NODES['knowledge:2'];
+  hold(same, thumbsUp());
+  assert.equal(same.events.length, 0);
+  assert.match(same.toasts.at(-1), /相同手势/);
+  assert.equal(same.context.relateSource.id, 'knowledge:1');
+  release(same); hold(same, peace());
+  assert.equal(same.events.length, 1, 'original action can still complete');
+});
+
+test('holding a gesture beyond cooldown requires release before accepting another star', () => {
+  const e = makeEnvironment({selected: NODES['knowledge:1']});
+  hold(e, thumbsUp());
+  e.context.S.state.selected = NODES['knowledge:2'];
+  hold(e, thumbsUp(), 120);
+  assert.equal(e.events.length, 0);
+  release(e); hold(e, thumbsUp());
+  hold(e, thumbsUp(), 120);
+  assert.equal(e.events.length, 1, 'completed gesture does not start another action');
+});
+
+test('selection changes during stability count restart the four-frame requirement', () => {
+  const e = makeEnvironment({selected: NODES['knowledge:1']});
+  hold(e, thumbsUp(), 3);
+  e.context.S.state.selected = NODES['knowledge:2'];
+  hold(e, thumbsUp(), 3);
+  assert.equal(e.context.relateSource, null);
+  hold(e, thumbsUp(), 1);
+  assert.equal(e.context.relateSource.id, 'knowledge:2');
+});
+
+test('non-knowledge stars cannot start a relation workflow', () => {
+  for (const node of [{id: 'hub:math', hub: true}, {id: 'question:1'}, {id: 'page:1'}]) {
+    const e = makeEnvironment({selected: node});
+    hold(e, thumbsUp());
+    assert.equal(e.context.relateSource, null);
+    assert.equal(e.events.length, 0);
+  }
+});
+
+test('progress stays visible, cancel and graph updates clear the locked source', () => {
+  const e = makeEnvironment({selected: NODES['knowledge:1']});
+  const listeners = {};
+  const element = () => ({children: [], appendChild(child) {this.children.push(child)},
+    setAttribute() {}, addEventListener(name, fn) {this[name] = fn}});
+  e.context.document = {createElement: element};
+  e.context.window.addEventListener = (name, fn) => {listeners[name] = fn};
+  const footer = element();
+  e.context.relateBuildUI(footer);
+  hold(e, thumbsUp());
+  const panel = footer.children[0];
+  assert.equal(panel.hidden, false);
+  assert.match(panel.children[0].textContent, /微积分基础.*第二颗/);
+  panel.children[1].click();
+  assert.equal(panel.hidden, true);
+  assert.equal(e.context.relateSource, null);
+  release(e); hold(e, peace());
+  listeners['nectivon:payload-changed']();
+  assert.equal(e.context.relateSource, null);
+  assert.equal(panel.hidden, true);
+  assert.equal(e.events.length, 0);
 });

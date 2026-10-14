@@ -39,6 +39,17 @@ html, body { height: 100%; }
   white-space: nowrap;
 }
 .keys { display: none; }
+.nv-relation-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 5px 8px;
+  color: var(--brass);
+  font-size: 12px;
+}
+.nv-relation-progress[hidden] { display: none; }
+.nv-relation-progress span { min-width: 0; overflow-wrap: anywhere; }
 .lens { bottom: calc(var(--nv-footer-height) + 12px); }
 .edge { top: calc((100% - var(--nv-footer-height)) / 2); }
 .folio { top: 68px; max-height: calc(100vh - var(--nv-footer-height) - 320px); }

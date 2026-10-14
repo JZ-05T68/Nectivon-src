@@ -21,7 +21,12 @@ from src.knowledge_mining_service import (
     KnowledgeMiningError,
     save_mining_draft,
 )
-from src.knowledge_object_service import KnowledgeObjectError, KnowledgeObjectService
+from src.knowledge_object_service import (
+    KnowledgeObjectError,
+    KnowledgeObjectService,
+)
+from src.knowledge_subject_service import KnowledgeSubjectService
+from src.knowledge_taxonomy import PRIMARY_SUBJECTS
 from src.learning_workflow_service import QuestionService
 from src.math_display import render_math_markdown
 from src.models import KnowledgeEpistemicBasis, KnowledgeRelationType
@@ -133,6 +138,7 @@ def render_graph_details(database: Database, graph: KnowledgeGraph, selected: st
         st.caption(f"形成依据：{view.knowledge_object.epistemic_basis.label}")
         for source in view.sources:
             st.caption(f"来源核对：{source.status.label}")
+        _render_subject_links(database, identifier)
     edges = [edge for edge in graph.links if selected in (edge["source"], edge["target"])]
     st.markdown("**关联与来源**")
     if not edges:
@@ -150,6 +156,32 @@ def render_graph_details(database: Database, graph: KnowledgeGraph, selected: st
         st.switch_page("pages/18_学习整理.py")
 
 
+def _render_subject_links(database: Database, identifier: int) -> None:
+    """Append confirmed subject associations without changing saved content."""
+
+    with st.expander("关联更多学科"):
+        with st.form(f"graph_subject_links_{identifier}"):
+            subjects = st.multiselect(
+                "追加学科", PRIMARY_SUBJECTS, key=f"graph_subjects_{identifier}",
+                help="涉及多个学科时可多选，保存后同一个知识点会连接这些星云。",
+            )
+            if st.form_submit_button("保存学科关联"):
+                if not subjects:
+                    st.info("请先选择要关联的学科。")
+                    return
+                try:
+                    added = KnowledgeSubjectService(database).add_subjects(identifier, subjects)
+                except ValueError as exc:
+                    st.error(str(exc))
+                except Exception as exc:  # noqa: BLE001 - show local persistence failure
+                    LOGGER.exception("保存知识点学科关联失败")
+                    st.error(f"保存学科关联失败：{exc}")
+                else:
+                    if added:
+                        st.rerun()
+                    st.info("所选学科已经关联。")
+
+
 def _knowledge_identifier(raw: object) -> int | None:
     """Return the knowledge object id behind a star id, or None for other kinds."""
 
@@ -160,13 +192,12 @@ def _knowledge_identifier(raw: object) -> int | None:
     except ValueError:
         return None
 
+
 def apply_star_relation_command(database: Database, request: dict) -> None:
     """Apply one 连接/断开 command issued inside the star map.
 
-    Connecting applies at once because it is easily reversible; removal always
-    waits for the explicit on-page confirmation (automation boundary: the user
-    confirms irreversible deletions, a spoken or typed command alone never
-    deletes a saved relation).
+    Gesture links wait for on-page confirmation after sequential selection.
+    Spoken/typed links apply at once; removal always requires confirmation.
     """
 
     action = request.get("action")
@@ -179,11 +210,22 @@ def apply_star_relation_command(database: Database, request: dict) -> None:
                  icon="⚠️")
         return
     service = KnowledgeObjectService(database)
+    if source_id == target_id or service.get(source_id) is None or service.get(target_id) is None:
+        st.toast("请选择两颗不同且仍存在的知识点星。", icon="⚠️")
+        return
     if action == "link":
         relation_type = str(request.get("relation_type")
                             or KnowledgeRelationType.RELATES_TO.value)
         try:
             KnowledgeRelationType(relation_type)
+            if request.get("require_confirmation"):
+                st.session_state.pop("graph_pending_unlink", None)
+                st.session_state["graph_pending_link"] = {
+                    **request, "require_confirmation": False,
+                    "source_title": source_title, "target_title": target_title,
+                }
+                st.rerun()
+                return
             service.add_relation(source_id, target_id, relation_type=relation_type,
                                  description="星图动作")
         except KnowledgeObjectError as exc:
@@ -207,6 +249,7 @@ def apply_star_relation_command(database: Database, request: dict) -> None:
     if not matching:
         st.toast("这两颗星之间没有已保存的关系。", icon="⚠️")
         return
+    st.session_state.pop("graph_pending_link", None)
     st.session_state["graph_pending_unlink"] = {
         "relation_ids": [relation.id for relation in matching],
         "source_title": source_title,
@@ -214,8 +257,21 @@ def apply_star_relation_command(database: Database, request: dict) -> None:
     }
     st.rerun()
 
+
 def render_pending_relation_removal(database: Database) -> None:
-    """Ask for explicit confirmation before removing star-map relations."""
+    """Confirm sequential gesture links and all star-map relation removals."""
+
+    pending_link = st.session_state.get("graph_pending_link")
+    if pending_link:
+        st.info(f"两星已选好，待确认连接：{pending_link['source_title']} ↔ "
+                f"{pending_link['target_title']}（相关）。")
+        confirm_link, cancel_link = st.columns(2)
+        if confirm_link.button("确认连接", key="graph_link_confirm", type="primary"):
+            st.session_state.pop("graph_pending_link", None)
+            apply_star_relation_command(database, pending_link)
+        if cancel_link.button("取消", key="graph_link_cancel"):
+            st.session_state.pop("graph_pending_link", None)
+            st.toast("已取消连接。", icon="✅")
 
     pending = st.session_state.get("graph_pending_unlink")
     if not pending:
@@ -291,8 +347,10 @@ def render_material_mining(database: Database) -> None:
             pages = ""
             if point.page_numbers:
                 pages = " · 来源页 " + ", ".join(map(str, point.page_numbers))
-            classification = (point.subject + (f" → {point.subdiscipline}"
-                                               if point.subdiscipline else "")) or "未归类"
+            classification = "；".join(
+                subject + (f" → {child}" if child else "")
+                for subject, child in point.subject_classifications
+            ) or "未归类"
             st.markdown(f"- **{point.title}**（{point.importance}{pages} · "
                         f"{classification}）：{point.content}")
         if draft.relations:
@@ -407,12 +465,18 @@ def render_graph_editor(database: Database, graph: KnowledgeGraph) -> None:
                     else:
                         st.rerun()
     with st.expander("添加知识点之间的关系"):
+        st.caption("不同学科的知识点也可以直接关联，请选择具体的起点和终点。")
         if len(knowledge) < 2:
             st.caption("至少保存两个知识点后，可以关联它们。")
         else:
             with st.form("graph_knowledge_relation"):
-                source = st.selectbox("起点知识点", knowledge, format_func=label)
-                target = st.selectbox("终点知识点", knowledge, index=1, format_func=label)
+                def subject_label(key: str) -> str:
+                    tags = graph.nodes[key]["tags"]
+                    subjects = "、".join(dict.fromkeys(tag.split("/", 1)[0] for tag in tags))
+                    return label(key) + f"（{subjects or '未归类'}）"
+
+                source = st.selectbox("起点知识点", knowledge, format_func=subject_label)
+                target = st.selectbox("终点知识点", knowledge, index=1, format_func=subject_label)
                 relation = st.selectbox("关系", list(KnowledgeRelationType),
                                         format_func=lambda value: value.label)
                 description = st.text_input("关系说明", max_chars=1000)

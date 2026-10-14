@@ -94,10 +94,18 @@ The public distribution omits the school, undergraduate-major, and catalog-sourc
 
 - **Knowledge connections** (`知识串联`): a peer of learning organization. The graph reads questions,
   knowledge objects, families, sources, and mastery records from the existing SQLite database,
-  without creating another knowledge store. Subject navigation includes subfields for computer science,
-  psychology, and cybersecurity.
+  without creating another knowledge store. The page opens the subject panorama directly.
+  Classification provides 185 subfields across 33 subjects,
+  including science, engineering, languages, humanities, economics, management, and medicine.
+  Nebulae appear only when the current view contains their content;
+  existing custom classifications and shared-source links are preserved.
+  One knowledge point can retain several subject classifications and connect to all corresponding
+  nebulae. Add subjects in its details; the original content remains a single saved object.
+  Saved relations directly connect knowledge points across nebulae, including multi-subject points,
+  with their direction, type, and description retained from the local database.
 - **Optional AI knowledge mining**: create knowledge-point, relation, and classification drafts with
   source-page references from imported text. Nothing is saved until the user reviews and confirms it.
+  When the source explicitly spans multiple subjects, the same draft point retains all relevant classifications.
   Each generation makes one bounded call, without automatic repeated paid requests.
 - **Mathematical reading of knowledge points**: an enabled AI can typeset formulas after the user's
   original text is saved. Original text, sources, and revision history are retained. Offline saving and
@@ -108,14 +116,22 @@ The public distribution omits the school, undergraduate-major, and catalog-sourc
   the source, questions, answers, and actual reasoning, including correct answers; it must not assert
   guessing without evidence. Explanations adapt to the question type. Foreign-language work ends at
   layer one, with no families, mastery practice, two wings, or extra review. Other subjects retain their existing flow.
-- **System dictation**: native text fields retain ordinary editing; this compatibility fix adds no speech API.
-  The graph command field now ignores Enter used to confirm input-method composition.
+- **Voice input throughout the platform**: editable text fields have a microphone button on the right,
+  including conversations, learning organization, search, remarks, dynamic forms, and local annotation components.
+  A click requests browser microphone permission. Final text is inserted at the caret while retaining existing text
+  and length limits; asking, saving, and corrections remain manual. Secret, disabled, and numeric controls are excluded.
+  There is no new backend speech API, key, or paid AI call. The browser may send audio to its recognition service;
+  browser support and connectivity requirements vary. Permission or service failures show a useful message,
+  leaving typing and system dictation available. The graph command field still ignores composition-confirmation Enter.
 - **Optional graph gestures and voice control**: camera or microphone permission is required.
   Gesture models are bundled locally and camera frames are processed on the device. Browser speech
   recognition may require a network connection; typing remains available. AR, independent Obsidian
   import/watch, and direct browser-to-AI calls are outside the Nectivon integration.
+  To connect or disconnect stars, select the first knowledge star and make 👍/✌️. After the lock
+  prompt, release the gesture, select the second star and repeat the same gesture, then confirm
+  below the map. See [sequential gesture instructions](docs/v0.8.7-starmap-sequential-gestures.md).
 
-Browser text entry, editing, saving, and composition regressions were checked. Real microphone dictation
+Browser button placement, simulated recognition, manual form submission, dynamic fields, and composition regressions were checked. Real microphone dictation
 across devices and live-model foreign-language explanation quality have not been accepted on real devices.
 Automated tests and limited browser checks do not certify every feature across devices.
 

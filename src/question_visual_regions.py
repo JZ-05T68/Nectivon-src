@@ -11,7 +11,7 @@ from pathlib import Path
 
 from PIL import Image
 
-REGION_ROLES = frozenset({"stem", "shared", "option", "question"})
+REGION_ROLES = frozenset({"stem", "shared", "option", "question", "answer"})
 
 
 def normalize_region(value: object) -> dict | None:

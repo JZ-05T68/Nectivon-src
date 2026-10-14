@@ -362,16 +362,17 @@ def readonly_database(path: Path, *, artifact: bool = False) -> Iterator[sqlite3
 
 
 def validate_identity(connection: sqlite3.Connection, expected_uuid: str) -> None:
-    # v0.8.6: the hosted demo seed tracks the local schema. Bumping this pin
-    # requires rebuilding the
-    # demo artifact; the pin itself exists to detect silent seed drift.
-    if SCHEMA_VERSION != 36:
+    # v37 changes only the classification key. Existing v36 read-only seeds
+    # retain the same columns and stay valid; gaps and future schemas still fail.
+    if SCHEMA_VERSION != 37:
         raise HostedStorageError(StorageFailure.SCHEMA)
     versions = tuple(
         row[0]
         for row in connection.execute("SELECT version FROM schema_migrations ORDER BY version")
     )
-    if versions != tuple(range(1, 37)) or any(type(value) is not int for value in versions):
+    if versions not in (tuple(range(1, 37)), tuple(range(1, 38))) or any(
+        type(value) is not int for value in versions
+    ):
         raise HostedStorageError(StorageFailure.SCHEMA)
     rows = connection.execute("SELECT id, kb_uuid FROM knowledge_base_meta").fetchall()
     if rows != [(1, expected_uuid)] or str(UUID(expected_uuid)) != expected_uuid:

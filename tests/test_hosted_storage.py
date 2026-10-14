@@ -205,6 +205,34 @@ def test_artifact_valid_readonly_unchanged_and_no_sidecars(demo, monkeypatch):
     assert not any(path.exists() for path in sidecars(demo.artifact))
 
 
+def test_legacy_v36_seed_remains_readonly_compatible(demo):
+    with closing(sqlite3.connect(demo.artifact)) as connection:
+        connection.execute("DROP TABLE knowledge_subject_classifications")
+        connection.execute(
+            "CREATE TABLE knowledge_subject_classifications ("
+            "knowledge_object_id INTEGER PRIMARY KEY REFERENCES knowledge_objects(id) "
+            "ON DELETE CASCADE, subject TEXT NOT NULL "
+            "CHECK(length(subject) BETWEEN 1 AND 120), "
+            "subdiscipline TEXT NOT NULL DEFAULT '' CHECK(length(subdiscipline)<=120))"
+        )
+        connection.execute("DELETE FROM schema_migrations WHERE version=37")
+        connection.commit()
+    before = demo.artifact.read_bytes()
+    settings = configured(demo, demo_db_sha256=sha256_file(demo.artifact))
+    validate_seed_artifact(demo.artifact, settings.demo_db_sha256, KB_UUID)
+    handle = bootstrap_hosted_storage(settings)
+    try:
+        assert handle.database.get_document(1).title == "Public control manual"
+        assert handle.readiness_reason(settings.database_path) is None
+    finally:
+        handle.close()
+    reopened = bootstrap_hosted_storage(settings)
+    reopened.close()
+    assert demo.artifact.read_bytes() == before
+    with closing(sqlite3.connect(settings.database_path)) as connection:
+        assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 36
+
+
 def test_artifact_wrong_sha_rejected_before_sqlite_and_seed(demo, monkeypatch):
     monkeypatch.setattr(
         sqlite3, "connect", Mock(side_effect=AssertionError("No SQLite before SHA"))
