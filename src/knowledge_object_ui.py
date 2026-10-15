@@ -300,7 +300,9 @@ def _render_relations(service: KnowledgeObjectService, view) -> None:
                 f"{relation.relation_type.label} · {direction} 知识对象 {other_id}"
                 + (f"（{relation.description}）" if relation.description.strip() else "")
             )
-            if columns[1].button("移除", key=f"ko_unrelate_{relation.id}"):
+            if columns[1].button(
+                "移除", key=f"ko_unrelate_{view.knowledge_object.id}_{relation.id}"
+            ):
                 service.remove_relation(relation.id)
                 st.rerun()
     else:

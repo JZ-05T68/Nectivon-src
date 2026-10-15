@@ -33,6 +33,7 @@ _NAVIGATION = (
         ("pages/11_文档管理.py", "删除文件", "delete"),
         ("pages/5_待整理页面.py", "待核对", "fact_check"),
         ("pages/12_系统维护.py", "备份与修复", "tune"),
+        ("pages/16_AI调用台账.py", "AI 台账", "receipt_long"),
     )),
 )
 
@@ -47,7 +48,6 @@ _HIDDEN_PAGE_TITLES = {
     "pages/9_标签管理.py": "标签管理",
     "pages/10_项目管理.py": "项目管理",
     "pages/14_知识对象.py": "知识对象",
-    "pages/16_AI调用台账.py": "AI 使用记录",
     "pages/19_针对训练.py": "针对训练",
     "pages/3_浏览资料.py": "高级资料管理",
 }

@@ -1,7 +1,7 @@
 """Tools-area navigation order and delete-entry contract (v0.8.6 RUN 2).
 
 The user-ratified tools order is fixed:
-添加文件 → 删除文件 → 待核对 → 备份与修复.
+添加文件 → 删除文件 → 待核对 → 备份与修复 → AI 台账.
 These tests lock the order and verify the delete entry reuses the existing
 safe document-deletion page rather than a second implementation.
 Note: R4 red team found this file still asserting the pre-rename label
@@ -18,7 +18,7 @@ def test_tools_menu_follows_user_ratified_order() -> None:
     tools = next(entries for group, entries in _NAVIGATION if group == "工具")
     labels = [label for _, label, _ in tools]
 
-    assert labels == ["添加文件", "删除文件", "待核对", "备份与修复"]
+    assert labels == ["添加文件", "删除文件", "待核对", "备份与修复", "AI 台账"]
 
 
 def test_delete_entry_targets_the_safe_deletion_page() -> None:

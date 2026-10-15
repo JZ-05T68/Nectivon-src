@@ -464,7 +464,7 @@ def test_sidebar_uses_direct_links_instead_of_source_page_rerun_buttons(
     assert not home.exception
     assert not home.sidebar.button
     links = {link.label: link.proto for link in home.sidebar.get("page_link")}
-    assert len(links) == 11
+    assert len(links) == 12
     assert "训练配置" not in links
     assert links["首页"].page == ""
     assert links["首页"].disabled
@@ -474,12 +474,13 @@ def test_sidebar_uses_direct_links_instead_of_source_page_rerun_buttons(
         ("添加文件", "导入资料"), ("待核对", "待整理页面"),
         ("学习整理", "学习整理"), ("知识串联", "知识串联"),
         ("备份与修复", "系统维护"),
+        ("AI 台账", "AI调用台账"),
     ):
         assert links[label].page == route
         assert links[label].page_script_hash
         assert not links[label].external
         assert not links[label].disabled
-    assert len({link.page_script_hash for link in links.values()}) == 11
+    assert len({link.page_script_hash for link in links.values()}) == 12
 
 
 def test_direct_reader_entry_keeps_native_sidebar_destinations(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 import src.runtime as runtime
@@ -182,6 +183,42 @@ def test_object_source_link_action(tmp_path: Path, monkeypatch) -> None:
     sources = database.list_knowledge_object_sources(view.knowledge_object.id)
     assert len(sources) == 1
     assert sources[0].source_id == page_id
+
+
+@pytest.mark.parametrize("endpoint", ["source", "target"])
+def test_related_objects_render_and_remove_only_selected_relation(
+    tmp_path: Path, monkeypatch, endpoint: str
+) -> None:
+    """Both relation endpoints can appear together and remove the same link safely."""
+    database = _make_database(tmp_path)
+    service = KnowledgeObjectService(database)
+    objects = [
+        service.create(
+            kind="concept",
+            title=f"关联概念{index}",
+            content=f"内容{index}",
+            epistemic_basis=KnowledgeEpistemicBasis.PERSONAL_JUDGMENT,
+        ).knowledge_object
+        for index in range(3)
+    ]
+    source, target, other = objects
+    relation = service.add_relation(source.id, target.id, relation_type="supports")
+    retained = service.add_relation(target.id, other.id, relation_type="supports")
+    monkeypatch.setattr(runtime, "application_database", lambda: database)
+    monkeypatch.setattr(runtime, "application_knowledge_object_service", lambda: service)
+
+    app = AppTest.from_file(KNOWLEDGE_OBJECT_PAGE).run(timeout=30)
+
+    assert not app.exception
+    assert sum(button.label == "移除" for button in app.button) == 4
+    selected = source if endpoint == "source" else target
+    app.button(key=f"ko_unrelate_{selected.id}_{relation.id}").click().run()
+
+    assert not app.exception
+    assert not service.relations(source.id)
+    assert [item.id for item in service.relations(target.id)] == [retained.id]
+    assert [item.id for item in service.relations(other.id)] == [retained.id]
+    assert database.count_knowledge_objects() == 3
 
 
 def test_memory_page_lists_entries(tmp_path: Path, monkeypatch) -> None:
