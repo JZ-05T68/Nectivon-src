@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 LOGGER = logging.getLogger(__name__)
-SCHEMA_VERSION = 37
+SCHEMA_VERSION = 38
 
 # 仅用于 Phase 2B-V 失败注入验证；生产运行时恒为 None，永不触发。
 _V10_INJECTION_POINT: str | None = None
@@ -228,6 +228,9 @@ def migrate_database(database_path: Path) -> Path | None:
         if current_version < 37:
             _apply_version_thirty_seven(connection)
             current_version = 37
+        if current_version < 38:
+            _apply_version_thirty_eight(connection)
+            current_version = 38
         if current_version >= 17:
             _validate_version_fifteen_schema(connection)
             _validate_version_sixteen_schema(connection)
@@ -272,6 +275,8 @@ def migrate_database(database_path: Path) -> Path | None:
             _validate_version_thirty_six_schema(connection)
         if current_version >= 37:
             _validate_version_thirty_seven_schema(connection)
+        if current_version >= 38:
+            _validate_version_thirty_eight_schema(connection)
         connection.execute("PRAGMA foreign_keys = ON")
         _validate_database_integrity(connection, stage="迁移后")
     except Exception as exc:
@@ -4794,6 +4799,52 @@ def _validate_version_thirty_seven_schema(connection: sqlite3.Connection) -> Non
         "PRAGMA table_info(knowledge_subject_classifications)")}
     if primary_key != {"knowledge_object_id": 1, "subject": 2, "subdiscipline": 3}:
         raise MigrationError("v37 校验失败：知识点多学科分类缺少完整的唯一约束。")
+
+
+def _apply_version_thirty_eight(connection: sqlite3.Connection) -> None:
+    """Append-only question content revisions (STEM patch P1-5).
+
+    Keeps the full correction chain of a joined question — first AI
+    recognition, region re-recognition picks and user-confirmed edits — so
+    later explanations can be traced to exactly what the student confirmed.
+    """
+
+    _validate_version_thirty_seven_schema(connection)
+    with connection:
+        connection.execute("BEGIN")
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS question_content_revisions ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "question_id INTEGER NOT NULL REFERENCES question_items(id) ON DELETE CASCADE, "
+            "field TEXT NOT NULL CHECK(length(field) BETWEEN 1 AND 40), "
+            "old_value TEXT NOT NULL, "
+            "new_value TEXT NOT NULL, "
+            "change_source TEXT NOT NULL CHECK(length(change_source) BETWEEN 1 AND 40), "
+            "created_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_question_content_revisions_question "
+            "ON question_content_revisions(question_id, id)"
+        )
+        _validate_version_thirty_eight_schema(connection)
+        connection.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (38, ?)", (_utc_now(),)
+        )
+
+
+def _validate_version_thirty_eight_schema(connection: sqlite3.Connection) -> None:
+    """Require the append-only revision table and its lookup index."""
+
+    _validate_version_thirty_seven_schema(connection)
+    columns = {row[1] for row in connection.execute(
+        "PRAGMA table_info(question_content_revisions)")}
+    if not {"id", "question_id", "field", "old_value", "new_value",
+            "change_source", "created_at"} <= columns:
+        raise MigrationError("v38 校验失败：题目修订历史表缺少必需字段。")
+    indexes = {row[1] for row in connection.execute(
+        "PRAGMA index_list(question_content_revisions)")}
+    if "idx_question_content_revisions_question" not in indexes:
+        raise MigrationError("v38 校验失败：题目修订历史缺少查询索引。")
 
 
 def _utc_now() -> str:

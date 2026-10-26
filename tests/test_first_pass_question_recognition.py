@@ -213,7 +213,7 @@ def test_v33_upgrade_keeps_legacy_context_unknown_and_raw_text_intact(tmp_path: 
     with sqlite3.connect(path) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(question_nodes)")}
         assert "has_shared_stem" in columns
-        assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 37
+        assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 38
 
 
 def test_first_pass_prompt_covers_semantics_and_advanced_mathematics() -> None:

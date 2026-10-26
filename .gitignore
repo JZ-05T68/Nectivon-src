@@ -108,3 +108,6 @@ scripts/verify_stage4_first_pass.py
 /src/data/training_profile_catalog_sources.json
 /scripts/seed_law_foundation_corpus_v1.py
 /.zcode/
+
+# Personal generated documents (never publish)
+/output/

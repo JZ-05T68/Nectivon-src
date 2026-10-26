@@ -29,6 +29,8 @@ from src.training_profile_models import (
     LearnerProfile,
 )
 
+pytestmark = pytest.mark.usefixtures("reference_catalog")
+
 
 @pytest.fixture
 def engine() -> EligibilityRuleEngine:

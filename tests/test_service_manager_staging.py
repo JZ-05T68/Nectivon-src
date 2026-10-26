@@ -319,6 +319,7 @@ def test_staging_pid_record_is_separate_from_production(
 def test_stop_staging_never_touches_production_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    monkeypatch.setenv("NECTIVON_PYTHON", sys.executable)
     child = _spawn_child()
     try:
         production = tmp_path / "prod"
@@ -349,6 +350,7 @@ def test_stop_staging_never_touches_production_process(
 def test_stop_production_never_touches_staging_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    monkeypatch.setenv("NECTIVON_PYTHON", sys.executable)
     child = _spawn_child()
     try:
         staging = staging_settings(tmp_path / "staging")

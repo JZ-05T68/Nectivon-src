@@ -18,6 +18,7 @@ from src.storage_location_service import (
     relocate_storage,
     relocate_storage_path,
 )
+from src.usage_notice_ui import render_usage_notice
 from src.workspace_ui import render_workspace
 
 LOGGER = logging.getLogger(__name__)
@@ -25,6 +26,8 @@ LOGGER = logging.getLogger(__name__)
 st.set_page_config(page_title=f"运行说明 · Nectivon v{__version__}", page_icon="⚙️", layout="wide")
 render_workspace("pages/13_运行说明.py")
 st.title("设置与运行说明")
+
+render_usage_notice()
 
 settings = application_settings()
 st.success(f"服务正常运行：{settings.host}:{settings.port}")

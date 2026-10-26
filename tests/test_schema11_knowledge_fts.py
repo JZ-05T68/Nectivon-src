@@ -222,8 +222,8 @@ def _seeded_v10_path(tmp_path: Path) -> Path:
 def test_fresh_database_migrates_1_to_15(tmp_path: Path) -> None:
     database = Database(tmp_path / "knowledge.db")
 
-    assert SCHEMA_VERSION == 37
-    assert database.SCHEMA_VERSION == 37
+    assert SCHEMA_VERSION == 38
+    assert database.SCHEMA_VERSION == 38
     with sqlite3.connect(database.database_path) as connection:
         versions = [
             row[0]

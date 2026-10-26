@@ -141,6 +141,9 @@ V16_COLUMNS = {
     "conclusion_revisions": (
         "id family_id trigger_question_id revision_kind note created_at"
     ).split(),
+    "question_content_revisions": (
+        "id question_id field old_value new_value change_source created_at"
+    ).split(),
     "mastery_records": (
         "id question_id practiced_at outcome can_explain note created_at"
     ).split(),
@@ -362,17 +365,17 @@ def readonly_database(path: Path, *, artifact: bool = False) -> Iterator[sqlite3
 
 
 def validate_identity(connection: sqlite3.Connection, expected_uuid: str) -> None:
-    # v37 changes only the classification key. Existing v36 read-only seeds
-    # retain the same columns and stay valid; gaps and future schemas still fail.
-    if SCHEMA_VERSION != 37:
+    # v38 only appends a LOCAL revision-history table; hosted read-only seeds
+    # at v36/v37 keep every column hosted reads. Gaps and future schemas fail.
+    if SCHEMA_VERSION != 38:
         raise HostedStorageError(StorageFailure.SCHEMA)
     versions = tuple(
         row[0]
         for row in connection.execute("SELECT version FROM schema_migrations ORDER BY version")
     )
-    if versions not in (tuple(range(1, 37)), tuple(range(1, 38))) or any(
-        type(value) is not int for value in versions
-    ):
+    if versions not in (
+        tuple(range(1, 37)), tuple(range(1, 38)), tuple(range(1, 39)),
+    ) or any(type(value) is not int for value in versions):
         raise HostedStorageError(StorageFailure.SCHEMA)
     rows = connection.execute("SELECT id, kb_uuid FROM knowledge_base_meta").fetchall()
     if rows != [(1, expected_uuid)] or str(UUID(expected_uuid)) != expected_uuid:
@@ -383,9 +386,15 @@ def validate_schema(connection: sqlite3.Connection) -> None:
     names = {
         row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")
     }
-    if names != set(V16_COLUMNS):
+    # v38's revision-history table is LOCAL-only: legacy v36/v37 seeds that
+    # predate it stay loadable read-only; a seed may carry it empty.
+    optional = {"question_content_revisions"}
+    required = set(V16_COLUMNS) - optional
+    if names != required and names != set(V16_COLUMNS):
         raise HostedStorageError(StorageFailure.SCHEMA)
     for name, columns in V16_COLUMNS.items():
+        if name in optional and name not in names:
+            continue
         actual = [row[1] for row in connection.execute(f'PRAGMA table_info("{name}")')]
         if actual != columns:
             raise HostedStorageError(StorageFailure.SCHEMA)

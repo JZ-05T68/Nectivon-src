@@ -71,9 +71,17 @@ class QuestionRegionStore:
         if (not isinstance(role, str) or role not in REGION_ROLES
                 or (role == "option" and not re.fullmatch(r"[A-Z]", label))):
             raise QuestionImageError("截图用途或选项编号无效。")
-        return {"id": supplied["id"], "bounds": self._bounds(supplied.get("bounds")),
-                "role": role, "option_label": label if role == "option" else "",
-                "description": str(supplied.get("description", ""))[:240]}
+        region = {"id": supplied["id"], "bounds": self._bounds(supplied.get("bounds")),
+                  "role": role, "option_label": label if role == "option" else "",
+                  "description": str(supplied.get("description", ""))[:240]}
+        # Round-2 issue 2: cross-page/global figure provenance must survive
+        # the crop-record round-trip, or every renderer crops the wrong page.
+        for field in ("source_page_id", "source_document_id"):
+            if type(supplied.get(field)) is int:
+                region[field] = supplied[field]
+        if isinstance(supplied.get("source_label"), str) and supplied["source_label"].strip():
+            region["source_label"] = supplied["source_label"].strip()[:120]
+        return region
 
     def state(self) -> dict:
         """Read checked current state, or seed actual visible AI crops without writes."""
@@ -82,6 +90,10 @@ class QuestionRegionStore:
         if not path.exists():
             regions = []
             for region in normalize_regions(self.defaults):
+                # Cross-page figures live on another photo; they can never
+                # seed THIS page's editable crop record.
+                if region.get("source_page_id") is not None:
+                    continue
                 if region.get("image_sha256", self.source_sha256) != self.source_sha256:
                     continue
                 bounds = region.get("crop_bounds") or region_pixel_bounds(self.source, region)
@@ -219,14 +231,18 @@ class QuestionRegionStore:
         result = []
         for item in self.state()["regions"]:
             x1, y1, x2, y2 = item["bounds"]
-            result.append({"role": item["role"], "option_label": item["option_label"],
-                           "description": item["description"],
-                           "bbox": [x1 * 1000 / width, y1 * 1000 / height,
-                                    x2 * 1000 / width, y2 * 1000 / height],
-                           "crop_scope": self.scope,
-                           "region_id": item["id"], "crop_bounds": item["bounds"].copy(),
-                           "image_sha256": self.source_sha256,
-                           **({"page_id": page_id} if page_id is not None else {})})
+            entry = {"role": item["role"], "option_label": item["option_label"],
+                     "description": item["description"],
+                     "bbox": [x1 * 1000 / width, y1 * 1000 / height,
+                              x2 * 1000 / width, y2 * 1000 / height],
+                     "crop_scope": self.scope,
+                     "region_id": item["id"], "crop_bounds": item["bounds"].copy(),
+                     "image_sha256": self.source_sha256,
+                     **({"page_id": page_id} if page_id is not None else {})}
+            for field in ("source_page_id", "source_document_id", "source_label"):
+                if item.get(field) is not None:
+                    entry[field] = item[field]
+            result.append(entry)
         return result
 
 
@@ -238,11 +254,36 @@ def resolve_question_regions(
 
     if source is None or not number.strip() or not Path(source).is_file():
         return normalize_regions(defaults)
+    # Cross-page/global figures never enter this page's crop record; they
+    # always pass through verbatim so renderers crop the right photo.
+    local_defaults = [
+        region for region in normalize_regions(defaults)
+        if region.get("source_page_id") is None
+    ]
+    cross_page = [
+        region for region in normalize_regions(defaults)
+        if region.get("source_page_id") is not None
+    ]
+    from src.question_figure_service import FigureSelectionStore
+
+    selection = FigureSelectionStore(source, number, defaults)
+    if selection.active.exists():
+        try:
+            return selection.state()["regions"]
+        except QuestionImageError:
+            logging.getLogger(__name__).exception("题图来源修订损坏；禁止回退旧来源")
+            return []
     try:
-        store = QuestionRegionStore(source, number, defaults)
-        if committed_only and store.state()["revision"] == "original":
-            return normalize_regions(defaults)
-        return store.regions(page_id=page_id)
+        store = QuestionRegionStore(source, number, local_defaults)
+        if store.state()["revision"] == "original":
+            # Old join snapshots include synthetic crop IDs even though no
+            # human box was ever saved. Keep these automatic regions live so
+            # safe boundary recovery can improve without rerunning recognition.
+            automatic = [{k: v for k, v in region.items()
+                          if k not in ("crop_scope", "region_id", "crop_bounds")}
+                         for region in normalize_regions(local_defaults)]
+            return [*automatic, *cross_page]
+        return [*store.regions(page_id=page_id), *cross_page]
     except (OSError, QuestionImageError):
         logging.getLogger(__name__).exception("本题图片修订不可用，显示原始裁图")
-        return normalize_regions(defaults)
+        return [*normalize_regions(local_defaults), *cross_page]

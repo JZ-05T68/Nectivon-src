@@ -23,10 +23,16 @@ def test_browser_dictation_lifecycle():
 
 def test_dictation_installer_uses_only_shipped_static_assets(monkeypatch):
     calls = []
-    monkeypatch.setattr("src.voice_input_ui.st.html", lambda *a, **kw: calls.append((a, kw)))
+    import src.voice_input_ui as voice_ui
+
+    monkeypatch.setattr(
+        voice_ui.components, "html", lambda *a, **kw: calls.append((a, kw))
+    )
     render_voice_input()
     (body,), options = calls[0]
-    assert options == {"unsafe_allow_javascript": True}
+    # components.html (not st.html): the script must EXECUTE and reach the
+    # parent document's widgets (round-2 visual-audit regression fix).
+    assert options.get("height") == 0
     assert "<script>" in body
     # Literal SVG markup inside script text makes DOMPurify remove the script.
     script = body.split("<script>", 1)[1]

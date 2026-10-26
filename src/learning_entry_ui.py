@@ -329,6 +329,58 @@ def render_join_learning_section(page: Page) -> None:
                 )
             )
             st.caption(f"候选题干的文字来源：{split_source_label}。")
+            if pending_entries and selected_subject and selected_kind:
+                if st.button(
+                    f"⚡ 全部加入学习整理（本页 {len(pending_entries)} 道）",
+                    key=f"batch_join_{page.id}",
+                    type="primary",
+                    help=(
+                        "按上方已选的学科和题型，把本页全部待核对题目一次加入第一层；"
+                        "每题仍走同样的查重与来源绑定，重复或失败的题会单独提示。"
+                        "也可以继续逐题核对后单独加入。"
+                    ),
+                ):
+                    joined = 0
+                    failures: list[str] = []
+                    for batch_root, batch_candidate, batch_path, batch_ancestors in pending_entries:
+                        try:
+                            ok = _add_candidate(
+                                page,
+                                batch_candidate,
+                                selected_kind,
+                                selected_subject,
+                                question_service,
+                                store,
+                                root_candidate=batch_root,
+                                node_path=batch_path,
+                                ancestors=batch_ancestors,
+                                generate_reference=False,
+                                quiet=True,
+                            )
+                            if ok:
+                                joined += 1
+                            else:
+                                failures.append(
+                                    f"{batch_candidate.number or '（无编号）'}：加入失败"
+                                    "（详见上方提示）"
+                                )
+                        except Exception as exc:  # noqa: BLE001 - per-question isolation
+                            LOGGER.exception(
+                                "批量加入单题失败：page=%s number=%s",
+                                page.id, batch_candidate.number,
+                            )
+                            failures.append(
+                                f"{batch_candidate.number or '（无编号）'}：{exc}"
+                            )
+                    if joined:
+                        st.toast(
+                            f"已批量加入 {joined} 道（快速模式，未逐题调用 AI 参考）；"
+                            "可在「学习整理」页为单题生成 AI 参考版。"
+                        )
+                    for message in failures:
+                        st.error(f"未加入：{message}")
+                    if joined:
+                        st.rerun()
             if _page_has_unconfirmed_visual_draft(page):
                 st.caption(
                     "提示：本页的 AI 视觉识别草稿还没有经你保存确认，"
@@ -499,6 +551,16 @@ def _render_subject_picker(
         result = choice
     remembered["choice"] = choice
     st.session_state[durable_key] = remembered
+    if result:
+        # P1-4: goal follows the course being organized; guidance only.
+        try:
+            from src.learning_goal_ui import render_learning_goal_picker
+
+            render_learning_goal_picker(
+                _database().database_path, result, key=f"join_goal_{document_id}_{result}"
+            )
+        except Exception:  # noqa: BLE001 - goal UI must never block joining
+            LOGGER.debug("课程学习目标选择器不可用", exc_info=True)
     return result
 
 
@@ -1200,6 +1262,11 @@ def _render_candidate_cards(
             render_question_crop_editor(
                 page.image_path, page_id=page.id, number=candidate.number, regions=regions,
                 key=f"candidate_crop_{candidate_key}",
+                title="✏️ 修改图片（在原图上调整或重新框选，保存后自动重新识别）",
+                open_label="打开原图框选",
+            )
+            _render_region_rerecognition(
+                page, candidate, store, candidate_key, node_path=node_path, regions=regions,
             )
             col_join, col_skip, col_ignore = st.columns([2, 2, 2])
             join_key = f"cand_join_{candidate_key}"
@@ -1273,6 +1340,153 @@ def _root_local_node_path(page_node_path: str) -> str:
     return ".".join(["0", *parts[1:]])
 
 
+_REGION_ROLE_LABELS = {
+    "stem": "题干图",
+    "shared": "公共材料图",
+    "option": "选项图",
+    "question": "整题区域",
+    "figure": "插图",
+}
+
+
+
+
+def _render_region_rerecognition(
+    page: Page,
+    candidate,
+    store,
+    candidate_key: str,
+    *,
+    node_path: str,
+    regions: list[dict],
+) -> None:
+    """P0-2: crop the ORIGINAL region and let the vision model re-read it."""
+
+    from src.math_display import normalize_math_delimiters
+    from src.question_visual_regions import crop_region
+    from src.region_recognition_service import (
+        RegionRecognitionError,
+        recognize_region,
+    )
+    from src.runtime import application_question_vision_provider
+
+    usable = [region for region in regions if region.get("bbox")]
+    with st.expander("🔍 框选原图重新识别（纠正识别错误，无需重打）"):
+        auto_error = st.session_state.pop(f"rerecog_error_{candidate_key}", None)
+        if auto_error:
+            st.warning(f"保存框选后的自动重新识别未成功：{auto_error}。原有题干未改动。")
+        if not usable:
+            st.caption(
+                "这道题还没有可框选的图像区域。可先在上方「修改截图方框」添加范围，再回来重新识别。"
+            )
+            return
+        st.caption(
+            "选中错误位置对应的原图区域，只把这一块重新发给视觉模型识别；"
+            "区域位置不对时，先用上方「修改截图方框」调整。"
+        )
+        labels = {
+            index: (
+                _REGION_ROLE_LABELS.get(str(region.get("role")), "区域")
+                + (f" · {region['description']}" if region.get("description") else "")
+                + (f" · 选项 {region['option_label']}" if region.get("option_label") else "")
+            )
+            for index, region in enumerate(usable)
+        }
+        chosen_index = st.selectbox(
+            "选择原图区域",
+            list(labels),
+            format_func=labels.get,
+            key=f"rerecog_region_{candidate_key}",
+        )
+        region = usable[int(chosen_index)]
+        from src.question_content_ui import _region_image_path
+
+        source_path = _region_image_path(page.image_path, region)
+        if source_path is None:
+            st.warning("所选区域来源不可用，未回退题干照片。")
+            return
+        if crop_region(source_path, region, original=True) is None:
+            st.warning("所选区域无法裁切，请点击「修改图片」核对来源和选框。")
+            return
+        if st.button(
+            "重新识别这块区域",
+            key=f"rerecog_run_{candidate_key}",
+            type="primary",
+        ):
+            provider = application_question_vision_provider()
+            if provider is None:
+                st.warning("未配置云端读图模型，原有题目内容保持不变。")
+                return
+            try:
+                result = recognize_region(
+                    provider,
+                    source_path,
+                    region,
+                    page_id=region.get("source_page_id", page.id),
+                    hint=candidate.stem,
+                )
+            except RegionRecognitionError as exc:
+                st.error(f"区域重新识别失败：{exc}")
+            else:
+                st.session_state[f"rerecog_result_{candidate_key}"] = {
+                    "texts": result.texts,
+                    "role": result.region_role,
+                    "warnings": result.warnings,
+                }
+                st.rerun()
+        stored = st.session_state.get(f"rerecog_result_{candidate_key}")
+        if not stored:
+            return
+        for warning in stored.get("warnings", []):
+            st.warning(warning)
+        texts: list[str] = stored["texts"]
+        choice = st.radio(
+            "候选读法（点选后可替换或追加）",
+            texts,
+            index=0,
+            key=f"rerecog_pick_{candidate_key}",
+        )
+        st.caption("读法渲染预览：")
+        st.markdown(normalize_math_delimiters(str(choice)))
+        col_replace, col_append = st.columns(2)
+        if col_replace.button(
+            "✓ 一键替换题干",
+            key=f"rerecog_replace_{candidate_key}",
+            type="primary",
+        ):
+            try:
+                store.apply_recognition_result(
+                    page.id,
+                    node_path,
+                    choice,
+                    region_role=str(stored["role"]),
+                    candidates_readings=texts,
+                )
+            except Exception as exc:  # noqa: BLE001 - user-facing failure
+                LOGGER.exception("替换题干失败")
+                st.error(f"替换失败：{exc}")
+            else:
+                st.toast("已用重新识别的结果替换题干（原识别与本次读法都已记入订正记录）。")
+                st.rerun()
+        if col_append.button(
+            "追加到题干末尾",
+            key=f"rerecog_append_{candidate_key}",
+        ):
+            try:
+                store.update_candidate_at_path(
+                    page.id,
+                    node_path,
+                    stem=candidate.stem + ("\n" if candidate.stem else "") + str(choice),
+                    change_kind="region_re_recognition_append",
+                )
+            except Exception as exc:  # noqa: BLE001 - user-facing failure
+                LOGGER.exception("追加题干失败")
+                st.error(f"追加失败：{exc}")
+            else:
+                st.toast("已追加到题干末尾（已记入订正记录）。")
+                st.rerun()
+
+
 def _render_candidate_edit(
     page: Page,
     candidate,
@@ -1283,17 +1497,44 @@ def _render_candidate_edit(
 ) -> None:
     """Per-candidate user edit (题号/题干/图像绑定) — Geography G1 §26."""
 
+    from src.math_input_ui import (
+        PENDING_SUFFIX,
+        apply_pending_text,
+        render_math_find_replace,
+        render_math_snippet_editor,
+        render_stem_live_preview,
+    )
+
     with st.expander("修改这道题"):
+        saved_flag = f"cand_edit_saved_{candidate_key}"
+        if st.session_state.pop(saved_flag, None):
+            st.success("已保存（本次修改已记入订正记录）。")
         edited_number = st.text_input(
             "题号",
             value=candidate.number,
             key=f"cand_edit_number_{candidate_key}",
         )
+        stem_widget_key = f"cand_edit_stem_{candidate_key}"
+        apply_pending_text(stem_widget_key, candidate.stem)
+        if stem_widget_key not in st.session_state:
+            st.session_state[stem_widget_key] = candidate.stem
         edited_stem = st.text_area(
             "题干（可对照上方原图修改）",
-            value=candidate.stem,
             height=160,
-            key=f"cand_edit_stem_{candidate_key}",
+            key=stem_widget_key,
+        )
+        render_stem_live_preview(edited_stem)
+        snippet = render_math_snippet_editor(f"cand_math_{candidate_key}")
+        if snippet:
+            base = str(st.session_state.get(stem_widget_key, edited_stem) or "")
+            st.session_state[f"{stem_widget_key}{PENDING_SUFFIX}"] = (
+                base + ("\n" if base.strip() else "") + snippet
+            )
+            st.rerun()
+        render_math_find_replace(
+            f"cand_math_{candidate_key}",
+            apply_to=edited_stem,
+            widget_key=stem_widget_key,
         )
         edited_figures = st.text_input(
             "涉及的图（逗号分隔，如：图 1，长江流域示意）",
@@ -1327,8 +1568,23 @@ def _render_candidate_edit(
                     st.error("保存修改失败，请稍后重试。")
             else:
                 _format_candidate_after_save(page, store, edited_stem.strip())
-                st.toast("候选已更新（记录为你修订过的版本）。")
+                st.session_state[saved_flag] = True
                 st.rerun()
+        if candidate.stem_revisions:
+            with st.expander(f"订正记录（{len(candidate.stem_revisions)} 条，保留全部历史）"):
+                source_label = {
+                    "page_image": "AI 首次读图",
+                    "source_text": "文字识别",
+                    "user_corrected_text": "人工校对文字",
+                }.get(candidate.recognition_source, candidate.recognition_source or "AI 识别")
+                st.caption(
+                    f"首次识别：{source_label} · {candidate.extracted_at or '（时间未记录）'}"
+                )
+                for entry in reversed(candidate.stem_revisions):
+                    st.caption(
+                        f"{entry.get('at', '')} · "
+                        f"{entry.get('kind', '')} · {entry.get('detail', '')}"
+                    )
 
 
 def _format_candidate_after_save(page: Page, store: QuestionCandidateStore, source: str) -> None:
@@ -1429,7 +1685,17 @@ def _add_candidate(
     root_candidate=None,
     node_path: str = "0",
     ancestors: tuple = (),
-) -> None:
+    generate_reference: bool = True,
+    quiet: bool = False,
+) -> bool:
+    """Join one candidate into layer 1.
+
+    ``generate_reference=False`` (batch path) skips the per-question
+    synchronous AI reference so a whole page joins in one click; the
+    reference can be generated later per question on the layer-1 card.
+    ``quiet=True`` suppresses the per-question success/rerun so callers
+    can loop.  Returns True when the question was created.
+    """
     # F3: when this candidate belongs to a detected choice group, the
     # question stores only its OWN remaining stem; the shared material
     # lives once in the group.  Full AI source text stays in ai_draft.
@@ -1553,66 +1819,77 @@ def _add_candidate(
         except Exception:  # noqa: BLE001 - family draft must never break joining
             LOGGER.debug("加入后自动归纳失败（题目已加入）", exc_info=True)
         # Joining owns one reference generation; failures never undo the saved question.
-        try:
-            from src.learning_reference_service import generate_join_reference
-            from src.learning_workflow_service import QuestionOrganizationService
-            from src.runtime import (
-                application_ai_provider,
-                application_question_vision_provider,
-                application_training_profile_service,
+        if not generate_reference:
+            st.session_state["learning_reference_flash"] = (
+                "已批量加入学习整理（快速模式）。可在「学习整理」页为单题生成"
+                "订正、解析、题型和方法的 AI 参考版。"
             )
-
-            with st.spinner("正在生成订正、解析、题型和方法的参考版…"):
-                drafts = generate_join_reference(
-                    question_service.get_question_item(int(question.id)), _database(),
-                    provider=application_ai_provider(),
-                    vision_provider=application_question_vision_provider(),
-                    learner_profile=application_training_profile_service().get_profile(),
-                )
-                question_service.save_ai_reference(int(question.id), drafts)
+        else:
             try:
-                QuestionOrganizationService(_database()).organize_with_confidence(
-                    int(question.id), type_family=drafts.get("type_family"),
-                    method_families=drafts.get("method_families") or None,
-                    secondary_conclusion=None,
-                )
-            except Exception:  # noqa: BLE001 - classification never discards the reference
-                LOGGER.warning("加入后归类建议未完成：question_id=%s", question.id, exc_info=True)
-            st.session_state["learning_reference_flash"] = (
-                "已加入学习整理，并生成订正、解析、题型和方法的 AI 参考版，请核对后修改保存。"
-            )
-        except Exception as reference_exc:  # noqa: BLE001 - preserve the successful join
-            from src.ai.provider import AIExecutionError, AIUnavailableError
-            from src.learning_ai_draft_service import LearningAIDraftError
-
-            if isinstance(reference_exc, LearningAIDraftError) and reference_exc.reference:
-                question_service.record_reference_failure(
-                    int(question.id), str(reference_exc), reference_exc.reference,
+                from src.learning_reference_service import generate_join_reference
+                from src.learning_workflow_service import QuestionOrganizationService
+                from src.runtime import (
+                    application_ai_provider,
+                    application_question_vision_provider,
+                    application_training_profile_service,
                 )
 
-            safe_message = (
-                str(reference_exc)
-                if isinstance(reference_exc, (
-                    LearningAIDraftError, AIExecutionError, AIUnavailableError,
-                ))
-                else "参考版生成未完成，请检查模型配置和网络环境。"
-            )
-            LOGGER.warning("加入后参考版未完成：question_id=%s", question.id, exc_info=True)
-            st.session_state["learning_reference_flash"] = (
-                "题目已加入学习整理，但参考版暂未生成：" + safe_message
-            )
+                with st.spinner("正在生成订正、解析、题型和方法的参考版…"):
+                    drafts = generate_join_reference(
+                        question_service.get_question_item(int(question.id)), _database(),
+                        provider=application_ai_provider(),
+                        vision_provider=application_question_vision_provider(),
+                        learner_profile=application_training_profile_service().get_profile(),
+                    )
+                    question_service.save_ai_reference(int(question.id), drafts)
+                try:
+                    QuestionOrganizationService(_database()).organize_with_confidence(
+                        int(question.id), type_family=drafts.get("type_family"),
+                        method_families=drafts.get("method_families") or None,
+                        secondary_conclusion=None,
+                    )
+                except Exception:  # noqa: BLE001 - classification never discards the reference
+                    LOGGER.warning(
+                    "加入后归类建议未完成：question_id=%s", question.id,
+                    exc_info=True,
+                )
+                st.session_state["learning_reference_flash"] = (
+                    "已加入学习整理，并生成订正、解析、题型和方法的 AI 参考版，请核对后修改保存。"
+                )
+            except Exception as reference_exc:  # noqa: BLE001 - preserve the successful join
+                from src.ai.provider import AIExecutionError, AIUnavailableError
+                from src.learning_ai_draft_service import LearningAIDraftError
+
+                if isinstance(reference_exc, LearningAIDraftError) and reference_exc.reference:
+                    question_service.record_reference_failure(
+                        int(question.id), str(reference_exc), reference_exc.reference,
+                    )
+
+                safe_message = (
+                    str(reference_exc)
+                    if isinstance(reference_exc, (
+                        LearningAIDraftError, AIExecutionError, AIUnavailableError,
+                    ))
+                    else "参考版生成未完成，请检查模型配置和网络环境。"
+                )
+                LOGGER.warning("加入后参考版未完成：question_id=%s", question.id, exc_info=True)
+                st.session_state["learning_reference_flash"] = (
+                    "题目已加入学习整理，但参考版暂未生成：" + safe_message
+                )
     except Exception as exc:  # noqa: BLE001 - user-facing failure surface
         if isinstance(exc, LearningWorkflowError):
             st.error(f"加入学习整理失败：{exc}")
-            return
+            return False
         LOGGER.exception("加入学习整理失败")
         st.error("加入学习整理失败，请稍后重试。")
-        return
-    st.success(
-        f"已把 {candidate.number or '该候选'} 加入学习整理"
-        f"（{dict(_KIND_LABELS)[selected_kind]}）。请到「学习整理」页核对题干后确认。"
-    )
-    st.rerun()
+        return False
+    if not quiet:
+        st.success(
+            f"已把 {candidate.number or '该候选'} 加入学习整理"
+            f"（{dict(_KIND_LABELS)[selected_kind]}）。请到「学习整理」页核对题干后确认。"
+        )
+        st.rerun()
+    return True
 
 
 def _render_candidate_split_section(page: Page, candidates: list[QuestionCandidate] | None) -> None:

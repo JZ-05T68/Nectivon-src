@@ -215,7 +215,8 @@ def test_legacy_v36_seed_remains_readonly_compatible(demo):
             "CHECK(length(subject) BETWEEN 1 AND 120), "
             "subdiscipline TEXT NOT NULL DEFAULT '' CHECK(length(subdiscipline)<=120))"
         )
-        connection.execute("DELETE FROM schema_migrations WHERE version=37")
+        connection.execute("DROP TABLE question_content_revisions")
+        connection.execute("DELETE FROM schema_migrations WHERE version>=37")
         connection.commit()
     before = demo.artifact.read_bytes()
     settings = configured(demo, demo_db_sha256=sha256_file(demo.artifact))

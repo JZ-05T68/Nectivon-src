@@ -37,6 +37,8 @@ from src.training_profile_models import (
 from src.training_profile_service import TrainingProfileService
 from src.training_profile_ui import _trigger_save_from_state
 
+pytestmark = pytest.mark.usefixtures("reference_catalog")
+
 
 @pytest.fixture
 def sim_service(tmp_path: Path) -> TrainingProfileService:

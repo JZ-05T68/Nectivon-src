@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING
 
 from src.question_recognition_rules import (
     CHOICE_LAYOUT_RULES,
+    CONTINUATION_RULES,
+    FIGURE_BINDING_RULES,
     MATH_NOTATION_RULES,
     QUESTION_GRANULARITY_RULES,
     is_question_heading_only,
@@ -87,6 +89,9 @@ class QuestionCandidate:
     recognition_source: str = ""  # caller-owned provenance, never inferred from AI wording
     visual_regions: list[dict] = field(default_factory=list)
     image_recognized_stem: str = ""  # fresh AI source when human wording is preserved
+    # P1-5: append-only stem provenance.  Every accepted stem change records
+    # {"at", "kind", "detail"}; nothing here ever deletes an earlier version.
+    stem_revisions: list[dict] = field(default_factory=list)
 
     def validate(self) -> None:
         if not self.number.strip() and not self.stem.strip():
@@ -158,6 +163,14 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+def _append_stem_revision(candidate: QuestionCandidate, *, kind: str, detail: str) -> None:
+    """Append one provenance record; the log is never rewritten or cleared."""
+
+    entry = {"at": _utc_now(), "kind": kind, "detail": detail[:600]}
+    if not candidate.stem_revisions or candidate.stem_revisions[-1] != entry:
+        candidate.stem_revisions.append(entry)
+
+
 class QuestionCandidateStore:
     """Atomic filesystem persistence for per-page candidate lists."""
 
@@ -189,6 +202,45 @@ class QuestionCandidateStore:
             "candidates": [asdict(c) for c in candidates],
         }
         self._write_json(self._page_path(page_id), payload)
+
+    def page_figures(self, page_id: int) -> list[dict]:
+        """Return this page's standalone figure registry (P0-1 cross-page)."""
+
+        payload = self._read_json(self.root / f"figures_page_{page_id}.json")
+        if not isinstance(payload, dict) or not isinstance(payload.get("figures"), list):
+            return []
+        return [
+            {
+                "name": str(figure.get("name", "")).strip(),
+                "description": str(figure.get("description", "")).strip(),
+                "bbox": figure.get("bbox"),
+            }
+            for figure in payload["figures"]
+            if isinstance(figure, dict) and str(figure.get("name", "")).strip()
+        ]
+
+    def save_page_figures(self, page_id: int, figures: list[dict]) -> None:
+        """Persist every standalone figure on this page, keyed by caption name."""
+
+        cleaned: list[dict] = []
+        for figure in figures or []:
+            if not isinstance(figure, dict):
+                continue
+            name = str(figure.get("name", "")).strip()
+            if not name:
+                continue
+            bbox = figure.get("bbox")
+            cleaned.append(
+                {
+                    "name": name,
+                    "description": str(figure.get("description", "")).strip(),
+                    "bbox": bbox if isinstance(bbox, list) and len(bbox) == 4 else None,
+                }
+            )
+        self._write_json(
+            self.root / f"figures_page_{page_id}.json",
+            {"page_id": page_id, "figures": cleaned},
+        )
 
     def mark_status(self, page_id: int, number: str, status: str) -> list[QuestionCandidate]:
         if status not in _CANDIDATE_STATUSES:
@@ -352,6 +404,7 @@ class QuestionCandidateStore:
         new_number: str | None = None,
         stem: str | None = None,
         figure_refs: list[str] | None = None,
+        change_kind: str = "user_edit",
     ) -> list[QuestionCandidate]:
         """Apply a user edit to exactly one page-level candidate node."""
 
@@ -362,13 +415,58 @@ class QuestionCandidateStore:
         if new_number is not None:
             candidate.number = str(new_number).strip()
         if stem is not None:
-            candidate.stem = str(stem).strip()
+            new_stem = str(stem).strip()
+            if new_stem != candidate.stem:
+                _append_stem_revision(
+                    candidate,
+                    kind=change_kind,
+                    detail=f"题干修改：{candidate.stem[:180] or '（空）'} → {new_stem[:180]}",
+                )
+            candidate.stem = new_stem
             if candidate.children:
                 candidate.has_shared_stem = bool(candidate.stem)
         if figure_refs is not None:
             candidate.figure_refs = [
                 str(figure).strip() for figure in figure_refs if str(figure).strip()
             ]
+        candidate.user_edited = True
+        for root in candidates:
+            root.validate()
+        self.save_page_candidates(page_id, candidates)
+        return candidates
+
+    def apply_recognition_result(
+        self,
+        page_id: int,
+        node_path: str,
+        text: str,
+        *,
+        region_role: str,
+        candidates_readings: list[str] | None = None,
+    ) -> list[QuestionCandidate]:
+        """Accept one re-recognition reading as the candidate stem (P0-2/P1-5).
+
+        The first recognition and every later accepted reading stay in the
+        append-only ``stem_revisions`` log, so a later explanation can always
+        trace back what was recognized and what the user confirmed.
+        """
+
+        new_stem = str(text).strip()
+        if not new_stem:
+            raise QuestionCandidateError("选中的识别结果为空，未替换。")
+        candidates = self.page_candidates(page_id)
+        if candidates is None:
+            raise QuestionCandidateError("这一页还没有题目候选记录。")
+        candidate = _node_at_path(candidates, node_path)
+        detail = f"区域重识别（{region_role}）被采纳：{new_stem[:180]}"
+        if candidates_readings:
+            detail += "；候选读法：" + " ｜ ".join(r[:120] for r in candidates_readings[:3])
+        _append_stem_revision(
+            candidate,
+            kind="region_re_recognition",
+            detail=f"替换前题干：{candidate.stem[:180] or '（空）'}；{detail}",
+        )
+        candidate.stem = new_stem
         candidate.user_edited = True
         for root in candidates:
             root.validate()
@@ -510,6 +608,9 @@ def _candidate_from_dict(item: dict, *, legacy: bool = False) -> QuestionCandida
         recognition_source=str(item.get("recognition_source", "")),
         visual_regions=normalize_regions(item.get("visual_regions", [])),
         image_recognized_stem=str(item.get("image_recognized_stem", "")),
+        stem_revisions=[
+            dict(entry) for entry in item.get("stem_revisions", []) if isinstance(entry, dict)
+        ],
     )
     candidate.validate()
     return candidate
@@ -758,6 +859,8 @@ def build_extraction_prompt(
         + MATH_NOTATION_RULES
         + CHOICE_LAYOUT_RULES
         + QUESTION_GRANULARITY_RULES
+        + FIGURE_BINDING_RULES
+        + CONTINUATION_RULES
         + "【图像题及图像选项：一次读图同时定位】\n"
         "数轴、几何图、坐标图、统计图、流程图、电路图、地图等不能用文字描述替代原图。"
         "在本次读图请求内同时输出题干/选项文字与各图的边界框，程序从原页裁切原始像素。"
@@ -951,8 +1054,16 @@ def parse_candidates_payload(raw: str) -> list[QuestionCandidate]:
                 visual_dependency = "uncertain"
         regions = normalize_regions(item.get("visual_regions", []))
         # Model output may propose geometry, never its own source path/hash.
+        # Editorial residue (「注：…需调整…」) never reaches the user.
+        from src.cross_page_linkage import sanitize_region_description
+
         regions = [
-            {k: v for k, v in region.items() if k not in ("page_id", "image_sha256")}
+            {
+                **{k: v for k, v in region.items() if k not in ("page_id", "image_sha256")},
+                "description": sanitize_region_description(
+                    str(region.get("description", ""))
+                ),
+            }
             for region in regions
         ]
         shared_figures = inherited_figures or any(

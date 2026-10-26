@@ -1,6 +1,31 @@
 /* Optional, user-started dictation. No backend, credentials, or automatic submission. */
 (() => {
   "use strict";
+  // components.html runs this script inside a srcdoc iframe; the widgets it
+  // must attach to live in the PARENT document. Escalate once into the host
+  // app and let that copy scan it (same pattern as review shortcuts).
+  try {
+    if (window.parent && window.parent !== window) {
+      const host = window.parent;
+      const source = document.currentScript ? document.currentScript.textContent : "";
+      if (!host.__nectivonVoiceEscalated && source) {
+        host.__nectivonVoiceEscalated = true;
+        // The mic buttons live on the PARENT document's widgets, so the
+        // stylesheet must travel there too; without it the buttons render
+        // unstyled (oversized, misaligned) in the host page.
+        const style = document.querySelector("style");
+        const target = host.document;
+        if (style && !target.querySelector("style[data-nectivon-voice]")) {
+          const clone = target.createElement("style");
+          clone.setAttribute("data-nectivon-voice", "css");
+          clone.textContent = style.textContent;
+          target.head.appendChild(clone);
+        }
+        host.eval(source); /* eslint-disable-line no-eval -- trusted shipped asset */
+      }
+      return;
+    }
+  } catch { /* Cross-origin parent: stay in the iframe (no-op). */ }
   const win = window;
   if (win.__nectivonVoiceInput) {
     win.__nectivonVoiceInput.scan();
@@ -41,6 +66,10 @@
 
   function editable(field) {
     if (field.type === "password") sensitiveFields.add(field);
+    // Streamlit's react-aria select/multiselect render as <input type="text">
+    // with combobox roles; they are pickers, not free-text fields.
+    if (field.getAttribute("role") === "combobox" ||
+        field.getAttribute("aria-haspopup")) return false;
     return !sensitiveFields.has(field) && !field.disabled && !field.readOnly &&
       !field.closest('[inert]') &&
       (field.tagName === "TEXTAREA" || ["text", "search", "email", "url", "tel"]
@@ -258,7 +287,11 @@
   function schedule() {
     if (!pending) {
       pending = true;
+      // requestAnimationFrame never fires in some embedded webviews
+      // (throttled background panes); the short timer keeps attachment
+      // working there. scan() is idempotent, the duplicate pass is harmless.
       win.requestAnimationFrame(scan);
+      win.setTimeout(scan, 350);
     }
   }
 

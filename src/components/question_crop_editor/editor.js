@@ -5,7 +5,7 @@
   const color=index=>args.colors?.[index]||`hsl(${Math.round(index*137.508)%360} 80% 35%)`;
   const current=()=>regions.find(r=>r.id===selected),size=()=>[image.naturalWidth,image.naturalHeight];
   const status=text=>{el('status').textContent=text;};
-  const changed=()=>{dirty=true;el('save').disabled=false;status('调整尚未保存。点击“保存截图方框”后同步。');};
+  const changed=()=>{dirty=true;el('save').disabled=false;status(`调整尚未保存。点击“${args.save_label||'保存截图方框'}”后同步。`);};
   function controls() {
     el('figure').replaceChildren(...regions.map((r,i)=>{const o=document.createElement('option');o.value=r.id;o.textContent=`图 ${i+1}${r.role==='option'?' · 选项 '+r.option_label:''}`;o.style.color=color(i);return o;}));
     el('figure').value=selected||'';const r=current();el('remove').disabled=!r;
@@ -59,8 +59,9 @@
   };
   canvas.onpointercancel=()=>{if(drag?.id){regions.find(r=>r.id===drag.id).bounds=drag.bounds;}drag=null;redraw();};
   el('save').onclick=()=>{if(!ready||!dirty)return;post({type:'streamlit:setComponentValue',dataType:'json',value:{request_id:Date.now()+'-'+Math.random().toString(36).slice(2),source_hash:args.source_hash,scope:args.scope,revision:args.revision,regions}});status('正在保存…');};
+  el('cancel').onclick=()=>post({type:'streamlit:setComponentValue',dataType:'json',value:{action:'cancel',request_id:Date.now()+'-'+Math.random().toString(36).slice(2)}});
   window.addEventListener('message',e=>{
-    if(e.data?.type!=='streamlit:render')return;args=e.data.args||{};applyRoles();const next=[args.source_hash,args.scope,args.revision].join(':');if(signature===next){zoom();return;}signature=next;ready=false;dirty=false;el('save').disabled=true;
+    if(e.data?.type!=='streamlit:render')return;args=e.data.args||{};el('save').textContent=args.save_label||'保存截图方框';el('cancel').hidden=!args.allow_cancel;applyRoles();const next=[args.source_hash,args.scope,args.revision].join(':');if(signature===next){zoom();return;}signature=next;ready=false;dirty=false;el('save').disabled=true;
     image.onload=()=>{regions=structuredClone(args.regions||[]);initial=structuredClone(regions);selected=regions[0]?.id;canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;autoFit=true;fit();ready=true;controls();setMode(regions.length?'adjust':'add');zoom();status('当前只标示本题的截图范围。原始扫描图保持原样。');};
     image.onerror=()=>{signature='';status('原图加载失败，请重新打开工具。');};image.src=args.original;
   });

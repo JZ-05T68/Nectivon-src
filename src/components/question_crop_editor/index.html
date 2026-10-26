@@ -5,6 +5,7 @@ body{margin:0;font:14px "Microsoft YaHei",sans-serif;color:#243d35}button,select
 </style></head><body>
 <div class="tools"><button id="adjust" class="active">移动／调整方框</button><button id="add">添加截图方框</button><select id="figure" aria-label="选择截图方框"></select><button id="remove">删除选中方框</button><button id="minus" aria-label="缩小原图">−</button><span id="zoom"></span><button id="plus" aria-label="放大原图">＋</button><button id="fit">适应宽度</button></div>
 <div class="tools"><label id="roleLabel">用途 <select id="role" aria-label="截图用途"><option value="stem">题干图</option><option value="shared">公共图</option><option value="option">选项图</option><option value="question">本题整体截图</option><option value="answer">我的作答截图</option></select></label><label id="optionLabel" hidden>选项 <input id="option" aria-label="截图选项编号" maxlength="1" value="A"></label><input id="description" aria-label="截图说明" placeholder="图片说明（可选）" maxlength="240"><button id="reset">撤销未保存调整</button><button id="save" disabled>保存截图方框</button></div>
+<div class="tools"><button id="cancel" hidden>不保存</button></div>
 <p class="hint">点击方框可选中；拖动框内可移动，拖动边角可调整。添加时在大图上拖出范围；方框的编号和颜色对应本题各张图片。</p>
 <div id="view"><canvas id="canvas" aria-label="原始扫描图截图方框画布"></canvas></div><div id="status" role="status">正在加载原图…</div>
 <script src="crop_geometry.js"></script><script src="editor.js"></script></body></html>

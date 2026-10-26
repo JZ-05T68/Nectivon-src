@@ -35,7 +35,7 @@ def normalize_region(value: object) -> dict | None:
                     and all(c in "0123456789abcdef" for c in item)
                     for item in (scope, identifier))
     # Human bounds are validated in original pixels by the per-question store.
-    if not committed and (x2 - x1 < 3 or y2 - y1 < 3):
+    if not committed and not value.get("manual_bounds") and (x2 - x1 < 3 or y2 - y1 < 3):
         return None
     label = str(value.get("option_label", "")).strip()
     if role == "option" and (len(label) != 1 or label not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"):
@@ -51,6 +51,26 @@ def normalize_region(value: object) -> dict | None:
             and 0 <= clip[0] <= x1 < x2 <= clip[2] <= 1000
             and 0 <= clip[1] <= y1 < y2 <= clip[3] <= 1000):
         result["clip_bbox"] = [float(v) for v in clip]
+    # Sibling clip (P0-2/P1-3): midline between this figure and the nearest
+    # NEIGHBOURING figure on the same page — a hard horizontal stop, unlike
+    # the soft question-box clip above.
+    sibling = value.get("sibling_clip")
+    if (isinstance(sibling, list) and len(sibling) == 4
+            and all(type(v) in (int, float) and math.isfinite(v) for v in sibling)
+            and 0 <= sibling[0] <= x1 < x2 <= sibling[2] <= 1000):
+        result["sibling_clip"] = [float(v) for v in sibling]
+    # Cross-page/global figure link (round-2 issue 2): the figure physically
+    # lives on another photo; crop must use that page's image.
+    for field in ("source_page_id", "source_document_id"):
+        if field in value:
+            identifier = value[field]
+            # Keep an explicit invalid source invalid, rather than dropping
+            # the key and accidentally turning it into a local-page figure.
+            result[field] = identifier if type(identifier) is int and identifier > 0 else 0
+    if "source_document_id" in result and "source_page_id" not in result:
+        result["source_page_id"] = 0
+    if isinstance(value.get("source_label"), str) and value["source_label"].strip():
+        result["source_label"] = value["source_label"].strip()[:120]
     # Provenance is assigned by the caller after recognition, not by the model.
     if type(value.get("page_id")) is int:
         result["page_id"] = value["page_id"]
@@ -63,6 +83,12 @@ def normalize_region(value: object) -> dict | None:
         bounds = value.get("crop_bounds")
         if isinstance(bounds, list) and len(bounds) == 4 and all(type(v) is int for v in bounds):
             result["crop_bounds"] = bounds.copy()
+    manual = value.get("manual_bounds")
+    if (isinstance(manual, list) and len(manual) == 4
+            and all(type(v) is int for v in manual)
+            and 0 <= manual[0] < manual[2] and 0 <= manual[1] < manual[3]
+            and result.get("image_sha256")):
+        result["manual_bounds"] = manual.copy()
     return result
 
 
@@ -78,7 +104,8 @@ def normalize_regions(values: object) -> list[dict]:
         if region is None:
             continue
         key = (region["role"], tuple(region["bbox"]), region["option_label"],
-               region.get("page_id"), region.get("image_sha256"), region.get("region_id"))
+               region.get("page_id"), region.get("image_sha256"), region.get("region_id"),
+               region.get("source_page_id"), region.get("source_document_id"))
         if key not in seen:
             seen.add(key)
             result.append(region)
@@ -93,6 +120,7 @@ def normalize_regions(values: object) -> list[dict]:
         clip = list(option.get("clip_bbox", [0., 0., 1000., 1000.]))
         for other in options:
             if (other is option or other.get("page_id") != option.get("page_id")
+                    or other.get("source_page_id") != option.get("source_page_id")
                     or other.get("image_sha256") != option.get("image_sha256")):
                 continue
             a1, b1, a2, b2 = other["bbox"]
@@ -111,6 +139,7 @@ def normalize_regions(values: object) -> list[dict]:
         option["clip_bbox"] = clip
     def includes_option(region: dict, option: dict) -> bool:
         if (region.get("page_id") != option.get("page_id")
+                or region.get("source_page_id") != option.get("source_page_id")
                 or region.get("image_sha256") != option.get("image_sha256")):
             return False
         x1, y1, x2, y2 = region["bbox"]
@@ -146,6 +175,15 @@ def crop_region(
         return None
     path = Path(image_path)
     try:
+        if normalized.get("manual_bounds"):
+            bounds = region_pixel_bounds(path, normalized)
+            if bounds is None:
+                return None
+            with Image.open(path) as image:
+                cropped = image.crop(bounds).convert("RGB")
+            output = io.BytesIO()
+            cropped.save(output, format="PNG")
+            return output.getvalue()
         if normalized.get("crop_scope"):
             from src.question_region_store import QuestionRegionStore
 
@@ -165,6 +203,7 @@ def crop_region(
             tuple(normalized["bbox"]), str(normalized.get("image_sha256", "")),
             normalized["role"],
             tuple(normalized.get("clip_bbox", [])),
+            tuple(normalized.get("sibling_clip", [])),
             str(display.resolve()),
         )
     except (OSError, ValueError):
@@ -174,9 +213,11 @@ def crop_region(
 @lru_cache(maxsize=128)
 def _cached_crop(
     path: str, modified_ns: int, size: int, bbox: tuple[float, ...], digest: str, role: str,
-    clip_bbox: tuple[float, ...], display_path: str,
+    clip_bbox: tuple[float, ...], sibling_clip: tuple[float, ...], display_path: str,
 ) -> bytes | None:
-    bounds = _cached_bounds(path, modified_ns, size, bbox, digest, role, clip_bbox)
+    bounds = _cached_bounds(
+        path, modified_ns, size, bbox, digest, role, clip_bbox, sibling_clip,
+    )
     if bounds is None:
         return None
     with Image.open(path) as source, Image.open(display_path) as display:
@@ -196,11 +237,28 @@ def region_pixel_bounds(image_path: Path | str, region: dict) -> tuple[int, int,
         return None
     path = Path(image_path)
     try:
+        if normalized.get("manual_bounds"):
+            if hashlib.sha256(path.read_bytes()).hexdigest() != normalized["image_sha256"]:
+                return None
+            bounds = normalized["manual_bounds"]
+            with Image.open(path) as image:
+                if bounds[2] > image.width or bounds[3] > image.height:
+                    return None
+            return tuple(bounds)
+        if normalized.get("crop_bounds"):
+            # Existing per-question drawing/crop records already use exact pixels.
+            from src.question_region_store import QuestionRegionStore
+
+            store = QuestionRegionStore(path, scope=normalized["crop_scope"])
+            item = next((r for r in store.state()["regions"]
+                         if r["id"] == normalized["region_id"]), None)
+            return tuple(item["bounds"]) if item else tuple(normalized["crop_bounds"])
         stat = path.stat()
         return _cached_bounds(
             str(path.resolve()), stat.st_mtime_ns, stat.st_size,
             tuple(normalized["bbox"]), str(normalized.get("image_sha256", "")),
             normalized["role"], tuple(normalized.get("clip_bbox", [])),
+            tuple(normalized.get("sibling_clip", [])),
         )
     except (OSError, ValueError):
         return None
@@ -209,12 +267,16 @@ def region_pixel_bounds(image_path: Path | str, region: dict) -> tuple[int, int,
 @lru_cache(maxsize=128)
 def _cached_bounds(
     path: str, modified_ns: int, size: int, bbox: tuple[float, ...], digest: str, role: str,
-    clip_bbox: tuple[float, ...],
+    clip_bbox: tuple[float, ...], sibling_clip: tuple[float, ...] = (),
 ) -> tuple[int, int, int, int] | None:
     source = Path(path).read_bytes()
     if digest and hashlib.sha256(source).hexdigest() != digest:
         return None
-    with Image.open(io.BytesIO(source)) as image:
+    # Estimate geometry on the same white-paper mask as the display. Dark
+    # blue/grey paper must not be mistaken for one connected ink region
+    # that expands a figure all the way to the photographed page frame.
+    analysis = _figure_analysis_mask(source) if role in ("stem", "shared") else source
+    with Image.open(io.BytesIO(analysis)) as image:
         width, height = image.size
         # Small outward padding preserves strokes touching the predicted box.
         left = max(0, math.floor((bbox[0] - 2) * width / 1000))
@@ -235,6 +297,13 @@ def _cached_bounds(
                 image, (left, top, right, bottom), anchor_bounds=proposed_bounds,
                 horizontal_margin=round(width * .35) if isolated_figure else None,
             )
+            if isolated_figure and sibling_clip:
+                # Ink completion may walk into a neighbouring figure sharing
+                # the row band.  The midline to that neighbour (derived from
+                # the model's own page-figure boxes) is a hard horizontal
+                # stop; vertical growth keeps its own bounded margins.
+                left = max(left, math.floor(sibling_clip[0] * width / 1000))
+                right = min(right, math.ceil(sibling_clip[2] * width / 1000))
         if clip_bbox and not isolated_figure:
             # Boundary completion may recover labels, but must not reach the
             # following question even when handwritten strokes connect them.
@@ -243,11 +312,18 @@ def _cached_bounds(
             right = min(right, math.ceil(clip_bbox[2] * width / 1000))
             bottom = min(bottom, math.ceil(clip_bbox[3] * height / 1000))
         if isolated_figure:
+            # Detached device labels (e.g. 1YA beside an actuator) need a
+            # small side gutter even when no connected stroke reaches them.
+            # Sibling limits still prevent swallowing an adjacent diagram.
+            left = max(0, left - round(width * .03))
+            right = min(width, right + round(width * .03))
+            if sibling_clip:
+                left = max(left, math.floor(sibling_clip[0] * width / 1000))
+                right = min(right, math.ceil(sibling_clip[2] * width / 1000))
             # Follow horizontal axes/frames, but bound vertical growth so a
             # student's connecting pen stroke cannot pull in the next row.
-            margin_y = round(height * .02)
-            top = max(top, math.floor(bbox[1] * height / 1000) - margin_y)
-            bottom = min(bottom, math.ceil(bbox[3] * height / 1000) + margin_y)
+            top = max(top, math.floor(bbox[1] * height / 1000) - round(height * .04))
+            bottom = min(bottom, math.ceil(bbox[3] * height / 1000) + round(height * .02))
             if clip_bbox:
                 from src.figure_crop_boundary import has_sparse_bottom_gutter
 
@@ -255,6 +331,15 @@ def _cached_bounds(
                 if has_sparse_bottom_gutter(image, proposed_bounds, clip_bottom):
                     bottom = min(bottom, clip_bottom)
         return (left, top, right, bottom)
+
+
+@lru_cache(maxsize=8)
+def _figure_analysis_mask(source: bytes) -> bytes:
+    """Bound memory while reusing a native-resolution paper mask across figures."""
+
+    from src.figure_scan_service import enhance_figure_scan
+
+    return enhance_figure_scan(source)
 
 
 def _complete_ink_boundary(

@@ -3,7 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-import streamlit as st
+import streamlit.components.v1 as components
 
 _ASSETS = Path(__file__).parent
 
@@ -21,12 +21,18 @@ def _voice_assets(css_mtime: int, js_mtime: int) -> str:
 
 
 def render_voice_input() -> None:
-    """Attach microphone buttons to current and subsequently rendered text fields."""
+    """Attach microphone buttons to current and subsequently rendered text fields.
 
-    st.html(
+    ``components.html`` (not ``st.html``): the dictation script must run and
+    reach the PARENT document's widgets; Streamlit 1.59 ``st.html`` renders
+    the markup but does not execute the script on the main document
+    (round-2 regression found by visual audit).
+    """
+
+    components.html(
         _voice_assets(
             (_ASSETS / "voice_input.css").stat().st_mtime_ns,
             (_ASSETS / "voice_input.js").stat().st_mtime_ns,
         ),
-        unsafe_allow_javascript=True,
+        height=0,
     )

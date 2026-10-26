@@ -43,6 +43,8 @@ from src.training_profile_models import (
     ProfileValidationError,
 )
 
+pytestmark = pytest.mark.usefixtures("reference_catalog")
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 STAGING_8511 = PROJECT_ROOT / "staging-data" / "data" / "database" / "knowledge.db"
 STAGING_8512 = PROJECT_ROOT / "staging-data-8512" / "data" / "database" / "knowledge.db"

@@ -44,6 +44,8 @@ from src.training_profile_models import (
     LearnerProfile,
 )
 
+pytestmark = pytest.mark.usefixtures("reference_catalog")
+
 STAGING_8511 = Path("staging-data/data/database/knowledge.db")
 STAGING_8512 = Path("staging-data-8512/data/database/knowledge.db")
 

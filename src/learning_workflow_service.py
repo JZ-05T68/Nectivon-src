@@ -307,6 +307,7 @@ class QuestionService:
         solution_method: str | None = None,
         status: str | None = None,
         user_edited: bool = True,
+        change_source: str = "user_edit",
     ) -> QuestionItem:
         """Update user-owned fields; explicit None keeps the current value."""
 
@@ -319,6 +320,7 @@ class QuestionService:
             teacher_verdict is None or teacher_verdict in _VERDICTS,
             "教师判定必须是 correct/incorrect/uncertain 或空。",
         )
+        new_stem = existing.stem_text if stem_text is None else stem_text
         with self._database._connection() as connection:
             connection.execute(
                 """
@@ -332,8 +334,8 @@ class QuestionService:
                 """,
                 (
                     existing.subject if subject is None else subject.strip(),
-                    existing.stem_text if stem_text is None else stem_text,
-                    _tokenize_for_fts(existing.stem_text if stem_text is None else stem_text),
+                    new_stem,
+                    _tokenize_for_fts(new_stem),
                     existing.student_answer if student_answer is None else student_answer,
                     existing.teacher_verdict if teacher_verdict is None else teacher_verdict,
                     existing.teacher_comment if teacher_comment is None else teacher_comment,
@@ -348,7 +350,32 @@ class QuestionService:
                     question_id,
                 ),
             )
+            # P1-5: append-only provenance for every real stem change.
+            if new_stem != existing.stem_text:
+                connection.execute(
+                    """
+                    INSERT INTO question_content_revisions
+                        (question_id, field, old_value, new_value, change_source, created_at)
+                    VALUES (?, 'stem_text', ?, ?, ?, ?)
+                    """,
+                    (question_id, existing.stem_text, new_stem, change_source, _utc_now()),
+                )
         return self.get_question_item(question_id)
+
+    def list_content_revisions(self, question_id: int) -> list[dict[str, object]]:
+        """Return the append-only content revision log, oldest first (P1-5)."""
+
+        with self._database._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT field, old_value, new_value, change_source, created_at
+                FROM question_content_revisions
+                WHERE question_id = ?
+                ORDER BY id
+                """,
+                (question_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def save_ai_reference(self, question_id: int, reference: dict) -> QuestionItem:
         """Fill empty reference fields atomically; preserve human content and its provenance."""

@@ -45,6 +45,41 @@ def test_overlapping_figures_share_one_original_crop_and_options_stay_separate()
     assert regions[0]["bbox"] == [100, 200, 400, 300]
 
 
+def _seed_verified_replica(image_path: Path, region: dict) -> None:
+    """Write a verified replica record for exactly the pixels a view will crop.
+
+    Round 4 replaced the scan-cleanup default with replica display; UI tests
+    seed a minimal verified replica so the real display path is exercised
+    without any cloud call.
+    """
+
+    from src.figure_replica_render import render_replica
+    from src.figure_replica_schema import parse_replica_spec
+    from src.figure_replica_service import replica_key, replica_store_root
+
+    data = crop_region(image_path, region)
+    assert data is not None
+    spec = parse_replica_spec({
+        "schema": "nectivon-replica/1", "figure_type": "node_link",
+        "canvas": {"width": 480, "height": 360},
+        "elements": [{"id": "n1", "kind": "box", "x": 240, "y": 180,
+                      "w": 260, "h": 160, "text": "复刻测试图"}],
+        "connections": [], "annotations": [],
+    })
+    svg, png = render_replica(spec, px_width=480)
+    root = replica_store_root(image_path) / replica_key(data)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "spec.json").write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+    (root / "replica.svg").write_bytes(svg)
+    (root / "replica.png").write_bytes(png)
+    (root / "status.json").write_text(json.dumps({
+        "status": "verified", "figure_type": "node_link",
+        "verification": {"verdict": "pass", "missing": [], "extra": [],
+                         "wrong": [], "text_errors": [], "style_notes": []},
+        "render_version": "replica-render-1", "model": "test-seed",
+    }, ensure_ascii=False), encoding="utf-8")
+
+
 def test_visual_grouping_never_merges_regions_from_different_original_pages() -> None:
     regions = [
         {"role": "shared", "bbox": [100, 200, 400, 300], "page_id": page_id}
@@ -148,7 +183,11 @@ def test_crop_uses_original_pixels_and_rejects_changed_source(source_image: Path
                           page_id=1, image_bytes=original)[0]
     data = crop_region(source_image, region)
     with Image.open(io.BytesIO(data)) as crop:
-        assert crop.getpixel((20, 20)) == (255, 0, 0)
+        from src.question_visual_regions import region_pixel_bounds
+
+        with Image.open(source_image) as source:
+            expected = source.crop(region_pixel_bounds(source_image, region)).convert("RGB")
+        assert crop.tobytes() == expected.tobytes()
     assert source_image.read_bytes() == original
     source_image.write_bytes(original + b"changed")
     assert crop_region(source_image, region) is None
@@ -175,10 +214,33 @@ def test_candidate_roundtrip_and_parent_shared_crop(source_image: Path, tmp_path
     assert block["regions"][-1]["role"] == "shared"
 
 
+def test_tinted_paper_does_not_expand_figure_crop_to_the_page_frame(tmp_path: Path) -> None:
+    from PIL import ImageDraw
+
+    from src.question_visual_regions import region_pixel_bounds
+
+    source = tmp_path / "tinted.png"
+    photo = Image.new("RGB", (1000, 1000), (80, 130, 170))
+    pen = ImageDraw.Draw(photo)
+    pen.rectangle((8, 8, 992, 992), outline="black", width=2)
+    pen.rectangle((300, 250, 600, 650), outline="black", width=3)
+    pen.line((300, 450, 600, 450), fill="black", width=2)
+    photo.save(source)
+    before = source.read_bytes()
+    bounds = region_pixel_bounds(source, {"role": "stem", "bbox": [280, 230, 620, 700]})
+    assert bounds is not None
+    left, top, right, bottom = bounds
+    assert 150 < left <= 300 < 600 <= right < 850
+    assert top <= 250 < 650 <= bottom
+    assert source.read_bytes() == before
+
+
 def test_figures_follow_their_option_after_manual_text_edit(
     source_image: Path, monkeypatch,
 ) -> None:
     candidate = parse_candidates_payload(json.dumps(_payload()))[0]
+    for region in candidate.visual_regions:
+        _seed_verified_replica(source_image, region)
     calls: list = []
     monkeypatch.setattr(
         content_ui, "render_question_math_markdown", lambda text: calls.append(text),
@@ -188,17 +250,19 @@ def test_figures_follow_their_option_after_manual_text_edit(
     assert content_ui.render_question_content(
         edited, image_path=source_image, regions=candidate.visual_regions,
     )
-    assert len(calls) == 9
+    # Round 4.1: each option renders its replica AND cleanup views (both
+    # collapsed expanders still render): 1 stem + 4 x (option text + 2 images).
+    assert len(calls) == 13
     assert calls[0] == "人工修订 $x^{2}$。"
-    for i, color in enumerate([(255, 0, 0), (0, 128, 0), (0, 0, 255), (0, 0, 0)]):
-        assert calls[1 + i * 2].startswith("ABCD"[i] + ".")
-        with Image.open(io.BytesIO(calls[2 + i * 2])) as crop:
-            assert crop.getpixel((20, 20)) == color
+    for i in range(4):
+        assert calls[1 + i * 3].startswith("ABCD"[i] + ".")
+        assert isinstance(calls[2 + i * 3], bytes)  # replica render
+        assert isinstance(calls[3 + i * 3], bytes)  # binary cleanup
     calls.clear()
     assert content_ui.render_question_content(
         "人工只修改了题干。", image_path=source_image, regions=candidate.visual_regions,
     )
-    assert len([c for c in calls if isinstance(c, bytes)]) == 4
+    assert len([c for c in calls if isinstance(c, bytes)]) == 8
     assert "D. （见原图）" in calls
 
 
@@ -249,6 +313,8 @@ def test_learning_and_teachback_render_graph_choices(
     candidate.visual_regions = bind_regions(
         candidate.visual_regions, page_id=page.id, image_bytes=source_image.read_bytes(),
     )
+    for region in candidate.visual_regions:
+        _seed_verified_replica(source_image, region)
     service = QuestionService(db)
     service.create_question_item(
         document_id=page.document_id, page_id=page.id, question_number="3", subject="数学",
@@ -321,6 +387,8 @@ def test_local_training_uses_the_same_original_choice_images(
     candidate.visual_regions = bind_regions(
         candidate.visual_regions, page_id=page.id, image_bytes=source_image.read_bytes(),
     )
+    for region in candidate.visual_regions:
+        _seed_verified_replica(source_image, region)
     item = QuestionService(db).create_question_item(
         document_id=page.document_id, page_id=page.id, question_kind="error", question_number="3",
         stem_text=candidate.stem,
@@ -333,7 +401,8 @@ def test_local_training_uses_the_same_original_choice_images(
     q = SimpleNamespace(question_item_id=item.id, page_id=page.id, document_id=page.document_id,
                         question_text=candidate.stem)
     content_ui.render_training_question(q)
-    assert len(images) == 4
+    # replica + cleanup for each of the four options
+    assert len(images) == 8
     images.clear()
     q.document_id = 999
     content_ui.render_training_question(q)
@@ -348,6 +417,7 @@ def test_training_shared_crop_does_not_repeat_full_source_page(
         [{"role": "shared", "bbox": [100, 100, 850, 270]}],
         page_id=page.id, image_bytes=source_image.read_bytes(),
     )
+    _seed_verified_replica(source_image, regions[0])
     item = QuestionService(db).create_question_item(
         document_id=page.document_id, page_id=page.id, question_kind="error",
         question_number="22(1)", stem_text="根据共同图形作答。",
@@ -361,5 +431,5 @@ def test_training_shared_crop_does_not_repeat_full_source_page(
         question_item_id=item.id, page_id=page.id, document_id=page.document_id,
         question_text=item.stem_text,
     ))
-    assert len(images) == 1
-    assert isinstance(images[0], bytes)
+    assert len(images) == 2  # replica + cleanup of the same shared crop
+    assert all(isinstance(item, bytes) for item in images)

@@ -457,6 +457,149 @@ class DocumentService:
                 "图片导入失败；原图片已安全保留，可重试或先转换为 PDF。"
             ) from exc
 
+    def import_images(
+        self,
+        items: list[tuple[bytes | bytearray | memoryview | BinaryIO, str]],
+        *,
+        title: str | None = None,
+    ) -> ImportResult:
+        """Import several photos as ONE multi-page document (P0-1).
+
+        Photographing one exercise set often takes several shots, and one
+        exercise can span two photos.  Importing the batch as a single
+        document lets the existing cross-page group detection and shared
+        material flow link them; importing shot-by-shot cannot.  Each photo
+        becomes one page whose original bytes are stored verbatim, exactly
+        like :meth:`import_image`.  Caller supplies the page order.
+        """
+
+        import io
+
+        if not items:
+            raise DocumentImportError("没有可选择的照片。")
+        if len(items) > 60:
+            raise DocumentImportError("单次合并导入最多 60 张照片，请分批导入。")
+        verified: list[tuple[bytes, str]] = []
+        for file_content, filename in items:
+            safe_filename = self._safe_document_filename(
+                filename, allowed_extensions=set(IMAGE_EXTENSIONS)
+            )
+            content = self._read_upload(file_content)
+            if not content:
+                raise DocumentImportError(f"照片 {safe_filename} 内容为空。")
+            try:
+                from PIL import Image
+
+                with Image.open(io.BytesIO(content)) as probe:
+                    probe.verify()
+            except Exception as exc:  # noqa: BLE001 - honest decode failure
+                raise DocumentImportError(
+                    f"无法读取照片 {safe_filename}；文件可能损坏或不是真实图片。"
+                ) from exc
+            verified.append((content, safe_filename))
+        composite = hashlib.sha256(
+            "".join(hashlib.sha256(content).hexdigest() for content, _ in verified).encode("ascii")
+        ).hexdigest()
+        existing_document = self.database.get_document_by_sha256(composite)
+        if existing_document is not None:
+            existing_pages = tuple(self.database.list_pages(existing_document.id))
+            return ImportResult(
+                document=existing_document,
+                pages=existing_pages,
+                duplicate=True,
+                import_record=None,
+            )
+        document_title = (
+            (title or "").strip()
+            or f"{Path(verified[0][1]).stem} 等 {len(verified)} 张照片"
+        )
+        import_record = self._create_import_record(verified[0][1], document_title, composite)
+        document: Document | None = None
+        try:
+            self.raw_dir.mkdir(parents=True, exist_ok=True)
+            document = self.database.create_document(
+                title=document_title,
+                filename=verified[0][1],
+                source_path=self._choose_original_path(
+                    composite, f"{Path(verified[0][1]).stem}_photos"
+                ),
+                sha256=composite,
+                page_count=0,
+                import_status=ImportStatus.PROCESSING,
+            )
+            from src.page_visual_service import PageVisualDetection, PageVisualService
+
+            page_directory = self.pages_dir / str(document.id)
+            page_directory.mkdir(parents=True, exist_ok=True)
+            pages = []
+            for index, (content, safe_filename) in enumerate(verified, start=1):
+                sha256 = hashlib.sha256(content).hexdigest()
+                # Keep every photo's own original under raw/originals even
+                # though the document-level source points at the batch.
+                self._save_original_document(
+                    self._choose_original_path(sha256, safe_filename), content, sha256
+                )
+                extension = Path(safe_filename).suffix.lower()
+                page_image_path = page_directory / f"page_{index:04d}{extension}"
+                temporary = page_image_path.with_name(
+                    f".{page_image_path.name}.{uuid4().hex[:12]}.tmp"
+                )
+                try:
+                    temporary.write_bytes(content)
+                    if hashlib.sha256(temporary.read_bytes()).hexdigest() != sha256:
+                        raise DocumentImportError("页面图片保存后校验失败。")
+                    os.replace(temporary, page_image_path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+                page = self.database.create_page(
+                    document_id=document.id,
+                    page_number=index,
+                    image_path=page_image_path,
+                    extracted_text="",
+                    status=PageStatus.PENDING,
+                )
+                PageVisualService(self.database).record_detection(
+                    PageVisualDetection(
+                        page_id=page.id,
+                        has_handwriting=None,
+                        has_visual_content=True,
+                        detection_status="checked",
+                        raster_image_count=1,
+                        vector_drawing_count=0,
+                        detail="整页为图片来源；如需读取内容请主动触发视觉读取。",
+                        method="image_source",
+                    )
+                )
+                pages.append(page)
+            update_import = getattr(self.database, "update_document_import", None)
+            if callable(update_import):
+                document = update_import(
+                    document.id,
+                    status=ImportStatus.COMPLETED,
+                    page_count=len(pages),
+                    processed_pages=len(pages),
+                    text_pages=0,
+                    review_pages=len(pages),
+                    error_message="",
+                )
+            completed_record = self._record_result(import_record, document, tuple(pages))
+            return ImportResult(
+                document=document,
+                pages=tuple(pages),
+                import_record=completed_record,
+            )
+        except DocumentImportError:
+            self._record_failure(
+                import_record, document, "多照片合并导入失败", record_context=None,
+            )
+            raise
+        except Exception as exc:
+            LOGGER.exception("多照片合并导入失败：title=%s", document_title)
+            self._record_failure(
+                import_record, document, f"多照片合并导入失败：{exc}", record_context=None,
+            )
+            raise DocumentImportError("多照片合并导入失败；原照片已安全保留，可重试。") from exc
+
     def import_pdf(
         self,
         file_content: bytes | bytearray | memoryview | BinaryIO,

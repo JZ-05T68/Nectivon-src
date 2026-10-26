@@ -225,6 +225,7 @@ def test_join_preserves_original_option_images(review_store, monkeypatch) -> Non
     from PIL import Image
 
     from src.question_visual_regions import bind_regions
+    from tests.replica_seed import seed_verified_replica
 
     database, page, store = review_store
     Image.new("RGB", (800, 1000), "white").save(page.image_path)
@@ -232,13 +233,15 @@ def test_join_preserves_original_option_images(review_store, monkeypatch) -> Non
         {"role": "option", "option_label": label, "bbox": [100, 100 + i * 100, 500, 180 + i * 100]}
         for i, label in enumerate("ABCD")
     ], page_id=page.id, image_bytes=Path(page.image_path).read_bytes())
+    for region in regions:
+        seed_verified_replica(Path(page.image_path), region)
     candidate = QuestionCandidate(
         number="3", stem="选择对应数轴。\n\n" + "\n\n".join(f"{x}. （见原图）" for x in "ABCD"),
         completeness="complete", visual_dependency="required", visual_regions=regions,
     )
     store.save_page_candidates(page.id, [candidate])
     app = _card_app(monkeypatch, page, store)
-    assert len(app.get("image")) == 4
+    assert len(app.get("image")) == 8  # replica + cleanup per option figure
     next(b for b in app.button if b.label == "加入学习整理").click().run()
     assert not app.exception
     question = QuestionService(database).list_questions_for_document(page.document_id)[0]

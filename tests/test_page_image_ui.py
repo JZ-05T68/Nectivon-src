@@ -36,6 +36,11 @@ def test_non_exam_content_blocks_show_math_and_source_image(tmp_path: Path) -> N
     )
     AgentReadingStore(root).save_page_reading(reading)
     assert current_image_reading(page, root) is not None
+    # Round 4: the figure block shows the replica; seed one verified record.
+    # This view forces role="question", which changes the crop boundary path.
+    from tests.replica_seed import seed_verified_replica
+
+    seed_verified_replica(image, {"role": "question", "bbox": [100, 100, 800, 800]})
     app = AppTest.from_string(
         "from pathlib import Path\n"
         "from src.database import Database\n"

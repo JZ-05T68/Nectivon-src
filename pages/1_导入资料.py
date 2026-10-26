@@ -127,6 +127,41 @@ def _import_one_file(
     return result.document.id, bool(result.duplicate)
 
 
+def _import_images_merged(uploads: list) -> dict[str, object]:
+    """Import the selected photos as ONE multi-page document (STEM P0-1).
+
+    Photos are ordered by filename so renaming before import controls the
+    page order.  Reading uses the same per-page agent reader as every other
+    source, and a duplicate batch is never re-read (no surprise paid calls).
+    """
+
+    ordered = sorted(uploads, key=lambda upload: str(upload.name))
+    document_service = application_document_service()
+    progress = st.progress(0.1, text=f"正在保存 {len(ordered)} 张照片……")
+    result = document_service.import_images(
+        [(upload.getvalue(), upload.name) for upload in ordered],
+    )
+    if result.duplicate:
+        progress.progress(1.0, text="这批照片已存在。")
+        return {
+            "document_id": result.document.id,
+            "pages": len(result.pages),
+            "duplicate": True,
+            "fully_read": True,
+            "message": "",
+        }
+    progress.progress(0.3, text="照片已保存，正在读取内容……")
+    fully_read, message = _read_one_document(result.document.id, len(ordered))
+    progress.progress(1.0, text="照片导入完成。")
+    return {
+        "document_id": result.document.id,
+        "pages": len(result.pages),
+        "duplicate": False,
+        "fully_read": fully_read,
+        "message": message,
+    }
+
+
 def _process_queue_entries(
     entries: list[ImportQueueEntry], uploads_by_name: dict[str, object]
 ) -> None:
@@ -188,6 +223,7 @@ def _enqueue_and_process(uploads: list) -> list[ImportQueueEntry]:
     second image backend).
     """
 
+    queue = _queue_service()
     uploads_by_name = {upload.name: upload for upload in uploads}
     open_batch_id = queue.latest_open_batch_id()
     reusable: list[ImportQueueEntry] = []
@@ -259,21 +295,59 @@ if image_uploads:
         f"已选择 {len(image_uploads)} 张图片："
         + "、".join(u.name for u in image_uploads)
     )
+    image_merge = st.toggle(
+        "合并为一份资料（推荐）",
+        value=True,
+        key="image_merge_toggle",
+        help=(
+            "同一套习题/同一页拍的多张照片合并成一份多页资料："
+            "跨照片的题目才能在识别后关联为题组。按文件名排序作为页序；"
+            "需要调整顺序请在导入前重命名照片。"
+        ),
+    )
     image_confirmed = st.checkbox(
         "确认使用这些图片（选错请重新选择）", key="image_confirm"
     )
     if image_confirmed and st.button(
         "导入这些图片", key="import_images", type="primary"
     ):
-        try:
-            batch_entries = _enqueue_and_process(image_uploads)
-        except Exception as exc:  # noqa: BLE001 - queue failures surface honestly
-            LOGGER.exception("图片导入队列处理失败")
-            st.error(f"图片导入队列处理失败：{exc}")
+        if image_merge and len(image_uploads) > 1:
+            try:
+                merged = _import_images_merged(image_uploads)
+            except Exception as exc:  # noqa: BLE001 - import failures surface honestly
+                LOGGER.exception("多照片合并导入失败")
+                st.error(f"多照片合并导入失败：{exc}")
+            else:
+                st.session_state[_RUN_ID_KEY] = new_run_id()
+                if merged["duplicate"]:
+                    st.info("这批照片此前已合并导入过，不会重复保存或重复调用 AI。")
+                elif merged["document_id"] is not None:
+                    if merged["fully_read"]:
+                        st.success(
+                            f"已合并导入 {merged['pages']} 张照片为一份资料，并完成内容读取。"
+                        )
+                    else:
+                        st.warning(
+                            f"已合并导入 {merged['pages']} 张照片；内容读取未全部完成"
+                            f"（{merged['message'] or '部分照片读取失败'}）。"
+                            "可到「查看识别结果」重试读取。"
+                        )
+                    if st.button(
+                        "下一步：去待核对题目 →",
+                        key=f"go_review_merged_{merged['document_id']}",
+                        type="primary",
+                    ):
+                        st.switch_page("pages/5_待整理页面.py")
         else:
-            st.session_state[_RUN_ID_KEY] = new_run_id()
-            complete = sum(1 for e in batch_entries if e.status == "complete")
-            st.success(f"图片处理完成：{complete} / {len(batch_entries)} 份成功。")
+            try:
+                batch_entries = _enqueue_and_process(image_uploads)
+            except Exception as exc:  # noqa: BLE001 - queue failures surface honestly
+                LOGGER.exception("图片导入队列处理失败")
+                st.error(f"图片导入队列处理失败：{exc}")
+            else:
+                st.session_state[_RUN_ID_KEY] = new_run_id()
+                complete = sum(1 for e in batch_entries if e.status == "complete")
+                st.success(f"图片处理完成：{complete} / {len(batch_entries)} 份成功。")
 
 # ---- durable queue state: recovered before anything renders (V086-301) ----
 try:

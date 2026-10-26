@@ -15,15 +15,48 @@ docstring); ``tests/test_test_environment_isolation.py`` locks this contract.
 
 from __future__ import annotations
 
+import json
 import os
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
 import src.runtime as runtime
+from src import training_profile_data
 from src.config import Settings
 
 #: Environment namespaces that carry developer credentials or runtime intent.
 _SENSITIVE_ENV_PREFIXES: tuple[str, ...] = ("EKB_", "DASHSCOPE_")
+
+
+@pytest.fixture
+def reference_catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Opt in to small catalog fixtures without redistributing local datasets."""
+
+    schools = [
+        "北京邮电大学", "南京邮电大学", "重庆邮电大学", "西安邮电大学",
+        "北京大学", "清华大学", "复旦大学", "东南大学",
+    ]
+    majors = ["软件工程", "计算机科学与技术", "哲学", "机器人工程", "自动化", "物理学"]
+    for filename, entries in (("schools.json", schools), ("undergraduate_majors.json", majors)):
+        (tmp_path / filename).write_text(
+            json.dumps(entries, ensure_ascii=False), encoding="utf-8",
+        )
+    loaders = (
+        training_profile_data.load_official_schools,
+        training_profile_data.get_official_school_names_set,
+        training_profile_data.load_undergraduate_majors,
+        training_profile_data.get_undergraduate_majors_set,
+    )
+    monkeypatch.setattr(training_profile_data, "_DATA_DIR", tmp_path)
+    for loader in loaders:
+        loader.cache_clear()
+    try:
+        yield
+    finally:
+        for loader in loaders:
+            loader.cache_clear()
 
 
 @pytest.fixture(autouse=True)

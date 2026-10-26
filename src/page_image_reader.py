@@ -121,6 +121,8 @@ def build_page_image_prompt(page: Page, total_pages: int, image: CoordinateImage
 
     from src.question_recognition_rules import (
         CHOICE_LAYOUT_RULES,
+        CONTINUATION_RULES,
+        FIGURE_BINDING_RULES,
         MATH_NOTATION_RULES,
         QUESTION_GRANULARITY_RULES,
     )
@@ -137,6 +139,8 @@ def build_page_image_prompt(page: Page, total_pages: int, image: CoordinateImage
         + MATH_NOTATION_RULES
         + CHOICE_LAYOUT_RULES
         + QUESTION_GRANULARITY_RULES
+        + FIGURE_BINDING_RULES
+        + CONTINUATION_RULES
         + "父题 stem 固定为空字符串，真正共同条件只放 shared_stem；"
         "无共同条件时 has_shared_stem=false、shared_stem=空字符串。"
         "小问题号用完整父题号，例如 7(1)。每页所有印刷题目都必须收录。\n"
@@ -152,7 +156,8 @@ def build_page_image_prompt(page: Page, total_pages: int, image: CoordinateImage
         "visual_regions 的框尽量只含该图，包含完整箭头、刻度、顶点字母和边框。\n"
         "仅返回一个闭合 JSON 对象，字段如下。空数组用 []，不要输出示例占位符或伪 JSON。\n"
         'coordinate_space: "pixels"；page_text: 完整转录；summary: 简短摘要；'
-        "keywords: 字符串数组；key_facts: 字符串数组；blocks: 内容块数组；candidates: 题目数组。\n"
+        "keywords: 字符串数组；key_facts: 字符串数组；blocks: 内容块数组；"
+        "candidates: 题目数组；page_figures: 本页独立图表登记数组。\n"
         "blocks 每项为 {kind: text/figure/table, text: 原文, bbox: 四个像素数字}。"
         "非试卷按段落和图表切 blocks，candidates=[]；试卷 blocks 分段，不重复整页正文。\n"
         "candidates 每项为 {number: 字符串, stem: LaTeX题干, completeness: complete/incomplete, "
@@ -167,9 +172,13 @@ def build_page_image_prompt(page: Page, total_pages: int, image: CoordinateImage
         "选择题完整输出 A/B/C/D 四个对象，绝不能是单个数字或答案。非选择题 options=[]。\n"
         'visual_regions 每项为 {"role":"stem","bbox":[100,200,300,400],"option_label":"",'
         '"description":"图像名称"}；以上数字仅示例，必须按实际图中标尺定位。\n'
+        "page_figures 每项为 {name: 图名原文（如 图 6-8）, description: 图注全文, "
+        "bbox: 四个像素数字}；本页每个独立插图/表格（含整页只有图没有题的情况）"
+        "都必须登记。\n"
         r"填空长横线只写 ____，最多4个下划线；集合空白用 \ldots，不逐字符展开横线。"
         "JSON 中 LaTeX 反斜杠双写。输出前在这次请求内逐题核对：题号、小问、数学上下标、"
-        "分母、正负号、全部选项、每张图的位置均与原图一致，闭合所有 JSON 引号和括号。" + correction
+        "分母、正负号、全部选项、每张图的位置（含图注归属与图框四边）均与原图一致，"
+        "页首延续行没有被丢弃，闭合所有 JSON 引号和括号。" + correction
     )
 
 
@@ -298,8 +307,34 @@ class PageImageReader:
             source_document_id=document.id,
             candidates=merged,
         )
+        page_figures = _page_figure_registry(payload)
+        from src.cross_page_linkage import clip_regions_to_siblings
+
+        text_blocks = [
+            block for block in payload.get("blocks", [])
+            if isinstance(block, dict) and block.get("kind") == "text"
+        ]
+        clip_regions_to_siblings(merged, page_figures, text_blocks)
         self.candidates.save_page_candidates(page.id, merged)
         QuestionService(self.database).sync_visual_regions_from_candidates(page.id, merged)
+        from src.cross_page_linkage import (
+            link_document_figures,
+            merge_cross_page_continuations,
+        )
+
+        self.candidates.save_page_figures(page.id, page_figures)
+        from src.figure_index_service import update_page_figures
+
+        update_page_figures(
+            self.candidates.root,
+            document_id=document.id,
+            page_id=page.id,
+            page_number=page.page_number,
+            document_title=getattr(document, "title", ""),
+            figures=page_figures,
+        )
+        merge_cross_page_continuations(self.candidates, self.database, page.id)
+        link_document_figures(self.candidates, self.database, document.id)
         from src.page_image_text import agent_image_text
 
         reading = PageReading(
@@ -378,9 +413,27 @@ class PageImageReader:
                 f"失败页码：{'、'.join(map(str, failed))}。成功结果已保存，可重试失败页。"
                 + "\n" + "\n".join(failure_messages)
             )
+        self._relink_all_documents()
         return DocumentReadingReport(
             document_id, len(pages), newly_read, reused, self.provider.default_model, state
         )
+
+    def _relink_all_documents(self) -> None:
+        """Re-run figure linking after a batch read (round-2 issue 2).
+
+        Pages read earlier could not know about figures registered later
+        (or by other import batches); one global re-link pass after reading
+        attaches every referenced figure to its question across documents.
+        Idempotent — already-linked candidates are skipped.
+        """
+
+        from src.cross_page_linkage import link_document_figures
+
+        for document in self.database.list_documents():
+            try:
+                link_document_figures(self.candidates, self.database, int(document.id))
+            except Exception:  # noqa: BLE001 - linking must never fail a read
+                LOGGER.exception("全局图形关联重跑失败：document=%s", document.id)
 
     def _save_state(
         self,
@@ -464,6 +517,33 @@ def _content_blocks(value: object, page_id: int, original: bytes) -> list[dict]:
             }
         )
     return blocks
+
+
+def _page_figure_registry(payload: dict) -> list[dict]:
+    """Extract the model's per-page figure registry (P0-1 cross-page)."""
+
+    from src.cross_page_linkage import sanitize_region_description
+
+    figures = payload.get("page_figures")
+    if not isinstance(figures, list):
+        return []
+    registry: list[dict] = []
+    for figure in figures:
+        if not isinstance(figure, dict):
+            continue
+        name = str(figure.get("name", "")).strip()
+        if not name:
+            continue
+        registry.append(
+            {
+                "name": name,
+                "description": sanitize_region_description(
+                    str(figure.get("description", ""))
+                ),
+                "bbox": figure.get("bbox"),
+            }
+        )
+    return registry
 
 
 def _bound_figures_to_questions(items: object) -> None:

@@ -41,6 +41,8 @@ from src.training_profile_ui import (
     _handle_browser_location_result,
 )
 
+pytestmark = pytest.mark.usefixtures("reference_catalog")
+
 
 @pytest.fixture
 def temp_service(tmp_path: Path) -> TrainingProfileService:

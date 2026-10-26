@@ -261,6 +261,21 @@ library_tab, family_tab, mastery_tab, trigger_tab, boundary_tab, output_tab, pro
 
 with profile_tab:
     render_training_profile_page(application_training_profile_service())
+    st.divider()
+    from src.learning_goal_ui import render_learning_goal_manager
+
+    render_learning_goal_manager(
+        database.database_path,
+        sorted(
+            {
+                question.subject.strip()
+                for question in question_service.list_question_items(
+                    include_first_layer_only=False
+                )
+                if question.subject.strip()
+            }
+        ),
+    )
 
 
 def _wing_field_label(wing_kind: str, field: str) -> str:
@@ -527,8 +542,12 @@ def _question_visual_source(question) -> tuple[Path | None, list[dict]]:
         LOGGER.exception("读取题目原图失败")
         return None, []
     path = Path(page.image_path) if page is not None else None
-    regions = [r for r in normalize_regions(material.get("regions", []))
-               if r.get("page_id", question.page_id) == question.page_id]
+    regions = [
+        r for r in normalize_regions(material.get("regions", []))
+        # Cross-page/global figures carry their own source page; keep them.
+        if r.get("source_page_id") is not None
+        or r.get("page_id", question.page_id) == question.page_id
+    ]
     from src.question_content_ui import question_regions
 
     regions = question_regions(path, question.question_number, regions, page_id=question.page_id)
@@ -559,6 +578,10 @@ def _render_saved_question_content(question) -> bool:
         question.stem_text if not math_notation else display_field(question, "stem_text"),
         image_path=path, regions=regions, math_notation=math_notation,
     ) or shown
+
+
+
+
 
 
 def _render_visual_material_section(
@@ -606,7 +629,17 @@ def _render_visual_material_section(
     render_question_crop_editor(
         image_path, page_id=page.id, number=question.question_number, regions=regions,
         key=f"learning_crop_{key_prefix}",
+        title="✏️ 修改图片（在原图上调整或重新框选，保存后自动重新识别）",
+        open_label="打开原图框选",
     )
+    reading = material.get("figure_reading", {}).get("reading", {})
+    if reading:
+        with st.expander("图片区域识别记录"):
+            render_question_math_markdown(str(reading.get("description", "")))
+            for label in reading.get("labels", []):
+                render_question_math_markdown(str(label))
+            for warning in reading.get("warnings", []):
+                st.warning(str(warning))
     if st.button(
         "定位原页",
         key=f"vm_locate_{key_prefix}",
@@ -918,15 +951,69 @@ def _render_question_card(question) -> None:
     if isinstance(reference, dict):
         st.caption("订正、解析、题型和方法已提供 AI 参考版，可在下方修改后保存。")
 
-    with st.form("question_edit_form", clear_on_submit=False):
-        if question.shared_context.strip():
-            st.caption(
-                "这道叶子小问已关联父题共享上下文；修改题干不会覆盖父题。"
-            )
-        st.markdown("**① 题干**")
-        stem_text = st.text_area(
-            "题干", value=question.stem_text, height=120, key=f"edit_stem_{key_prefix}"
+    # ① 题干 lives OUTSIDE the form so the math tools (buttons + instant
+    # preview + region pickers) can rerun without submitting the whole form.
+    if question.shared_context.strip():
+        st.caption("这道叶子小问已关联父题共享上下文；修改题干不会覆盖父题。")
+    st.markdown("**① 题干**")
+    stem_widget_key = f"edit_stem_{key_prefix}"
+    from src.math_input_ui import (
+        PENDING_SUFFIX,
+        apply_pending_text,
+        render_math_find_replace,
+        render_math_snippet_editor,
+        render_stem_live_preview,
+    )
+
+    apply_pending_text(stem_widget_key, question.stem_text)
+    if stem_widget_key not in st.session_state:
+        st.session_state[stem_widget_key] = question.stem_text
+    stem_text = st.text_area(
+        "题干", height=120, key=stem_widget_key
+    )
+    render_stem_live_preview(stem_text)
+    math_snippet = render_math_snippet_editor(f"qmath_{key_prefix}")
+    if math_snippet:
+        base = str(st.session_state.get(stem_widget_key, stem_text) or "")
+        st.session_state[f"{stem_widget_key}{PENDING_SUFFIX}"] = (
+            base + ("\n" if base.strip() else "") + math_snippet
         )
+        st.rerun()
+    render_math_find_replace(
+        f"qmath_{key_prefix}", apply_to=stem_text, widget_key=stem_widget_key
+    )
+    if st.button("保存题干修改", key=f"save_stem_{key_prefix}", type="primary"):
+        try:
+            question_service.update_question_item(
+                question.id, stem_text=stem_text, change_source="user_edit"
+            )
+        except Exception as exc:  # noqa: BLE001 - user-facing failure surface
+            LOGGER.exception("题干保存失败：question_id=%s", question.id)
+            st.error(f"题干保存失败：{exc}")
+        else:
+            schedule_math_formatting(database.database_path, question.id, _ai_service())
+            st.toast("题干已保存（已记入修订历史）。")
+            st.rerun()
+    try:
+        stem_revisions = question_service.list_content_revisions(question.id)
+    except Exception:  # noqa: BLE001 - history must never block editing
+        LOGGER.exception("读取题目修订历史失败：question_id=%s", question.id)
+        stem_revisions = []
+    if stem_revisions:
+        with st.expander(f"订正记录（{len(stem_revisions)} 条，保留全部历史）"):
+            for revision in reversed(stem_revisions):
+                source_label = {
+                    "user_edit": "人工修改",
+                    "region_re_recognition": "区域重识别采纳",
+                    "region_re_recognition_append": "区域重识别追加",
+                }.get(str(revision.get("change_source")), str(revision.get("change_source")))
+                st.caption(
+                    f"{revision.get('created_at', '')} · {source_label} · "
+                    f"原：{str(revision.get('old_value', ''))[:80] or '（空）'} → "
+                    f"新：{str(revision.get('new_value', ''))[:80]}"
+                )
+
+    with st.form("question_edit_form", clear_on_submit=False):
         st.markdown("**② 我的作答**")
         student_answer = st.text_area(
             "你的作答",
@@ -2325,9 +2412,7 @@ def _render_teachback_section() -> None:
             render_region_images(source_path, [r for r in regions if r["role"] == "shared"])
         cropped = _render_saved_question_content(teachback_question)
         if not cropped:
-            source_path, _ = _question_visual_source(teachback_question)
-            if source_path is not None and source_path.is_file():
-                st.image(str(source_path), width=650, caption="本题来源原页")
+            st.caption("题图范围尚待核对，可在第一层点击「修改图片」查看来源照片。")
         st.caption("提交讲解前不会显示参考讲解；来源和原页请到第一层核对。")
         peer_column, ai_column = st.columns([1, 2], gap="large")
         with peer_column:

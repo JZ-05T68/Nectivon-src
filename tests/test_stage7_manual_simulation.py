@@ -36,6 +36,8 @@ from src.training_profile_service import TrainingProfileService
 from src.training_session_models import ErrorType
 from src.training_session_service import TrainingSessionService
 
+pytestmark = pytest.mark.usefixtures("reference_catalog")
+
 
 @pytest.fixture
 def stage7_db() -> Database:
