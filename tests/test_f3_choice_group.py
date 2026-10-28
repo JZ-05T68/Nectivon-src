@@ -422,3 +422,64 @@ def test_display_unique_stem_quality_gate() -> None:
     has_option_marker = bool(_re.search(r"[ABCD][.．、]", residual))
     assert residual != noisy_stem  # blocks were removed
     assert has_option_marker or len(residual) > 0  # documented behaviour
+
+
+def test_whole_exam_candidates_keep_their_passage_on_join(
+    database: Database, tmp_path: Path, monkeypatch
+) -> None:
+    """Phase-3: exam-published candidates must not be group-narrowed.
+
+    Whole-exam candidates carry the shared reading inside the stem and their
+    only layer-1 context link is the per-question question_nodes record; F3
+    narrowing would strip the passage from the card AND from every model
+    call. Per-page split candidates keep the existing narrowing behaviour.
+    """
+
+    from src.learning_entry_ui import _add_candidate
+    from src.learning_workflow_service import QuestionService
+    from src.question_candidate_service import (
+        QuestionCandidate,
+        QuestionCandidateStore,
+    )
+
+    document_id = _seed_document(database, "整卷英语")
+    page_id = _seed_page(database, document_id, 5)
+    page = database.get_page(page_id)
+    assert page is not None
+    store = QuestionCandidateStore(tmp_path / "candidates")
+    english_shared = (
+        "A US Department of Energy report calls for incentives to boost "
+        "coal-fired and nuclear power plants following a stream of closures "
+        "that it said undermined reliable sources of electricity."
+    )
+
+    def exam_candidate(number: str, question: str) -> QuestionCandidate:
+        return QuestionCandidate(
+            number=number,
+            stem=f"{english_shared}\n{number}. {question}\nA. one\nB. two",
+            completeness="complete",
+            recognition_source="review_exam_image_blocks",
+        )
+
+    exam = [exam_candidate("21", "What can be inferred?"),
+            exam_candidate("22", "What is the attitude?")]
+    paged = [
+        QuestionCandidate(number="1", stem=f"{SHARED}\n1. 第一题\nA. 甲\nB. 乙",
+                          completeness="complete", recognition_source="page_image"),
+        QuestionCandidate(number="2", stem=f"{SHARED}\n2. 第二题\nA. 丙\nB. 丁",
+                          completeness="complete", recognition_source="page_image"),
+    ]
+    store.save_page_candidates(page_id, exam + paged)
+    monkeypatch.setattr("src.learning_entry_ui._database", lambda: database)
+    service = QuestionService(database)
+    for candidate in exam + paged:
+        assert _add_candidate(
+            page, candidate, "error", "英语", service, store,
+            generate_reference=False, quiet=True,
+        )
+    stems = {q.question_number: q.stem_text for q in service.list_question_items()}
+    assert english_shared in stems["21"]
+    assert english_shared in stems["22"]
+    # per-page splits keep the F3 narrowing: shared block removed, own stem kept
+    assert "装配式" not in stems["1"]
+    assert "第一题" in stems["1"]

@@ -336,6 +336,76 @@ def _clean_str(value: object) -> str:
     return str(value).strip() if value is not None else ""
 
 
+#: A vocabulary term is a complete English word/phrase: letters, spaces,
+#: hyphens and apostrophes only.  Chinese or noisy fragments are rejected
+#: rather than stored as "English vocabulary" (Phase-4: controversity-style
+#: user typos are normalised in the prompt, not preserved as the term).
+_VOCAB_TERM_OK = re.compile(r"^[A-Za-z][A-Za-z \-']*$")
+_VOCAB_TERM_KEY = re.compile(r"[^a-z]+")
+
+
+def normalize_vocab_term(term: str) -> str:
+    """One canonical key per term variant for cross-question dedup."""
+
+    return _VOCAB_TERM_KEY.sub(" ", str(term or "").lower()).strip()
+
+
+def parse_vocabulary(raw: object, *, max_items: int = 6) -> list[dict]:
+    """Validate model-proposed vocabulary into a small, honest list.
+
+    Each kept item carries term (standard spelling), meaning (current
+    context), snippet (source excerpt), source (article/question/page),
+    reason (why worth keeping, incl. the user's original misspelling when
+    relevant) and evidence (reported = the user said so; recommended = AI
+    proposal).  Invalid items are dropped silently — the four reference
+    fields remain the required contract; vocabulary never fails the call.
+    """
+
+    if not isinstance(raw, list):
+        return []
+    items: list[dict] = []
+    seen: set[str] = set()
+    for entry in raw[: max_items * 3]:
+        if not isinstance(entry, dict):
+            continue
+        term = _clean_str(entry.get("term"))
+        meaning = _clean_str(entry.get("meaning"))
+        reason = _clean_str(entry.get("reason"))
+        evidence = _clean_str(entry.get("evidence")).lower()
+        if not _VOCAB_TERM_OK.match(term) or not meaning or not reason:
+            continue
+        if evidence not in ("reported", "recommended"):
+            continue
+        key = normalize_vocab_term(term)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        items.append({
+            "term": term, "meaning": meaning[:200],
+            "snippet": _clean_str(entry.get("snippet"))[:300],
+            "source": _clean_str(entry.get("source"))[:160],
+            "reason": reason[:300], "evidence": evidence,
+        })
+        if len(items) >= max_items:
+            break
+    return items
+
+
+_VOCABULARY_PROMPT_SPEC = (
+    '"vocabulary":[{"term":"标准拼写的完整单词或词组","meaning":"当前语境下的中文含义",'
+    '"snippet":"原文中包含该词的英文片段","source":"来源（文章/Passage+题号+PDF页码）",'
+    '"reason":"为什么值得积累；若用户原话里有拼写错误，在此注明原拼写",'
+    '"evidence":"reported或recommended"}]。'
+    "vocabulary 少而精（最多6条），只收真正影响本题理解或作答的词；"
+    "保留完整词组不机械拆词（如 call for、draw scorn from 整体收录）；"
+    "term 必须标准拼写。用户原话明确自述词障（不认识/没看懂/卡住/不确定）的词 "
+    "evidence=reported，且 reason 须引用该原话；用户仅仅提到、能猜到或认识的词 "
+    "一律 evidence=recommended 或不收；"
+    "用户自述已掌握的词（即使出现在原文）一律不得收录；"
+    "没有用户证据时不得虚构学习障碍，全部用 recommended。"
+)
+
+
 def first_pass_quality_violation(
     data: dict, *, grade: str, subject: str, source_text: str = "", reference_only: bool = False,
 ) -> str | None:
@@ -464,11 +534,14 @@ class LearningAIDraftService:
 
     def generate_question_reference(
         self, question, *, learner_profile=None, image_data: str | None = None,
+        known_vocabulary: list[str] | None = None,
     ) -> dict:
         """Generate four editable reference fields once, without judging the student."""
 
         if is_foreign_language_subject(getattr(question, "subject", "")):
-            return self._language_drafts(question, reference_only=True, image_data=image_data)
+            return self._language_drafts(
+                question, reference_only=True, image_data=image_data,
+                known_vocabulary=known_vocabulary)
         source = _question_with_context(question)
         if not source:
             raise LearningAIDraftError("本题题干为空，无法生成参考版。")
@@ -894,6 +967,7 @@ class LearningAIDraftService:
         *,
         learner_stage: str = "",
         learner_grade: str = "",
+        known_vocabulary: list[str] | None = None,
     ) -> dict:
         """Review one EXPLAIN_BACK task; returns verdict + specific feedback.
 
@@ -903,7 +977,8 @@ class LearningAIDraftService:
         """
 
         if is_foreign_language_subject(getattr(question, "subject", "")):
-            return self._review_language_reasoning(question, content)
+            return self._review_language_reasoning(
+                question, content, known_vocabulary=known_vocabulary)
         if not content.strip():
             raise LearningAIDraftError("自我讲解内容为空。")
         source_content = ""
@@ -1091,13 +1166,26 @@ class LearningAIDraftService:
             raise LearningAIDraftError("本题原文或题目为空，请先核对并补充资料。")
         if len(source) > 24000:
             raise LearningAIDraftError("本题外语材料过长，请保留相关原文与当前小问后再讲解。")
+        candidate_draft = draft.get("candidate") if isinstance(draft.get("candidate"), dict) else {}
+        printed_answer = _clean_str(candidate_draft.get("printed_answer"))
+        printed_block = (
+            "【原卷印刷答案依据（系统按题号自动定位的印刷内容，非 AI 生成）】\n"
+            + printed_answer + "\n"
+            "该依据来自原卷答案区的印刷文字，可作为本题答案与解析的定位参照；"
+            "引用时保留其原文并注明页码；若它与原文或题目冲突，明确标注待核对，"
+            "不得擅自改写成确定结论。\n"
+            if printed_answer else
+            "【原卷印刷答案依据】\n未提供。没有印刷答案时可以给候选答案，"
+            "但必须注明是依据原文的推断且不确定，不得冒充印刷答案。\n"
+        )
         return (
             "你是外语学科学习整理助手，只做第一层，完成讲解和整理后结束。"
             "学科由用户填写并保存，禁止额外进行 AI 学科识别。\n"
             f"【已保存学科】{question.subject}\n【原文、公共材料及当前题目】\n{source}\n"
             f"【用户实际作答】\n{question.student_answer or '未提供'}\n"
             f"【用户提供的对照答案与批改说明】\n{question.teacher_comment or '未提供'}\n"
-            f"【已保存判定】{question.teacher_verdict or '未判定'}\n"
+            + printed_block
+            + f"【已保存判定】{question.teacher_verdict or '未判定'}\n"
             f"【已有订正/参考版（可能是 AI 草稿，不是标准答案）】\n"
             f"{question.correction_note or '未提供'}\n"
             f"【用户当时的做题思路】\n{content or '未提供'}\n"
@@ -1116,15 +1204,22 @@ class LearningAIDraftService:
 
     def _language_drafts(
         self, question, *, reference_only: bool, image_data: str | None = None,
+        known_vocabulary: list[str] | None = None,
     ) -> dict:
         """Return the existing editable first-layer fields without family suggestions."""
 
-        prompt = self._language_context(question) + (
+        known_block = (
+            "【本资料已保留的词汇（其它题）】\n" + "、".join(known_vocabulary[:40]) +
+            "。除非出现新的语境含义，不要重复推荐以上词汇。\n"
+            if known_vocabulary else ""
+        )
+        prompt = self._language_context(question) + known_block + (
             "当前只生成参考讲解，用户尚未描述当时思路，不诊断用户的理解或错因。"
             "附图如有是本题材料，请核对原文。只返回 JSON："
             '{"correction":"本题参考答案及原文依据；不足时写明待核对",'
             '"analysis":"结合题型解释词句、原文与选项的关系",'
-            '"method_tags":["实际题型"],"solution_method":"本题的作答依据与语言要点"}。'
+            '"method_tags":["实际题型"],"solution_method":"本题的作答依据与语言要点",'
+            + _VOCABULARY_PROMPT_SPEC +
             "不输出归纳族或二级结论，不虚构学生行为。"
         )
         raw = self._complete(
@@ -1140,18 +1235,26 @@ class LearningAIDraftService:
         verdict = getattr(question, "teacher_verdict", None) or "none"
         return {
             **fields, "method_tags": tags, "original_reference": dict(data),
+            "vocabulary": parse_vocabulary(data.get("vocabulary")),
             "stem": "", "student_answer": "", "student_answer_gate": "closed",
             "verdict": verdict, "reason_tags": [], "type_family": None,
             "method_families": [], "secondary_conclusion": None,
             "correction": fields["correction"] if reference_only or verdict == "incorrect" else "",
         }
 
-    def _review_language_reasoning(self, question, content: str) -> dict:
+    def _review_language_reasoning(
+        self, question, content: str, *, known_vocabulary: list[str] | None = None,
+    ) -> dict:
         """Review actual reasoning using the existing explanation feedback contract."""
 
         if not content.strip():
             raise LearningAIDraftError("请先描述你当时的做题思路。")
-        prompt = self._language_context(question, content) + (
+        known_block = (
+            "【本资料已保留的词汇（其它题或已保存）】\n" + "、".join(known_vocabulary[:40]) +
+            "。除非出现新的语境含义，不要重复推荐以上词汇。\n"
+            if known_vocabulary else ""
+        )
+        prompt = self._language_context(question, content) + known_block + (
             "审核这份实际思路，不是润色，也不是新的训练任务。"
             "判定只描述思路的证据充分程度，不是作答对错或掌握评级。"
             "缺少原文、选项、对照答案或实际依据时明确说明缺什么；"
@@ -1161,7 +1264,10 @@ class LearningAIDraftService:
             '"missing":["具体问题或尚缺证据，标明区别"],'
             '"feedback":"逐题引用用户原话与原文依据说明判断",'
             '"improvements":["本题需澄清的词句或选项理解"],'
-            '"full_explanation":"结合实际题型的讲解，资料不足时留空"}。'
+            '"full_explanation":"结合实际题型的讲解，资料不足时留空",'
+            + _VOCABULARY_PROMPT_SPEC +
+            "vocabulary 只收用户原话中明确提到的词障（reported）"
+            "与原文里真正影响本题的关键词组（recommended）。"
         )
         raw = self._complete(prompt, target_refs=(f"question:{question.id}",), max_tokens=4096)
         data = _parse_json_object(raw)
@@ -1186,6 +1292,7 @@ class LearningAIDraftService:
             **{key: _as_list(data.get(key)) for key in ("what_worked", "missing", "improvements")},
             "feedback": _clean_str(data.get("feedback")),
             "full_explanation": _clean_str(data.get("full_explanation")),
+            "vocabulary": parse_vocabulary(data.get("vocabulary")),
         }
 
     # ------------------------------------------------------- open answers

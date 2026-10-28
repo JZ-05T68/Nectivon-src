@@ -33,9 +33,98 @@ if TYPE_CHECKING:
     from src.ai.provider import AuditedAIProvider
     from src.models import Page
 
-RULE_VERSION = "review-exam-v7"
+RULE_VERSION = "review-exam-v10"
 PAGE_RULE_VERSION = "review-exam-v1"
 _KINDS = {"material", "question", "figure", "instruction", "decoration", "unknown"}
+
+#: Printed answer letter right after the question number inside an answer-key
+#: block ("21. B 定位…", "15. M 定位…").  A-O covers banked-cloze option banks.
+#: The no-space variant ("21.B 定位…") tolerates OCR/printing that drops the
+#: space after the separator — a Phase-5 blind-test recall gap.
+_PRINTED_ANSWER_LETTER = re.compile(r"^\s*(\d{1,3})[.．、]?\s*([A-O])[.．、）)]?\s")
+_PRINTED_ANSWER_LETTER_NO_SPACE = re.compile(r"^\s*(\d{1,3})[.．、]([A-O])[.．、）)]?\s")
+_ANSWER_NUMBER_START = re.compile(r"^\s*(\d{1,3})[.．、]\s+")
+
+
+def printed_answer_map(
+    blocks: list[dict], answer_section_ids: list[str], question_numbers: set[str],
+) -> dict[str, dict]:
+    """Locate each question's printed answer inside the parked answer key.
+
+    Generic rule, no per-paper special casing: a block that (a) is parked as
+    answer-section back matter and (b) starts with a printed question number
+    that exists in THIS exam carries that question's printed answer
+    explanation.  All matching blocks are collected per number; a single
+    match is used as printed, while MULTIPLE matches with conflicting
+    letters become a conflict entry (no letter, both texts, explicit 冲突
+    marker) — a duplicate-numbered answer key must never silently pass one
+    variant off as the certain answer.  The PDF page number travels with
+    the text so the citation can always point back at the original page.
+    Choice answer letters (A-O) are extracted verbatim when printed
+    (including the no-space "21.B" shape); non-choice entries keep letter
+    empty — the text is never rewritten or summarised.
+    """
+
+    wanted = {str(n).strip() for n in question_numbers if str(n).strip()}
+    candidates: dict[str, list[dict]] = {}
+    for identifier in answer_section_ids:
+        block = next((b for b in blocks if b["id"] == identifier), None)
+        if block is None:
+            continue
+        text = str(block.get("text", ""))
+        number_match = _ANSWER_NUMBER_START.match(text)
+        if not number_match:
+            no_space = _PRINTED_ANSWER_LETTER_NO_SPACE.match(text)
+            number_match = no_space if no_space else None
+        if not number_match:
+            continue
+        number = number_match.group(1)
+        if number not in wanted:
+            continue
+        letter_match = _PRINTED_ANSWER_LETTER.match(text)
+        candidates.setdefault(number, []).append({
+            "page": int(block.get("page_number", 0) or 0),
+            "letter": letter_match.group(2) if letter_match else "",
+            "text": text.strip()[:1200],
+        })
+    results: dict[str, dict] = {}
+    for number, hits in candidates.items():
+        letters = {hit["letter"] for hit in hits}
+        if len(letters) > 1:
+            combined = "；".join(
+                f"第{hit['page']}页：{hit['text'][:200]}" for hit in hits[:3])
+            results[number] = {
+                "page": hits[0]["page"], "letter": "", "conflict": True,
+                "text": f"【印刷答案冲突，存在多份不同答案，需人工核对】{combined}",
+            }
+        else:
+            results[number] = hits[0]
+    return results
+
+#: Back-matter section titles (exact block text) that open an answer /
+#: translation section. Inside such a section, numbered blocks are answer
+#: explanations for already-printed questions, never new exam questions —
+#: parking them prevents a duplicate question set from the answer key.
+_ANSWER_SECTION_TITLES = frozenset({
+    "精析答案", "答案精解", "参考答案", "答案解析", "答案与解析", "标准答案",
+    "参考译文", "译文", "文章大意", "表解选项", "词汇", "重点词汇", "长难句解析",
+})
+#: A genuine reading-passage heading carries the printed 体裁/题材 metadata
+#: line and CLOSES the answer section; a bare "Passage N" inside the answer
+#: section is only a sub-heading of the answer key for that passage.
+_GENUINE_PASSAGE_HEADING = re.compile(r"^Passage\s+\d+\s+体裁", re.IGNORECASE)
+#: A material block ends a sentence (terminal punctuation plus optional
+#: closing quotes) — only then may the next block start a new paragraph.
+_SENTENCE_END = re.compile(r"[.!?。！？…][\"'”』」）)]*\s*$")
+#: A leading single-letter label ("A) …") marks a labelled paragraph or an
+#: option continuation and always starts a new line, mid-sentence or not.
+_LEADING_LABEL = re.compile(r"^[A-Z][)）.．、]\s")
+
+
+def _is_answer_section_heading(text: str) -> bool:
+    """Whether one block is exactly a back-matter section title."""
+
+    return "".join(str(text or "").split()) in _ANSWER_SECTION_TITLES
 
 
 def _digest(value: bytes | str) -> str:
@@ -125,10 +214,18 @@ def normalize_document_blocks(blocks: list[dict]) -> list[dict]:
 
     Only exact labels and constrained layout are used. Ambiguous prose remains
     untouched for the document-level assignment and its uncertainty checks.
+    Blocks inside an answer/translation section are flagged ``answer_section``
+    so the document plan can keep them out of question assembly while the
+    content itself stays visible in the report.
     """
 
     result = []
     active: dict | None = None
+    answer_section = False
+    # An answer/translation section can only open AFTER the paper has shown
+    # at least one printed question: a generic front-matter heading (「词汇」)
+    # before any question must never park the actual exam that follows.
+    question_seen = False
     expanded = []
     for original in blocks:
         matches = list(re.finditer(r"(?m)^\s*(\d{1,3})[.．、]\s+", original["text"]))
@@ -150,6 +247,14 @@ def normalize_document_blocks(blocks: list[dict]) -> list[dict]:
     for original in expanded:
         item = {**original}
         text = item["text"]
+        if item["kind"] == "question":
+            question_seen = True
+        if _GENUINE_PASSAGE_HEADING.match(text):
+            answer_section = False
+        elif question_seen and _is_answer_section_heading(text):
+            answer_section = True
+        if answer_section:
+            item["answer_section"] = True
         printed_number = re.match(r"^\s*(\d{1,3})[.．、]\s+", text)
         if item["kind"] == "question" and printed_number:
             item.update(number=printed_number[1], starts=True)
@@ -197,6 +302,11 @@ def build_document_plan(blocks: list[dict]) -> dict:
         return value
 
     for item in blocks:
+        if item.get("answer_section"):
+            # Answer-key / translation back matter: deterministically placed
+            # outside question assembly (numbered blocks there explain
+            # already-printed questions and must not become new ones).
+            continue
         kind, text = item["kind"], item["text"]
         shared_heading = bool(re.match(r"^Passage\s+\d+\b", text, flags=re.IGNORECASE))
         if shared_heading and kind in {"instruction", "material"}:
@@ -327,9 +437,23 @@ def assemble_exam(blocks: list[dict], plan: dict) -> dict:
     referenced = {ref for q in questions for ref in q["material_ids"]}
     unused_material_ids = {i for ref, m in materials.items() if ref not in referenced
                            for i in m["block_ids"]}
+    parked = [b["id"] for b in blocks if b.get("answer_section")]
+    parked_set = set(parked)
+    printed = printed_answer_map(
+        blocks, parked, {str(q["number"]).strip() for q in questions if str(q["number"]).strip()})
+    for question in questions:
+        entry = printed.get(str(question["number"]).strip())
+        if entry:
+            question["printed_answer"] = entry
     return {
         "blocks": blocks, "materials": materials, "questions": questions,
-        "unassigned": [i for i in by_id if i not in owned or i in unused_material_ids],
+        # Back matter has a deterministic place (the answer/translation
+        # section) and must not masquerade as unplaced exam content; it is
+        # reported separately and stays fully visible in ``blocks``.
+        "answer_section_ids": parked,
+        "unassigned": [i for i in by_id
+                       if i not in parked_set
+                       and (i not in owned or i in unused_material_ids)],
         "status": "needs_review",
     }
 
@@ -351,6 +475,7 @@ class ReviewExamService:
         self, document_id: int, pages: list[Page], *,
         progress: Callable[[int, int], None] | None = None,
         expected_page_count: int | None = None,
+        document_title: str = "",
     ) -> dict:
         """Read each page at most once per source/model version, then assemble IDs."""
 
@@ -400,6 +525,7 @@ class ReviewExamService:
         report = assemble_exam(blocks, build_document_plan(blocks))
         report.update({
             "document_id": document_id, "fingerprint": fingerprint,
+            "document_title": str(document_title or ""),
             "model": provider.default_model, "created_at": datetime.now(UTC).isoformat(),
             "pages": [{"id": p.id, "number": p.page_number, "image_path": str(p.image_path),
                        "image_sha256": _digest(p.image_path.read_bytes())} for p in pages],
@@ -415,14 +541,46 @@ class ReviewExamService:
             raise QuestionCandidateError("整卷识别返回被截断，未采用不完整的内容。")
 
 
+def _join_material_texts(blocks: list[dict]) -> str:
+    """Join one material's blocks, healing mid-sentence page/block breaks.
+
+    A page edge (or an arbitrary transcription block boundary) can cut a
+    sentence in half; breaking such a join with a paragraph separator would
+    present one sentence as two paragraphs. Consecutive ``material`` blocks
+    therefore join with a single space unless the earlier block ends with
+    terminal punctuation or the later block opens with a labelled paragraph
+    (``A) …``). Non-material blocks (headings, figures) always start a new
+    paragraph. No text is rewritten — only the separator is chosen.
+    """
+
+    parts: list[str] = []
+    previous_material = False
+    for block in blocks:
+        is_material = block["kind"] == "material"
+        text = block["text"]
+        if text:
+            joins_mid_sentence = (
+                bool(parts) and previous_material and is_material
+                and not _SENTENCE_END.search(parts[-1])
+                and not _LEADING_LABEL.match(text)
+            )
+            parts.append(
+                text if not parts else (" " if joins_mid_sentence else "\n\n") + text
+            )
+        # An empty block keeps the chain only when it is itself material; an
+        # empty figure/table between paragraphs must still break the join.
+        previous_material = is_material and (bool(text) or previous_material)
+    return "".join(parts)
+
+
 def question_text(report: dict, question: dict) -> str:
     """Assemble exact source text, with shared material retained in full."""
 
     by_id = {b["id"]: b for b in report["blocks"]}
     parts = []
     for ref in question["material_ids"]:
-        parts.append("【共享材料】\n" + "\n\n".join(
-            by_id[i]["text"] for i in report["materials"][ref]["block_ids"]
+        parts.append("【共享材料】\n" + _join_material_texts(
+            [by_id[i] for i in report["materials"][ref]["block_ids"]]
         ))
     body = []
     for identifier in question["block_ids"]:
@@ -443,11 +601,27 @@ def exam_candidate(report: dict, question: dict) -> QuestionCandidate:
     issues = list(question["issues"])
     if report["unassigned"]:
         issues.append("整卷仍有未归属的来源内容，完整性待核对")
+    printed = question.get("printed_answer")
+    answer_refs: list[str] = []
+    printed_answer = ""
+    if printed:
+        page = int(printed.get("page", 0) or 0)
+        letter = str(printed.get("letter", "")).strip()
+        answer_refs.append(
+            f"本资料《{report.get('document_title', '')}》· 第 {page} 页 · 第{question['number']}题"
+            if report.get("document_title")
+            else f"本资料第 {page} 页 · 第{question['number']}题"
+        )
+        printed_answer = (
+            f"原卷第 {page} 页印刷答案区（按题号自动定位，印刷内容，非 AI 生成）："
+            f"{letter + '。' if letter else ''}{printed.get('text', '')}".strip()
+        )
     return QuestionCandidate(
         number=question["number"], stem=question_text(report, question),
         completeness="incomplete" if issues else "complete",
         incomplete_reason="；".join(issues),
         page_refs=refs, recognition_source="review_exam_image_blocks",
+        answer_refs=answer_refs, printed_answer=printed_answer,
         visual_dependency="required" if any(by_id[i]["kind"] == "figure"
                                              for i in question["source_ids"]) else "none",
         visual_regions=[by_id[i]["region"] for i in question["source_ids"]

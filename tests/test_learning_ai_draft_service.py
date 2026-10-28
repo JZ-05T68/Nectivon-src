@@ -679,3 +679,160 @@ def test_math_json_preserves_display_newlines_and_commands() -> None:
         r'{"analysis":"$$\n|a| \neq \nu\n$$"}', math_strings=True,
     )
     assert data["analysis"] == "$$\n|a| " + r"\neq \nu" + "\n$$"
+
+
+def test_language_context_injects_printed_answer_basis_with_source_label() -> None:
+    from src.learning_ai_draft_service import LearningAIDraftService
+
+    question = SimpleNamespace(
+        subject="英语", stem_text="21. What can be inferred? A) x B) y",
+        shared_context="", student_answer="", teacher_comment="",
+        teacher_verdict=None, correction_note="",
+        ai_draft={"candidate": {
+            "printed_answer": "原卷第 11 页印刷答案区（按题号自动定位，印刷内容，非 AI 生成）："
+                              "B。21. B 定位 由题干中的 first paragraph 定位到原文第一段。",
+        }},
+    )
+    prompt = LearningAIDraftService(provider=None)._language_context(question)
+    assert "原卷印刷答案依据（系统按题号自动定位的印刷内容，非 AI 生成）" in prompt
+    assert "原卷第 11 页印刷答案区" in prompt
+    assert "不得擅自改写成确定结论" in prompt
+
+
+def test_language_context_states_missing_printed_answer_explicitly() -> None:
+    from src.learning_ai_draft_service import LearningAIDraftService
+
+    question = SimpleNamespace(
+        subject="英语", stem_text="21. What can be inferred? A) x B) y",
+        shared_context="", student_answer="", teacher_comment="",
+        teacher_verdict=None, correction_note="", ai_draft={},
+    )
+    prompt = LearningAIDraftService(provider=None)._language_context(question)
+    assert "【原卷印刷答案依据】\n未提供" in prompt
+    assert "不得冒充印刷答案" in prompt
+
+
+def test_parse_vocabulary_rejects_garbage_and_normalizes() -> None:
+    from src.learning_ai_draft_service import normalize_vocab_term, parse_vocabulary
+
+    raw = [
+        {"term": "call for", "meaning": "呼吁", "reason": "影响定位", "evidence": "reported"},
+        {"term": "controversity", "meaning": "争议", "reason": "用户原拼 controversity",
+         "evidence": "reported"},
+        {"term": "controversity ", "meaning": "重复", "reason": "dup", "evidence": "recommended"},
+        {"term": "不认识的词", "meaning": "x", "reason": "y", "evidence": "reported"},
+        {"term": "undermine", "meaning": "", "reason": "缺词义", "evidence": "recommended"},
+        {"term": "draw scorn from", "meaning": "招致鄙视", "reason": "词组",
+         "evidence": "recommended", "snippet": "drew scorn from ... advocates",
+         "source": "Passage 3 · 第21题 · PDF第4页"},
+        {"term": "boost", "meaning": "提升", "reason": "r", "evidence": "unknown-type"},
+    ]
+    items = parse_vocabulary(raw)
+    terms = [i["term"] for i in items]
+    assert terms == ["call for", "controversity", "draw scorn from"]
+    assert all(i["evidence"] in ("reported", "recommended") for i in items)
+    assert items[2]["source"].startswith("Passage 3")
+    assert normalize_vocab_term("Call  FOR") == normalize_vocab_term("call for")
+
+
+def test_merge_vocabulary_dedups_upgrades_and_never_resurrects(database) -> None:
+    from src.learning_workflow_service import QuestionService
+
+    service = QuestionService(database)
+    question = _make_question(database, subject="英语", question_number="21",
+                              stem_text="stem")
+
+    first = service.merge_vocabulary(question.id, [
+        {"term": "incentive", "meaning": "激励措施", "reason": "r1", "evidence": "recommended"},
+        {"term": "call for", "meaning": "呼吁", "reason": "r2", "evidence": "recommended"},
+    ], origin="reference")
+    items = {i["term"]: i for i in first.ai_draft["vocabulary"]}
+    assert items["incentive"]["state"] == "suggested"
+
+    # 用户讲解轮：reported 升级 evidence，重复不新增，移除不复活
+    service.set_vocabulary_state(question.id, "call for", "removed")
+    second = service.merge_vocabulary(question.id, [
+        {"term": "Incentive", "meaning": "", "reason": "用户说不认识", "evidence": "reported"},
+        {"term": "call for", "meaning": "再推", "reason": "dup", "evidence": "reported"},
+        {"term": "undermine", "meaning": "削弱", "reason": "r3", "evidence": "recommended"},
+    ], origin="explanation")
+    merged = {i["term"]: i for i in second.ai_draft["vocabulary"]}
+    assert len(merged) == 3
+    assert merged["incentive"]["evidence"] == "reported"
+    assert merged["call for"]["state"] == "removed"
+    assert merged["undermine"]["state"] == "suggested"
+    # 默认列表含 suggested（供 prompt 去重），removed 排除
+    assert service.document_vocabulary_terms(question.document_id) == ["incentive", "undermine"]
+
+
+def test_document_vocabulary_terms_lists_kept_only(database) -> None:
+    from src.learning_workflow_service import QuestionService
+
+    service = QuestionService(database)
+    question = _make_question(database, subject="英语", question_number="21",
+                              stem_text="stem")
+    service.merge_vocabulary(question.id, [
+        {"term": "incentive", "meaning": "激励", "reason": "r", "evidence": "reported"},
+        {"term": "undermine", "meaning": "削弱", "reason": "r", "evidence": "recommended"},
+    ], origin="reference")
+    service.set_vocabulary_state(question.id, "incentive", "kept")
+    assert service.document_vocabulary_terms(question.document_id) == ["incentive", "undermine"]
+    assert service.document_vocabulary_terms(
+        question.document_id, kept_only=True) == ["incentive"]
+
+
+def test_vocabulary_prompt_spec_enforces_evidence_and_mastery_rules() -> None:
+    from src.learning_ai_draft_service import _VOCABULARY_PROMPT_SPEC
+
+    assert "reported" in _VOCABULARY_PROMPT_SPEC and "recommended" in _VOCABULARY_PROMPT_SPEC
+    assert "用户自述已掌握的词" in _VOCABULARY_PROMPT_SPEC
+    assert "不得虚构学习障碍" in _VOCABULARY_PROMPT_SPEC
+    assert "完整词组" in _VOCABULARY_PROMPT_SPEC
+
+
+def test_document_vocabulary_terms_and_cross_question_dedup(database) -> None:
+    from src.learning_workflow_service import QuestionService
+
+    service = QuestionService(database)
+    q21 = _make_question(database, subject="英语", question_number="21", stem_text="s")
+    q22 = _make_question(database, subject="英语", question_number="22", stem_text="s")
+    service.merge_vocabulary(q21.id, [
+        {"term": "incentive", "meaning": "激励", "reason": "r", "evidence": "recommended"},
+    ], origin="reference")
+    # suggested 也应进入去重列表（默认排除 removed）
+    assert service.document_vocabulary_terms(q21.document_id) == ["incentive"]
+    # Q22 再收同词：不新增；reported 证据升级 Q21 条目
+    service.merge_vocabulary(q22.id, [
+        {"term": "Incentive", "meaning": "激励措施", "reason": "用户说不认识",
+         "evidence": "reported"},
+        {"term": "undermine", "meaning": "削弱", "reason": "r", "evidence": "recommended"},
+    ], origin="explanation")
+    q21_after = service.get_question_item(q21.id)
+    q22_after = service.get_question_item(q22.id)
+    terms21 = {i["term"]: i for i in q21_after.ai_draft["vocabulary"]}
+    terms22 = {i["term"]: i for i in q22_after.ai_draft["vocabulary"]}
+    assert "incentive" not in terms22  # 跨题不重复
+    assert terms21["incentive"]["evidence"] == "reported"  # 证据升级在 Q21
+    assert set(terms22) == {"undermine"}
+    # 用户在 Q22 移除后，默认列表不再包含该词
+    service.set_vocabulary_state(q22.id, "undermine", "removed")
+    assert "undermine" not in service.document_vocabulary_terms(q21.document_id)
+
+
+def test_vocabulary_near_duplicate_rules_phase5() -> None:
+    """Phase-5 回归：单词侧永不合并；后缀等价仅限双侧多词。"""
+    from src.learning_workflow_service import QuestionService
+
+    similar = QuestionService._vocab_keys_similar
+    # Phase-5 验收示例：不得错误合并
+    assert not similar("power", "power plant")
+    assert not similar("power", "power station")
+    assert not similar("grid", "grid capacity")
+    assert not similar("call", "call for")
+    assert not similar("power", "power outage")
+    assert not similar("baseload", "baseload plant")  # 单词侧独立词义单元
+    # 合理合并：双侧多词的后缀等价（近义设施词）与 ≥2 词子集
+    assert similar("power plant", "power station")
+    assert similar("baseload plant", "baseload plants")
+    assert similar("draw scorn", "draw scorn from")
+    assert similar("grid reliability", "grid reliability")  # 完全一致

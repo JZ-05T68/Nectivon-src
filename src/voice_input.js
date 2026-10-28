@@ -202,7 +202,13 @@
       }
       return;
     }
-    if (previous?.isConnected) return;
+    // Skip only when the existing button still lives in the field's CURRENT
+    // host. A Streamlit rerun can reconcile the container and move the input
+    // out of our wrapper while the old button stays connected elsewhere;
+    // that stale button must never block re-attachment (Phase-2 rerun probe).
+    if (previous?.isConnected &&
+        field.closest(".nectivon-voice-host")?.contains(previous)) return;
+    if (previous?.isConnected) previous.remove();
     const doc = field.ownerDocument;
     let host = field.parentElement;
     // Streamlit's React-owned input wrappers remain intact. Plain custom-component
@@ -254,7 +260,11 @@
             [...change.addedNodes, ...change.removedNodes].some(node =>
               node.nodeType === 1 && (["INPUT", "TEXTAREA", "IFRAME"].includes(node.tagName) ||
                 node.classList.contains("nectivon-voice-button") ||
-                node.querySelector("input, textarea, iframe"))))) schedule();
+                node.querySelector("input, textarea, iframe") ||
+                // Streamlit reruns insert a container DIV first and populate
+                // its fields in the same commit; the deferred scan (350ms)
+                // then finds them (Phase-2 rerun-detach probe).
+                /^st[-A-Z]/.test(String(node.className || "").trimStart()))))) schedule();
       }).observe(doc.body, {
         childList: true, subtree: true, attributes: true,
         attributeFilter: ["disabled", "readonly", "type", "inert"],

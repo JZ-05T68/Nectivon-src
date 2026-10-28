@@ -377,6 +377,184 @@ class QuestionService:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    @staticmethod
+    def _vocabulary_state(draft: dict) -> list[dict]:
+        items = draft.get("vocabulary") if isinstance(draft, dict) else None
+        return items if isinstance(items, list) else []
+
+    #: Generic equipment/facility head nouns stripped before near-dup
+    #: comparison: 'baseload plant' → 'baseload' keeps the same lexical item,
+    #: while content-bearing heads (outage, for) preserve distinct senses.
+    _VOCAB_GENERIC_SUFFIXES = frozenset({
+        "plant", "plants", "station", "stations", "unit", "units", "capacity",
+    })
+
+    @classmethod
+    def _vocab_keys_similar(cls, key_a: str, key_b: str) -> bool:
+        """Near-duplicate rule (Phase-5 regression, tightened further).
+
+        A SINGLE-token side never merges with a different entry: 'power',
+        'call', 'grid', 'baseload' are standalone lexical units, not
+        truncated forms — so power/power plant, power/power station,
+        grid/grid capacity and call/call for all stay separate (Phase-5
+        acceptance examples).  Two multi-token entries merge when their
+        suffix-stripped token sets are equal ('power plant' ≡
+        'power station' ≡ 'baseload plants' after stripping the generic
+        plant/station/unit/capacity heads) or when one's raw tokens are a
+        subset of the other's with the shorter side still ≥2 tokens
+        ('draw scorn' ⊂ 'draw scorn from').
+        """
+
+        tokens_a = frozenset(str(key_a or "").lower().split())
+        tokens_b = frozenset(str(key_b or "").lower().split())
+        if not tokens_a or not tokens_b or tokens_a == tokens_b:
+            return bool(tokens_a) and tokens_a == tokens_b
+        if len(tokens_a) < 2 or len(tokens_b) < 2:
+            return False  # single-token side never merges with a different entry
+        stripped_a = frozenset(t for t in tokens_a if t not in cls._VOCAB_GENERIC_SUFFIXES)
+        stripped_b = frozenset(t for t in tokens_b if t not in cls._VOCAB_GENERIC_SUFFIXES)
+        if stripped_a and stripped_b and stripped_a == stripped_b:
+            return True
+        shorter, longer = sorted((tokens_a, tokens_b), key=len)
+        return len(shorter) >= 2 and shorter <= longer
+
+    def merge_vocabulary(
+        self, question_id: int, items: list[dict], *, origin: str = "ai",
+    ) -> QuestionItem:
+        """Merge AI-proposed vocabulary into ai_draft without touching user states.
+
+        Dedup by normalized term.  Existing kept/removed states always win
+        (a removed term is never resurrected, a kept one is never downgraded);
+        a later ``reported`` evidence upgrades an earlier ``recommended`` entry.
+        """
+        from src.learning_ai_draft_service import normalize_vocab_term
+
+        with self._database._connection() as connection:
+            row = connection.execute(
+                "SELECT document_id, ai_draft FROM question_items WHERE id = ?",
+                (question_id,),
+            ).fetchone()
+            _require(row is not None, "题目不存在。")
+            document_id = row["document_id"]
+            draft = _optional_json_object(row["ai_draft"]) or {}
+            existing = self._vocabulary_state(draft)
+            by_key = {normalize_vocab_term(item.get("term", "")): item for item in existing}
+            sibling_by_key: dict[str, tuple[int, dict, dict]] = {}
+            if document_id is not None:
+                siblings = connection.execute(
+                    "SELECT id, ai_draft FROM question_items "
+                    "WHERE document_id = ? AND id != ?", (document_id, question_id),
+                ).fetchall()
+                for sibling in siblings:
+                    sibling_draft = _optional_json_object(sibling["ai_draft"]) or {}
+                    for entry in self._vocabulary_state(sibling_draft):
+                        key = normalize_vocab_term(str(entry.get("term", "")))
+                        if key and key not in sibling_by_key:
+                            sibling_by_key[key] = (int(sibling["id"]), sibling_draft, entry)
+            changed = False
+            sibling_writes: dict[int, dict] = {}
+            for item in items:
+                key = normalize_vocab_term(str(item.get("term", "")))
+                if not key:
+                    continue
+                current = by_key.get(key)
+                if current is None:
+                    # 近似去重：token 子集关系（baseload ⊂ baseload plant）。
+                    current = next((entry for known, entry in by_key.items()
+                                    if self._vocab_keys_similar(key, known)), None)
+                if current is None:
+                    sibling = sibling_by_key.get(key)
+                    if sibling is None:
+                        sibling = next(
+                            (value for known, value in sibling_by_key.items()
+                             if self._vocab_keys_similar(key, known)), None)
+                    if sibling is not None:
+                        # 跨题去重：同资料其它题已收录该词。用户 reported 证据
+                        # 可升级他题条目的证据类型，但不新增重复条目。
+                        sibling_id, sibling_draft, entry = sibling
+                        if (item.get("evidence") == "reported"
+                                and entry.get("evidence") != "reported"
+                                and entry.get("state") != "removed"):
+                            entry["evidence"] = "reported"
+                            sibling_writes[sibling_id] = sibling_draft
+                        continue
+                    by_key[key] = {**item, "state": "suggested", "origin": origin}
+                    changed = True
+                    continue
+                if current.get("state") == "removed":
+                    continue
+                if item.get("evidence") == "reported" and current.get("evidence") != "reported":
+                    current["evidence"] = "reported"
+                    changed = True
+                for field in ("meaning", "snippet", "source", "reason"):
+                    if not str(current.get(field, "")).strip() and str(item.get(field, "")).strip():
+                        current[field] = str(item[field]).strip()
+                        changed = True
+            if changed or not existing:
+                draft["vocabulary"] = list(by_key.values())
+                connection.execute(
+                    "UPDATE question_items SET ai_draft=?, updated_at=? WHERE id=?",
+                    (json.dumps(draft, ensure_ascii=False), _utc_now(), question_id),
+                )
+            for sibling_id, sibling_draft in sibling_writes.items():
+                connection.execute(
+                    "UPDATE question_items SET ai_draft=?, updated_at=? WHERE id=?",
+                    (json.dumps(sibling_draft, ensure_ascii=False), _utc_now(), sibling_id),
+                )
+        return self.get_question_item(question_id)
+
+    def set_vocabulary_state(self, question_id: int, term: str, state: str) -> QuestionItem:
+        """User keep/remove decision for one vocabulary entry (persisted)."""
+
+        from src.learning_ai_draft_service import normalize_vocab_term
+
+        _require(state in ("kept", "removed"), "词汇状态必须是 kept/removed。")
+        key = normalize_vocab_term(term)
+        with self._database._connection() as connection:
+            row = connection.execute(
+                "SELECT ai_draft FROM question_items WHERE id = ?", (question_id,)
+            ).fetchone()
+            _require(row is not None, "题目不存在。")
+            draft = _optional_json_object(row["ai_draft"]) or {}
+            items = self._vocabulary_state(draft)
+            hit = False
+            for item in items:
+                if normalize_vocab_term(str(item.get("term", ""))) == key:
+                    item["state"] = state
+                    hit = True
+            _require(hit, "未找到该词汇条目。")
+            connection.execute(
+                "UPDATE question_items SET ai_draft=?, updated_at=? WHERE id=?",
+                (json.dumps(draft, ensure_ascii=False), _utc_now(), question_id),
+            )
+        return self.get_question_item(question_id)
+
+    def document_vocabulary_terms(
+        self, document_id: int, *, kept_only: bool = False,
+    ) -> list[str]:
+        """Terms already recorded on this document (dedup input for prompts).
+
+        Default excludes only user-REMOVED entries: the prompt-level dedup
+        list must cover suggested items too, otherwise every question
+        re-proposes its siblings' terms (Phase-4 acceptance finding).
+        """
+
+        terms: list[str] = []
+        with self._database._connection() as connection:
+            rows = connection.execute(
+                "SELECT ai_draft FROM question_items WHERE document_id = ?", (document_id,)
+            ).fetchall()
+        for row in rows:
+            for item in self._vocabulary_state(_optional_json_object(row["ai_draft"]) or {}):
+                if item.get("state") == "removed":
+                    continue
+                if kept_only and item.get("state") != "kept":
+                    continue
+                term = str(item.get("term", "")).strip()
+                if term:
+                    terms.append(term)
+        return list(dict.fromkeys(terms))
+
     def save_ai_reference(self, question_id: int, reference: dict) -> QuestionItem:
         """Fill empty reference fields atomically; preserve human content and its provenance."""
 
@@ -413,6 +591,9 @@ class QuestionService:
                 "solution_method=?, ai_draft=?, math_display_json='', updated_at=? WHERE id=?",
                 (*values, json.dumps(draft, ensure_ascii=False), _utc_now(), question_id),
             )
+        vocabulary = reference.get("vocabulary")
+        if isinstance(vocabulary, list) and vocabulary:
+            return self.merge_vocabulary(question_id, vocabulary, origin="reference")
         return self.get_question_item(question_id)
 
     def record_reference_failure(self, question_id: int, message: str, reference: dict) -> None:

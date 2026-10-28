@@ -16,6 +16,7 @@ function environment(specs = [{}], supported = true) {
         contains: n => names.has(n)};
     }
     appendChild(child) { child.parentElement = this; this.children.push(child); return child; }
+    contains(node) { return this === node || this.children.some(c => c.contains && c.contains(node)); }
     remove() { this.isConnected = false; }
     setAttribute(key, value) { this.attributes[key] = value; }
     getAttribute(key) { return this.attributes[key] ?? null; }
@@ -183,4 +184,25 @@ test('second click stops; escape, disconnection and session timeout release reco
   e = environment(); r = e.click();
   [...e.timers.values()].find(t => t.delay === 60000).callback();
   assert.ok(r.stopped);
+});
+
+test('rerun re-parenting regains the mic despite a stale connected button', () => {
+  const e = environment();
+  const f = e.doc.fields[0];
+  assert.ok(e.button(f));
+  const staleButton = e.button(f);
+  // Streamlit rerun: the input is moved into a fresh container while the old
+  // wrapper (and its button) stay connected elsewhere in the document.
+  const fresh = e.doc.createElement('div');
+  fresh.className = 'st-emotion-cache-1779kua';
+  e.doc.body.appendChild(fresh);
+  fresh.appendChild(f);
+  assert.equal(staleButton.isConnected, true);
+  // Observer fires for the added st-container; the deferred scan must re-attach.
+  e.observers[0].callback([{type: 'childList', addedNodes: [fresh], removedNodes: []}]);
+  assert.ok(e.button(f), 'field must regain a live mic button after re-parenting');
+  assert.equal(staleButton.isConnected, false, 'stale button must be removed');
+  const r = e.click(f);
+  r.result('恢复语音');
+  assert.equal(f.value, '恢复语音');
 });

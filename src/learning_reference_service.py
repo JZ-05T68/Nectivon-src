@@ -53,6 +53,7 @@ def question_reference_image(question, database) -> str | None:
 
 def generate_join_reference(
     question, database, *, provider, vision_provider=None, learner_profile=None,
+    known_vocabulary: list[str] | None = None,
 ) -> dict:
     """Generate once with the appropriate model; never silently lose required figures."""
 
@@ -65,4 +66,5 @@ def generate_join_reference(
         )
     return LearningAIDraftService(selected).generate_question_reference(
         question, learner_profile=learner_profile, image_data=image,
+        known_vocabulary=known_vocabulary,
     )

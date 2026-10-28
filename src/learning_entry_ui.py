@@ -1701,12 +1701,19 @@ def _add_candidate(
     # lives once in the group.  Full AI source text stays in ai_draft.
     stem_text = candidate.stem
     shared_text_used = ""
+    # Whole-exam candidates carry the shared reading INSIDE their stem and
+    # their only layer-1 context link is the per-question question_nodes
+    # record; narrowing them strips the article from the card AND from
+    # every model call (Phase-3 probe: Q21-24 model context had no passage
+    # while Q25 kept it).  Group narrowing stays for per-page splits whose
+    # material is registered in a confirmed question group.
+    exam_published = candidate.recognition_source == "review_exam_image_blocks"
     try:
         from src.choice_group_detector import detect_choice_groups
 
         pending_now = _page_pending(page, store)
         for draft in detect_choice_groups(pending_now, page.extracted_text or ""):
-            if candidate.number in draft.member_numbers:
+            if candidate.number in draft.member_numbers and not exam_published:
                 unique = draft.unique_stems.get(candidate.number, "").strip()
                 if unique:
                     stem_text = unique
@@ -1754,6 +1761,7 @@ def _add_candidate(
                     "incomplete_reason": candidate.incomplete_reason,
                     "figure_refs": candidate.figure_refs,
                     "user_edited": candidate.user_edited,
+                    "printed_answer": candidate.printed_answer,
                     "visual_dependency": candidate.visual_dependency,
                     "visual_notes": candidate.visual_notes,
                     "binding_confirmed": candidate.binding_confirmed,
@@ -1840,6 +1848,8 @@ def _add_candidate(
                         provider=application_ai_provider(),
                         vision_provider=application_question_vision_provider(),
                         learner_profile=application_training_profile_service().get_profile(),
+                        known_vocabulary=question_service.document_vocabulary_terms(
+                            page.document_id),
                     )
                     question_service.save_ai_reference(int(question.id), drafts)
                 try:

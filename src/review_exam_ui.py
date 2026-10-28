@@ -47,6 +47,7 @@ def render_exam_scan(document: Document, database: Database) -> dict | None:
             report = service.scan(
                 document.id, database.list_pages(document.id),
                 expected_page_count=document.page_count,
+                document_title=str(getattr(document, "title", "") or ""),
                 progress=lambda current, total: bar.progress(
                     current / total,
                     text=(f"已转录 {current}/{total - 1} 页，随后统一整理题目"
@@ -99,6 +100,11 @@ def render_exam_questions(report: dict, current_page_id: int) -> None:
         "题干、选项与共享材料由系统自动拼接，无需人工重组；"
         "有疑点的候选标为不完整，学习整理等工作流不会自动更新。"
     )
+    if report.get("answer_section_ids"):
+        st.caption(
+            f"已识别 {len(report['answer_section_ids'])} 个答案解析/译文区来源块，"
+            "单独保留、不参与题目拼装（可在原始页对照查看）。"
+        )
     if report["unassigned"]:
         st.warning(f"还有 {len(report['unassigned'])} 个来源块未确定归属，不能确认整卷完整。")
         with st.expander("查看未归属内容", expanded=True):

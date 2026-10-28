@@ -89,6 +89,10 @@ class QuestionCandidate:
     recognition_source: str = ""  # caller-owned provenance, never inferred from AI wording
     visual_regions: list[dict] = field(default_factory=list)
     image_recognized_stem: str = ""  # fresh AI source when human wording is preserved
+    # Printed answer located in the SAME document's answer key (whole-exam
+    # publishing).  Carries its own page-provenance prefix; empty when the
+    # paper prints no answer for this question.  Never AI-generated content.
+    printed_answer: str = ""
     # P1-5: append-only stem provenance.  Every accepted stem change records
     # {"at", "kind", "detail"}; nothing here ever deletes an earlier version.
     stem_revisions: list[dict] = field(default_factory=list)
@@ -608,6 +612,7 @@ def _candidate_from_dict(item: dict, *, legacy: bool = False) -> QuestionCandida
         recognition_source=str(item.get("recognition_source", "")),
         visual_regions=normalize_regions(item.get("visual_regions", [])),
         image_recognized_stem=str(item.get("image_recognized_stem", "")),
+        printed_answer=str(item.get("printed_answer", "")),
         stem_revisions=[
             dict(entry) for entry in item.get("stem_revisions", []) if isinstance(entry, dict)
         ],

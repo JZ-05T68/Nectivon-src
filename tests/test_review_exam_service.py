@@ -14,6 +14,7 @@ from src.question_candidate_service import QuestionCandidate, QuestionCandidateE
 from src.question_candidate_service import QuestionCandidateStore as Store
 from src.review_exam_service import (
     ReviewExamService,
+    _join_material_texts,
     assemble_exam,
     build_document_plan,
     exam_candidate,
@@ -259,3 +260,185 @@ def test_printed_number_overrides_false_ai_start_flag() -> None:
     report = assemble_exam(normalized, build_document_plan(normalized))
     assert [q["number"] for q in report["questions"]] == ["1", "2"]
     assert not any(q["issues"] for q in report["questions"])
+
+
+def _english_paper_with_answer_key() -> list[dict]:
+    """Passage spans two pages mid-sentence; answer key follows on page 11."""
+
+    return [
+        block("p3head", 4, "instruction", "Passage 3 体裁：议论文 题材：商业经济", starts=True),
+        block("p3a", 4, "material", "The department recommended giving baseload plants pricing"),
+        block("p3b", 5, "material", "advantages for their power, as well as making it cheaper."),
+        block("q21", 5, "question", "21. What can be inferred?", number="21",
+              starts=True, choice=True),
+        block("opt21", 5, "question", "A) One.\nB) Two.\nC) Three.\nD) Four.", choice=True),
+        block("p4head", 5, "instruction", "Passage 4 体裁：议论文 题材：文化教育", starts=True),
+        block("p4a", 5, "material", "The United States boasts the best public universities."),
+        block("q26", 5, "question", "26. Second-passage question?", number="26",
+              starts=True, choice=True),
+        block("opt26", 5, "question", "A) a\nB) b\nC) c\nD) d", choice=True),
+        block("key_head", 11, "material", "精析答案", starts=True),
+        block("key21", 11, "question",
+              "21. B 定位 由题干中的 first paragraph 定位到原文第一段。\n解析 推理判断题。",
+              number="21", starts=True),
+        block("key_sub", 12, "material", "Passage 3", starts=True),
+        block("trans_head", 12, "instruction", "参考译文", starts=True),
+        block("trans", 12, "material", "据称由于发电厂的大量关闭影响了电力的稳定供应。"),
+    ]
+
+
+def test_answer_key_blocks_never_become_duplicate_questions() -> None:
+    normalized = normalize_document_blocks(_english_paper_with_answer_key())
+    report = assemble_exam(normalized, build_document_plan(normalized))
+    assert [q["number"] for q in report["questions"]] == ["21", "26"]
+    assert set(report["answer_section_ids"]) == {
+        "key_head", "key21", "key_sub", "trans_head", "trans",
+    }
+    # Answer-key content is deterministically placed, not "unplaced" noise.
+    assert not set(report["unassigned"]) & set(report["answer_section_ids"])
+    candidate = exam_candidate(report, report["questions"][0])
+    assert candidate.completeness == "complete"
+    assert "定位" not in candidate.stem and "据称" not in candidate.stem
+
+
+def test_front_matter_word_list_heading_never_parks_the_real_exam() -> None:
+    blocks = [
+        block("vocab_head", 1, "material", "词汇", starts=True),
+        block("vocab", 1, "material", "ailing a. 不景气的\nbolster v. 支撑"),
+        block("p1head", 1, "instruction", "Passage 1 体裁：说明文 题材：科学信息", starts=True),
+        block("p1a", 1, "material", "A real article follows the word list."),
+        block("q1", 1, "question", "1. Real question?", number="1",
+              starts=True, choice=True),
+        block("opt1", 1, "question", "A) a\nB) b\nC) c\nD) d", choice=True),
+    ]
+    normalized = normalize_document_blocks(blocks)
+    report = assemble_exam(normalized, build_document_plan(normalized))
+    assert report["answer_section_ids"] == []
+    assert [q["number"] for q in report["questions"]] == ["1"]
+    assert not report["questions"][0]["issues"]
+    # The unattached word list stays honestly unassigned — visible, not parked.
+    assert set(report["unassigned"]) == {"vocab_head", "vocab"}
+
+
+def test_material_join_keeps_labelled_paragraph_and_comma_continuation() -> None:
+    blocks = [
+        block("head", 1, "instruction", "Passage 1 体裁：说明文", starts=True),
+        block("m1", 1, "material", "The market grew,"),
+        block("m2", 2, "material", "and then stalled for years."),
+        block("m3", 2, "material", "B) A labelled paragraph that stands alone."),
+        block("m4", 2, "material", "The final sentence."),
+    ]
+    text = _join_material_texts(blocks)
+    assert "grew, and then stalled" in text
+    assert "years.\n\nB)" in text and "alone.\n\nThe final" in text
+
+
+def test_genuine_passage_heading_reopens_question_mode_after_answer_key() -> None:
+    blocks = _english_paper_with_answer_key() + [
+        block("p5head", 12, "instruction", "Passage 5 体裁：说明文 题材：科学信息", starts=True),
+        block("p5a", 12, "material", "A brand new article follows the answer key."),
+        block("q31", 12, "question", "31. Fresh question?", number="31",
+              starts=True, choice=True),
+        block("opt31", 12, "question", "A) a\nB) b\nC) c\nD) d", choice=True),
+    ]
+    normalized = normalize_document_blocks(blocks)
+    report = assemble_exam(normalized, build_document_plan(normalized))
+    assert [q["number"] for q in report["questions"]] == ["21", "26", "31"]
+    assert "p5head" not in report["answer_section_ids"]
+    assert exam_candidate(report, report["questions"][2]).completeness == "complete"
+
+
+def test_cross_page_mid_sentence_material_joins_as_one_sentence() -> None:
+    normalized = normalize_document_blocks(_english_paper_with_answer_key())
+    report = assemble_exam(normalized, build_document_plan(normalized))
+    question = report["questions"][0]
+    text = question_text(report, question)
+    assert "baseload plants pricing advantages for their power" in text
+    assert "pricing\n\nadvantages" not in text
+    # Complete sentences and labelled paragraphs still break into paragraphs.
+    assert "cheaper.\n\n" in text
+    candidate = exam_candidate(report, question)
+    assert "pricing advantages for their power" in candidate.stem
+    assert candidate.page_refs == [4, 5]
+
+
+def test_printed_answer_map_extracts_parked_key_letters_by_number() -> None:
+    from src.review_exam_service import printed_answer_map
+
+    blocks = [
+        block("q21", 5, "question", "21. What can be inferred?", number="21", starts=True),
+        block("key_head", 11, "material", "精析答案", starts=True),
+        block("key21", 11, "question",
+              "21. B 定位 由题干中的 first paragraph 定位到原文第一段。\n解析 推理判断题。",
+              number="21", starts=True),
+        block("key22", 11, "question", "22. C 定位 关键词 Rick Perry。", number="22", starts=True),
+        block("key_free", 12, "question", "27. 解析：开放性表述。", number="27", starts=True),
+        block("body_like", 5, "question", "23. 题干正文里的编号。", number="23", starts=True),
+    ]
+    parked = ["key_head", "key21", "key22", "key_free"]
+    result = printed_answer_map(blocks, parked, {"21", "22", "23"})
+    assert result["21"]["letter"] == "B" and result["21"]["page"] == 11
+    assert "定位" in result["21"]["text"]
+    assert result["22"]["letter"] == "C"
+    # 未出现在本卷题号集中的答案块（27 不在卷内）与未停置的正文块都不提取
+    assert "27" not in result and "23" not in result
+
+
+def test_assembled_exam_attaches_printed_answer_to_matching_questions() -> None:
+    normalized = normalize_document_blocks(_english_paper_with_answer_key())
+    report = assemble_exam(normalized, build_document_plan(normalized))
+    q21 = next(q for q in report["questions"] if q["number"] == "21")
+    assert q21["printed_answer"]["letter"] == "B"
+    assert q21["printed_answer"]["page"] == 11
+    assert "first paragraph" in q21["printed_answer"]["text"]
+    q26 = next(q for q in report["questions"] if q["number"] == "26")
+    assert "printed_answer" not in q26
+
+
+def test_exam_candidate_carries_answer_citation_and_printed_text() -> None:
+    normalized = normalize_document_blocks(_english_paper_with_answer_key())
+    report = assemble_exam(normalized, build_document_plan(normalized))
+    report["document_title"] = "Model Test 5"
+    q21 = next(q for q in report["questions"] if q["number"] == "21")
+    candidate = exam_candidate(report, q21)
+    assert candidate.answer_refs == ["本资料《Model Test 5》· 第 11 页 · 第21题"]
+    assert candidate.printed_answer.startswith(
+        "原卷第 11 页印刷答案区（按题号自动定位，印刷内容，非 AI 生成）：")
+    assert "B。" in candidate.printed_answer and "first paragraph" in candidate.printed_answer
+
+
+def test_candidate_store_round_trips_printed_answer(tmp_path: Path) -> None:
+    from src.question_candidate_service import QuestionCandidate
+
+    store = Store(tmp_path / "candidates")
+    store.save_page_candidates(5, [QuestionCandidate(
+        number="21", stem="stem", completeness="complete",
+        printed_answer="原卷第 11 页印刷答案区：B。解析文字")])
+    loaded = store.page_candidates(5)
+    assert loaded[0].printed_answer == "原卷第 11 页印刷答案区：B。解析文字"
+
+
+def test_printed_answer_missing_space_and_conflict_are_not_silent() -> None:
+    from src.review_exam_service import printed_answer_map
+
+    # OCR/印刷丢失分隔后的空格：仍应提取（召回），且字母按原样
+    blocks = [block("nospace", 11, "question", "21.B 定位 关键词定位到首段。",
+                    number="21", starts=True)]
+    result = printed_answer_map(blocks, ["nospace"], {"21"})
+    assert result["21"]["letter"] == "B" and result["21"]["page"] == 11
+    # 同题号多份不同答案：不得静默取首份冒充确定答案
+    blocks = [
+        block("first", 11, "question", "2. A 第一份答案。", number="2", starts=True),
+        block("second", 12, "question", "2. C 勘误后答案。", number="2", starts=True),
+    ]
+    result = printed_answer_map(blocks, ["first", "second"], {"2"})
+    assert result["2"]["conflict"] is True
+    assert result["2"]["letter"] == ""
+    assert "印刷答案冲突" in result["2"]["text"] and "第12页" in result["2"]["text"]
+    # 同号同字母的多份（重复排版）：取首份，不视为冲突
+    blocks = [
+        block("dup1", 11, "question", "3. B 相同答案。", number="3", starts=True),
+        block("dup2", 12, "question", "3. B 相同答案重排。", number="3", starts=True),
+    ]
+    result = printed_answer_map(blocks, ["dup1", "dup2"], {"3"})
+    assert result["3"]["letter"] == "B" and "conflict" not in result["3"]

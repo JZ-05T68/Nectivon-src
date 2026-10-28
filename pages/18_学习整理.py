@@ -768,6 +768,8 @@ def _render_question_read_view(question, key_prefix: str, edit_flag_key: str) ->
         question, question_service=question_service, database=database,
         pages_dir=application_pages_dir(), key_prefix=key_prefix,
     )
+    if is_foreign_language_subject(question.subject):
+        _render_vocabulary_section(question, question_service, key_prefix)
     verdict_label = VERDICT_LABELS.get(question.teacher_verdict or "none", "未判定")
     if is_foreign_language_subject(question.subject) and question.teacher_comment:
         st.markdown("**你提供的对照答案与批改说明**")
@@ -889,6 +891,9 @@ def _render_language_reasoning(question, key_prefix: str) -> None:
                     if review["full_explanation"]:
                         sections.append("**本题讲解**\n" + review["full_explanation"])
                     mastery.update_explanation_feedback(attempt_id, "\n\n".join(sections))
+                    if review.get("vocabulary"):
+                        question_service.merge_vocabulary(
+                            question.id, review["vocabulary"], origin="explanation")
                 except Exception as exc:  # noqa: BLE001 - preserve the user's saved words
                     LOGGER.exception("外语第一层讲解失败")
                     st.error(
@@ -910,6 +915,48 @@ def _render_language_reasoning(question, key_prefix: str) -> None:
                 st.text(attempt["content"])
                 if attempt["feedback"]:
                     st.markdown(attempt["feedback"])
+
+
+def _render_vocabulary_section(question, question_service, key_prefix: str) -> None:
+    """Lightweight first-layer vocabulary: source-labelled, user-controlled."""
+
+    draft = question.ai_draft if isinstance(question.ai_draft, dict) else {}
+    items = draft.get("vocabulary")
+    if not isinstance(items, list) or not items:
+        return
+    visible = [item for item in items if item.get("state") != "removed"]
+    st.markdown(f"**词汇积累（{len(visible)} 条）**")
+    st.caption(
+        "证据类型区分：用户报告 = 你自己说不认识/卡住的词；AI 推荐 = 依据原文的积累建议。"
+        "可逐条保留或移除；已保留词汇在其它题自动去重。"
+    )
+    for index, item in enumerate(items):
+        state = str(item.get("state", "suggested"))
+        if state == "removed":
+            continue
+        evidence = str(item.get("evidence", "recommended"))
+        badge = "🧑 用户报告" if evidence == "reported" else "🤖 AI 推荐"
+        state_label = {"kept": "已保留", "suggested": "待定"}.get(state, state)
+        term = str(item.get("term", ""))
+        with st.container(border=True):
+            st.markdown(f"**{term}** — {item.get('meaning', '')}")
+            if item.get("snippet"):
+                st.caption(f"原文：{item['snippet']}")
+            bits = [badge, state_label]
+            if item.get("source"):
+                bits.append(f"来源：{item['source']}")
+            st.caption(" ｜ ".join(bits))
+            if item.get("reason"):
+                st.caption(f"积累理由：{item['reason']}")
+            col_keep, col_remove = st.columns([1, 1])
+            if col_keep.button("保留", key=f"vocab_keep_{key_prefix}_{index}",
+                               disabled=state == "kept", use_container_width=True):
+                question_service.set_vocabulary_state(question.id, term, "kept")
+                st.rerun()
+            if col_remove.button("移除", key=f"vocab_remove_{key_prefix}_{index}",
+                                 disabled=state == "removed", use_container_width=True):
+                question_service.set_vocabulary_state(question.id, term, "removed")
+                st.rerun()
 
 
 def _render_question_card(question) -> None:
